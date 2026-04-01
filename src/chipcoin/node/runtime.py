@@ -459,17 +459,19 @@ class NodeRuntime:
                     ingest.missing_block_hashes[0],
                     ingest.missing_block_hashes[-1],
                 )
-                await session.send_message(
-                    MessageEnvelope(
-                        command="getdata",
-                        payload=GetDataMessage(
-                            items=tuple(
-                                InventoryVector(object_type="block", object_hash=block_hash)
-                                for block_hash in ingest.missing_block_hashes
-                            )
-                        ),
+                for start in range(0, len(ingest.missing_block_hashes), self.max_inventory_items):
+                    batch = ingest.missing_block_hashes[start : start + self.max_inventory_items]
+                    await session.send_message(
+                        MessageEnvelope(
+                            command="getdata",
+                            payload=GetDataMessage(
+                                items=tuple(
+                                    InventoryVector(object_type="block", object_hash=block_hash)
+                                    for block_hash in batch
+                                )
+                            ),
+                        )
                     )
-                )
             else:
                 self.sync_manager.activate_best_chain_if_ready()
             if ingest.needs_more_headers:

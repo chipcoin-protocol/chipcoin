@@ -13,9 +13,10 @@ from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
-from chipcoin.node.messages import AddrMessage, MessageEnvelope, PeerAddress
+from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
 from chipcoin.node.service import NodeService
+from chipcoin.node.sync import HeaderIngestResult
 from chipcoin.storage.mempool import MempoolEntry
 from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import put_wallet_utxo, signed_payment, spend_candidates_for_wallet, wallet_key
@@ -440,6 +441,59 @@ def test_runtime_tolerates_one_transient_ping_timeout_before_dropping_session() 
             assert penalties == []
             assert handle.consecutive_ping_failures == 0
             assert session.ping_calls >= 2
+
+    asyncio.run(scenario())
+
+
+def test_runtime_chunks_block_getdata_requests_to_inventory_limit(monkeypatch) -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445, max_inventory_items=2)
+
+            missing_hashes = tuple(f"{index:064x}" for index in range(5))
+            monkeypatch.setattr(
+                runtime.sync_manager,
+                "ingest_headers",
+                lambda headers: HeaderIngestResult(
+                    headers_received=len(headers),
+                    parent_unknown=None,
+                    best_tip_hash=missing_hashes[-1],
+                    missing_block_hashes=missing_hashes,
+                    needs_more_headers=False,
+                ),
+            )
+
+            sent_messages: list[MessageEnvelope] = []
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+                transport = type(
+                    "_FakeTransport",
+                    (),
+                    {"peer_endpoint": staticmethod(lambda: type("_Peer", (), {"host": "127.0.0.1", "port": 18444})())},
+                )()
+
+                async def send_message(self, message: MessageEnvelope) -> None:
+                    sent_messages.append(message)
+
+            session = _FakeSession()
+            await runtime._on_peer_message(
+                session,
+                MessageEnvelope(command="headers", payload=HeadersMessage(headers=())),
+            )
+
+            getdata_messages = [message for message in sent_messages if message.command == "getdata"]
+            assert [len(message.payload.items) for message in getdata_messages] == [2, 2, 1]
+            assert [item.object_hash for message in getdata_messages for item in message.payload.items] == list(missing_hashes)
 
     asyncio.run(scenario())
 
