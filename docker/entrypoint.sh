@@ -140,6 +140,7 @@ run_miner() {
     --listen-port "${MINER_P2P_BIND_PORT}" \
     --miner-address "${miner_address}" \
     --mining-min-interval-seconds "${MINING_MIN_INTERVAL_SECONDS}" \
+    --peer-seed-url "${MINER_LOCAL_NODE_ENDPOINT:-http://node:8081}" \
     "${peer_args[@]}"
 }
 

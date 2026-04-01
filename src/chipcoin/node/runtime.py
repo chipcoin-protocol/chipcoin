@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import secrets
 import socket
 from dataclasses import dataclass, field
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from ..config import get_network_config
 from ..consensus.validation import ValidationError
@@ -66,6 +69,8 @@ class NodeRuntime:
     """Long-running TCP runtime coordinating peer sessions and sync."""
 
     _SYNC_PROGRESS_LOG_INTERVAL = 100
+    _LOCAL_PEER_SEED_RETRY_INTERVAL = 30.0
+    _MAX_LOCAL_PEER_SEED_IMPORTS = 8
 
     def __init__(
         self,
@@ -90,6 +95,7 @@ class NodeRuntime:
         max_addr_records: int = 1000,
         max_headers_per_message: int = 2000,
         duplicate_inventory_limit: int = 20,
+        local_peer_seed_url: str | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.service = service
@@ -111,6 +117,7 @@ class NodeRuntime:
         self.max_addr_records = max_addr_records
         self.max_headers_per_message = max_headers_per_message
         self.duplicate_inventory_limit = duplicate_inventory_limit
+        self.local_peer_seed_url = None if local_peer_seed_url is None else local_peer_seed_url.rstrip("/")
         self.logger = logger or logging.getLogger("chipcoin.node.runtime")
         self.sync_manager = SyncManager(node=service)
         self.node_id = secrets.token_hex(16)
@@ -131,6 +138,7 @@ class NodeRuntime:
         self._mining_wait_logged = False
         self._initial_sync_required = False
         self._relayed_mempool_txids: set[str] = set()
+        self._last_local_peer_seed_attempt_at: float | None = None
 
     @property
     def bound_port(self) -> int:
@@ -161,6 +169,7 @@ class NodeRuntime:
         self._purge_persisted_self_aliases()
         self._purge_undialable_persisted_peers()
         self._purge_persisted_startup_duplicate_aliases()
+        await self._seed_outbound_peers_from_local_node_if_needed()
         self._initial_sync_required = self.miner_address is not None and bool(self._desired_outbound_peers())
         self._stop_event.clear()
         self._spawn_task(self._connect_loop(), "connect-loop")
@@ -247,6 +256,7 @@ class NodeRuntime:
         """Keep outbound peer connections alive."""
 
         while self._running:
+            await self._seed_outbound_peers_from_local_node_if_needed()
             for peer in list(self._desired_outbound_peers()):
                 if self._has_active_endpoint(peer):
                     continue
@@ -847,6 +857,96 @@ class NodeRuntime:
             # Hostnames remain eligible; explicit configured peers are handled separately.
             return True
         return address.is_global
+
+    def _is_viable_outbound_candidate(self, peer: OutboundPeer) -> bool:
+        """Return whether one outbound peer is worth trying before local-node seeding fallback."""
+
+        info = self._known_peer_info(peer.host, peer.port)
+        if info is None:
+            return True
+        if info.score is not None and info.score <= -100:
+            return False
+        if info.backoff_until is not None and info.backoff_until > self.service.time_provider():
+            return False
+        return True
+
+    def _has_viable_outbound_candidates(self) -> bool:
+        """Return whether the current peerbook already offers viable outbound peers."""
+
+        return any(self._is_viable_outbound_candidate(peer) for peer in self._desired_outbound_peers())
+
+    async def _seed_outbound_peers_from_local_node_if_needed(self) -> None:
+        """Import reusable public peers from the local node when the miner peerbook is stale."""
+
+        if self.miner_address is None or not self.local_peer_seed_url:
+            return
+        if self._has_viable_outbound_candidates():
+            return
+        now = asyncio.get_running_loop().time()
+        if (
+            self._last_local_peer_seed_attempt_at is not None
+            and (now - self._last_local_peer_seed_attempt_at) < self._LOCAL_PEER_SEED_RETRY_INTERVAL
+        ):
+            return
+        self._last_local_peer_seed_attempt_at = now
+        self.logger.info("miner local peer seeding fallback triggered source=%s", self.local_peer_seed_url)
+        try:
+            candidates = await asyncio.to_thread(self._fetch_local_node_peer_candidates)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.info("miner local peer seeding failed source=%s error=%s", self.local_peer_seed_url, exc)
+            return
+        imported = self._import_local_node_peer_candidates(candidates)
+        if imported == 0:
+            self.logger.info("miner local peer seeding yielded no reusable peers source=%s", self.local_peer_seed_url)
+
+    def _import_local_node_peer_candidates(self, candidates: list[OutboundPeer]) -> int:
+        """Persist one filtered batch of peer candidates learned from the local node."""
+
+        imported = 0
+        for candidate in candidates:
+            if self._is_local_listener_alias(candidate):
+                continue
+            if not self._is_announced_peer_dialable(candidate):
+                continue
+            if self._is_known_peer_alias(candidate):
+                continue
+            self.service.add_peer(candidate.host, candidate.port)
+            imported += 1
+            self.logger.info("miner seeded peer imported peer=%s:%s source=%s", candidate.host, candidate.port, self.local_peer_seed_url)
+        return imported
+
+    def _fetch_local_node_peer_candidates(self) -> list[OutboundPeer]:
+        """Fetch reusable public peer candidates from the local node HTTP API."""
+
+        request = Request(f"{self.local_peer_seed_url}/v1/peers", headers={"Accept": "application/json"})
+        with urlopen(request, timeout=max(1.0, self.read_timeout)) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, list):
+            return []
+        candidates: list[OutboundPeer] = []
+        now = self.service.time_provider()
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            host = row.get("host")
+            port = row.get("port")
+            direction = row.get("direction")
+            score = row.get("score")
+            backoff_until = row.get("backoff_until")
+            if not isinstance(host, str) or not host:
+                continue
+            if not isinstance(port, int) or port <= 0:
+                continue
+            if direction == "inbound":
+                continue
+            if isinstance(score, int) and score <= -100:
+                continue
+            if isinstance(backoff_until, int) and backoff_until > now:
+                continue
+            candidates.append(OutboundPeer(host, port))
+            if len(candidates) >= self._MAX_LOCAL_PEER_SEED_IMPORTS:
+                break
+        return candidates
 
     def _canonicalize_reusable_inbound_endpoint(
         self,

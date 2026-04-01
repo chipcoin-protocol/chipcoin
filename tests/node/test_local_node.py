@@ -795,6 +795,104 @@ def test_runtime_pauses_mining_for_persisted_startup_peer_until_sync_is_caught_u
         assert runtime._mining_ready_for_work() is True
 
 
+def test_miner_seeds_peers_from_local_node_when_only_dead_peer_remains() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "miner-devnet.sqlite3", network="devnet")
+        now = service.time_provider()
+        service.record_peer_observation(
+            host="173.212.193.13",
+            port=18444,
+            direction="outbound",
+            handshake_complete=False,
+            node_id="dead-contabo",
+            score=-100,
+            reconnect_attempts=12,
+            backoff_until=now + 300,
+            protocol_error_class="connection_closed",
+        )
+        runtime = NodeRuntime(
+            service=service,
+            listen_host="0.0.0.0",
+            listen_port=18445,
+            miner_address="CHCminer-runtime",
+            local_peer_seed_url="http://node:8081",
+        )
+
+        assert runtime._has_viable_outbound_candidates() is False
+        imported = runtime._import_local_node_peer_candidates([OutboundPeer("188.218.213.92", 18444)])
+
+        assert imported == 1
+        peers = service.list_peers()
+        assert any(peer.host == "188.218.213.92" and peer.port == 18444 for peer in peers)
+        assert OutboundPeer("188.218.213.92", 18444) in runtime._desired_outbound_peers()
+
+        runtime._initial_sync_required = bool(runtime._desired_outbound_peers())
+
+        class _FakeRemote:
+            start_height = 0
+
+        class _FakeState:
+            closed = False
+            handshake_complete = True
+            remote_version = _FakeRemote()
+
+        class _FakeSession:
+            state = _FakeState()
+
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("188.218.213.92", 18444),
+        )
+
+        service.chain_tip = lambda: type("_Tip", (), {"height": 0})()  # type: ignore[method-assign]
+
+        assert runtime._mining_ready_for_work() is True
+
+
+def test_miner_local_node_seed_fallback_is_skipped_when_viable_peer_exists() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = NodeService.open_sqlite(Path(tempdir) / "miner-devnet.sqlite3", network="devnet")
+            service.record_peer_observation(
+                host="188.218.213.92",
+                port=18444,
+                direction=None,
+                handshake_complete=True,
+                node_id="mac-node-id",
+                score=5,
+                reconnect_attempts=0,
+                backoff_until=0,
+            )
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="0.0.0.0",
+                listen_port=18445,
+                miner_address="CHCminer-runtime",
+                local_peer_seed_url="http://node:8081",
+            )
+
+            called = False
+
+            def fake_fetch() -> list[OutboundPeer]:
+                nonlocal called
+                called = True
+                return [OutboundPeer("188.217.94.86", 18444)]
+
+            runtime._fetch_local_node_peer_candidates = fake_fetch  # type: ignore[method-assign]
+
+            assert runtime._has_viable_outbound_candidates() is True
+            await runtime._seed_outbound_peers_from_local_node_if_needed()
+
+            assert called is False
+            peers = service.list_peers()
+            assert any(peer.host == "188.218.213.92" and peer.port == 18444 for peer in peers)
+            assert not any(peer.host == "188.217.94.86" and peer.port == 18444 for peer in peers)
+
+    asyncio.run(scenario())
+
+
 def test_node_service_accepts_transaction_and_builds_candidate_block() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

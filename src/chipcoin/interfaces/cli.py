@@ -480,6 +480,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--listen-host", default="127.0.0.1")
     run_parser.add_argument("--listen-port", type=int, default=None)
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
+    run_parser.add_argument("--peer-seed-url", default=None, help="Optional local HTTP API endpoint used to seed peers.")
     run_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
     run_parser.add_argument("--miner-address", default=None, help="Enable local mining to the supplied payout address.")
     run_parser.add_argument(
@@ -492,6 +493,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mine_parser.add_argument("--listen-host", default="127.0.0.1")
     mine_parser.add_argument("--listen-port", type=int, default=None)
     mine_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
+    mine_parser.add_argument("--peer-seed-url", default=None, help="Optional local HTTP API endpoint used to seed peers.")
     mine_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
     mine_parser.add_argument("--miner-address", required=True, help="Mining reward payout address.")
     mine_parser.add_argument(
@@ -632,6 +634,7 @@ async def _run_runtime(service: NodeService, args, miner_address: str | None = N
         outbound_peers=peers,
         miner_address=miner_address if miner_address is not None else getattr(args, "miner_address", None),
         mining_min_interval_seconds=getattr(args, "mining_min_interval_seconds", 0.0),
+        local_peer_seed_url=getattr(args, "peer_seed_url", None),
         logger=None,
     )
     await runtime.start()
