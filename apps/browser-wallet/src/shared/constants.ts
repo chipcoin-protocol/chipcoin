@@ -3,7 +3,7 @@ export const MIN_PASSWORD_LENGTH = 10;
 export const DEFAULT_AUTO_LOCK_MINUTES = 15;
 declare const __CHIPCOIN_DEFAULT_NODE_ENDPOINT__: string;
 export const DEFAULT_NODE_ENDPOINT = __CHIPCOIN_DEFAULT_NODE_ENDPOINT__;
-export const WALLET_FORMAT_VERSION = 1;
+export const WALLET_FORMAT_VERSION = 2;
 export const SUBMITTED_TX_POLL_ALARM = "chipcoin-submitted-tx-poll";
 export const SUBMITTED_TX_POLL_BACKOFF_MS = [
   15_000,

@@ -8,10 +8,24 @@ const EXPORT_CONFIRMATION_TEXT = "EXPORT";
 export function Backup(): JSX.Element {
   const [hasAcknowledgedRisk, setHasAcknowledgedRisk] = useState(false);
   const [confirmationText, setConfirmationText] = useState("");
+  const [recoveryPhrase, setRecoveryPhrase] = useState<string | null>(null);
   const [privateKeyHex, setPrivateKeyHex] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const canReveal = hasAcknowledgedRisk && confirmationText.trim().toUpperCase() === EXPORT_CONFIRMATION_TEXT;
+
+  async function handleRevealRecoveryPhrase(): Promise<void> {
+    try {
+      const response = await sendWalletMessage<{ recoveryPhrase: string }>({
+        type: "wallet:exportRecoveryPhrase",
+        confirmActiveSession: true,
+      });
+      setRecoveryPhrase(response.recoveryPhrase);
+      setMessage("Recovery phrase revealed. Store it securely.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to reveal the recovery phrase.");
+    }
+  }
 
   async function handleReveal(): Promise<void> {
     try {
@@ -27,8 +41,9 @@ export function Backup(): JSX.Element {
   }
 
   function handleHide(): void {
+    setRecoveryPhrase(null);
     setPrivateKeyHex(null);
-    setMessage("Private key hidden.");
+    setMessage("Sensitive backup data hidden.");
   }
 
   return (
@@ -58,6 +73,20 @@ export function Backup(): JSX.Element {
             spellCheck={false}
           />
         </label>
+        {!recoveryPhrase ? (
+          <button className="secondary-button" disabled={!canReveal} onClick={() => void handleRevealRecoveryPhrase()}>
+            Reveal recovery phrase
+          </button>
+        ) : (
+          <>
+            <textarea className="secret-box" readOnly value={recoveryPhrase} />
+            <div className="button-row">
+              <button className="secondary-button" onClick={() => void copyText(recoveryPhrase).then(() => setMessage("Recovery phrase copied."))}>
+                Copy recovery phrase
+              </button>
+            </div>
+          </>
+        )}
         {!privateKeyHex ? (
           <button className="danger-button" disabled={!canReveal} onClick={() => void handleReveal()}>
             Reveal private key

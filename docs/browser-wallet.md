@@ -7,6 +7,7 @@ The Chipcoin browser wallet is a minimal Chrome and Firefox extension for `devne
 It currently supports:
 
 - wallet creation
+- wallet recovery from a saved recovery phrase
 - private key import
 - encrypted local persistence
 - address display
@@ -70,9 +71,14 @@ Firefox:
 Open the popup and choose one of:
 
 - `Create`
-- `Import`
+- `Recover`
+- `Import key`
 
-Import currently uses raw private key hex.
+Behavior:
+
+- `Create` generates a local Chipcoin recovery phrase, asks you to confirm backup, then encrypts the wallet in extension storage
+- `Recover` restores the same wallet deterministically from that recovery phrase
+- `Import key` remains available as a fallback for advanced users using raw private key hex
 
 ## Connect To A Node
 
@@ -101,9 +107,45 @@ Behavior:
 
 If the node is remote, allow the wallet origin through `CHIPCOIN_HTTP_ALLOWED_ORIGINS`.
 
+## Storage Model
+
+The wallet stores secrets only in browser extension local storage.
+
+High-level model:
+
+- the secret payload is encrypted locally with the user password
+- seed-based wallets store the encrypted recovery phrase and derive account `0` deterministically
+- private-key imports store the encrypted private key directly
+- no remote backup or cloud sync is implemented
+
+The current recovery phrase format is Chipcoin-specific and is not documented as BIP39-compatible.
+
+## Backup And Recovery
+
+Recommended flow:
+
+1. create a wallet
+2. write down the recovery phrase
+3. confirm it before continuing
+4. keep the password and recovery phrase separate
+
+Recovery flow:
+
+1. reinstall or reload the extension
+2. choose `Recover`
+3. paste the saved recovery phrase
+4. set a new local password
+
+Fallback flow:
+
+1. choose `Import key`
+2. paste the raw private key hex
+3. set a new local password
+
 ## Known Limits
 
-- no seed phrase support
+- the current recovery phrase is not BIP39-compatible
+- single-account flow only in this phase
 - no multisig
-- no multiple accounts
+- no multiple accounts UI yet
 - no mainnet target in this public release

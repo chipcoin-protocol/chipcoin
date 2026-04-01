@@ -4,9 +4,10 @@ export function ImportWallet({ onContinue }: { onContinue(privateKeyHex: string)
   const [privateKeyHex, setPrivateKeyHex] = useState("");
   return (
     <section>
-      <h2>Import wallet</h2>
+      <h2>Import private key</h2>
+      <p>This is the fallback path for advanced users. If you have a recovery phrase, use wallet recovery instead.</p>
       <textarea value={privateKeyHex} onChange={(event) => setPrivateKeyHex(event.target.value)} placeholder="Private key hex" />
-      <button onClick={() => onContinue(privateKeyHex)}>Continue</button>
+      <button disabled={!privateKeyHex.trim()} onClick={() => onContinue(privateKeyHex)}>Continue</button>
     </section>
   );
 }

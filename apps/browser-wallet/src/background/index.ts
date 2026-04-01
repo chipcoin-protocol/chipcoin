@@ -1,7 +1,10 @@
 import type { BackgroundRequest, BackgroundResponse } from "../state/actions";
 import {
   createWallet,
+  createWalletFromSeed,
   exportPrivateKey,
+  exportRecoveryPhrase,
+  generateWalletRecoveryPhrase,
   getWalletHistory,
   getAppState,
   handleAutoLockAlarm,
@@ -10,6 +13,7 @@ import {
   lockWallet,
   removeWallet,
   refreshWalletData,
+  recoverWalletFromSeed,
   submitTransaction,
   unlockWallet,
   updateNodeEndpoint,
@@ -39,10 +43,16 @@ async function handleMessage(message: BackgroundRequest): Promise<BackgroundResp
         return { ok: true, payload: await getAppState() };
       case "wallet:getHistory":
         return { ok: true, payload: await getWalletHistory() };
+      case "wallet:generateRecoveryPhrase":
+        return { ok: true, payload: { recoveryPhrase: generateWalletRecoveryPhrase() } };
       case "wallet:create":
         return { ok: true, payload: await createWallet(message.password) };
+      case "wallet:createFromSeed":
+        return { ok: true, payload: await createWalletFromSeed(message.recoveryPhrase, message.password) };
       case "wallet:import":
         return { ok: true, payload: await importWallet(message.privateKeyHex, message.password) };
+      case "wallet:recoverFromSeed":
+        return { ok: true, payload: await recoverWalletFromSeed(message.recoveryPhrase, message.password) };
       case "wallet:unlock":
         return { ok: true, payload: await unlockWallet(message.password) };
       case "wallet:lock":
@@ -54,6 +64,16 @@ async function handleMessage(message: BackgroundRequest): Promise<BackgroundResp
           ok: true,
           payload: {
             privateKeyHex: await exportPrivateKey({
+              password: message.password,
+              confirmActiveSession: message.confirmActiveSession,
+            }),
+          },
+        };
+      case "wallet:exportRecoveryPhrase":
+        return {
+          ok: true,
+          payload: {
+            recoveryPhrase: await exportRecoveryPhrase({
               password: message.password,
               confirmActiveSession: message.confirmActiveSession,
             }),

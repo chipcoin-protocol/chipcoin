@@ -1,6 +1,7 @@
 import type { AddressSummary, AddressUtxo, HistoryEntry, NodeStatus } from "../api/types";
 
 export type SubmittedTransactionState = "submitted" | "confirmed" | "rejected" | "failed_to_submit";
+export type WalletType = "private_key" | "seed_phrase";
 
 export interface SubmittedTransactionRecord {
   txid: string;
@@ -24,19 +25,25 @@ export interface WalletSettings {
 
 export interface EncryptedWalletRecord {
   walletFormatVersion: number;
+  walletType: WalletType;
   address: string;
   publicKeyHex: string;
   encryptedWalletBlob: string;
   saltBase64: string;
   ivBase64: string;
   iterations: number;
+  accountIndex: number;
+  recoveryPhraseWordCount?: number;
   createdAt: number;
 }
 
 export interface UnlockedSession {
+  walletType: WalletType;
   privateKeyHex: string;
+  recoveryPhrase?: string;
   publicKeyHex: string;
   address: string;
+  accountIndex: number;
   unlockedAt: number;
   expiresAt: number;
 }
@@ -59,6 +66,9 @@ export interface WalletDataCache {
 export interface AppState {
   hasWallet: boolean;
   isLocked: boolean;
+  walletType: WalletType | null;
+  accountIndex: number | null;
+  recoveryPhraseWordCount: number | null;
   address: string | null;
   nodeApiBaseUrl: string;
   expectedNetwork: string;

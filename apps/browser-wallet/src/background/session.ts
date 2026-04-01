@@ -2,8 +2,14 @@ import { ChipcoinApiClient } from "../api/client";
 import { ApiClientError } from "../api/errors";
 import type { AddressSummary, AddressUtxo, HistoryEntry } from "../api/types";
 import { privateKeyHexToAddress } from "../crypto/addresses";
-import { decryptPrivateKeyHex, encryptPrivateKeyHex } from "../crypto/encryption";
+import { decryptPrivateKeyHex, decryptWalletSecret, encryptPrivateKeyHex, encryptWalletSecret } from "../crypto/encryption";
 import { buildWalletKeyMaterial, generatePrivateKeyHex, normalizePrivateKeyHex } from "../crypto/keys";
+import {
+  RECOVERY_PHRASE_WORD_COUNT,
+  derivePrivateKeyHexFromRecoveryPhrase,
+  generateRecoveryPhrase,
+  validateRecoveryPhrase,
+} from "../crypto/recovery_phrase";
 import { buildSignedPaymentTransaction } from "../wallet/build_transaction";
 import {
   createSubmittedTransactionRecord,
@@ -53,17 +59,31 @@ export async function initializeBackground(): Promise<void> {
 export async function createWallet(password: string): Promise<AppState> {
   requireMinPasswordLength(password);
   const privateKeyHex = generatePrivateKeyHex();
-  return persistNewWallet(privateKeyHex, password);
+  return persistPrivateKeyWallet(normalizePrivateKeyHex(privateKeyHex), password);
+}
+
+export function generateWalletRecoveryPhrase(): string {
+  return generateRecoveryPhrase();
+}
+
+export async function createWalletFromSeed(recoveryPhrase: string, password: string): Promise<AppState> {
+  requireMinPasswordLength(password);
+  return persistSeedWallet(validateRecoveryPhrase(recoveryPhrase), password, 0);
+}
+
+export async function recoverWalletFromSeed(recoveryPhrase: string, password: string): Promise<AppState> {
+  requireMinPasswordLength(password);
+  return persistSeedWallet(validateRecoveryPhrase(recoveryPhrase), password, 0);
 }
 
 export async function importWallet(privateKeyHex: string, password: string): Promise<AppState> {
   requireMinPasswordLength(password);
-  return persistNewWallet(normalizePrivateKeyHex(privateKeyHex), password);
+  return persistPrivateKeyWallet(normalizePrivateKeyHex(privateKeyHex), password);
 }
 
 export async function unlockWallet(password: string): Promise<AppState> {
   const record = await requireWalletRecord();
-  const privateKeyHex = await decryptPrivateKeyHex(
+  const secret = await decryptWalletSecret(
     record.encryptedWalletBlob,
     password,
     record.saltBase64,
@@ -71,7 +91,7 @@ export async function unlockWallet(password: string): Promise<AppState> {
     record.iterations,
   );
   const settings = await loadSettings();
-  activeSession = makeUnlockedSession(privateKeyHex, settings.autoLockMinutes);
+  activeSession = makeUnlockedSession(secret, settings.autoLockMinutes, record.accountIndex);
   await scheduleAutoLock(settings.autoLockMinutes);
   await reconcileSubmittedTransactions(settings, activeSession.address, { forceCheckAll: true });
   await refreshWalletDataCache(settings, activeSession.address, { includeHistory: false });
@@ -107,6 +127,37 @@ export async function exportPrivateKey(args: { password?: string; confirmActiveS
   }
   const record = await requireWalletRecord();
   return decryptPrivateKeyHex(record.encryptedWalletBlob, args.password, record.saltBase64, record.ivBase64, record.iterations);
+}
+
+export async function exportRecoveryPhrase(args: { password?: string; confirmActiveSession?: boolean }): Promise<string> {
+  if (activeSession?.walletType === "seed_phrase") {
+    if (!args.confirmActiveSession) {
+      throw new Error("Explicit confirmation is required before revealing the recovery phrase.");
+    }
+    await touchSession();
+    if (!activeSession.recoveryPhrase) {
+      throw new Error("Recovery phrase is unavailable for this wallet.");
+    }
+    return activeSession.recoveryPhrase;
+  }
+  const record = await requireWalletRecord();
+  if (record.walletType !== "seed_phrase") {
+    throw new Error("This wallet was imported from a private key and has no recovery phrase.");
+  }
+  if (!args.password) {
+    throw new Error("Password is required to export the recovery phrase while locked.");
+  }
+  const secret = await decryptWalletSecret(
+    record.encryptedWalletBlob,
+    args.password,
+    record.saltBase64,
+    record.ivBase64,
+    record.iterations,
+  );
+  if (!secret.recoveryPhrase) {
+    throw new Error("Recovery phrase is unavailable for this wallet.");
+  }
+  return secret.recoveryPhrase;
 }
 
 export async function updateNodeEndpoint(nodeApiBaseUrl: string): Promise<AppState> {
@@ -228,6 +279,9 @@ export async function getAppState(): Promise<AppState> {
   return {
     hasWallet: walletRecord !== null,
     isLocked: activeSession === null,
+    walletType: walletRecord?.walletType ?? null,
+    accountIndex: walletRecord?.accountIndex ?? null,
+    recoveryPhraseWordCount: walletRecord?.recoveryPhraseWordCount ?? null,
     address: walletRecord?.address ?? null,
     nodeApiBaseUrl: settings.nodeApiBaseUrl,
     expectedNetwork: settings.expectedNetwork,
@@ -252,13 +306,15 @@ export async function handleAutoLockAlarm(name: string): Promise<void> {
   }
 }
 
-async function persistNewWallet(privateKeyHex: string, password: string): Promise<AppState> {
+async function persistPrivateKeyWallet(privateKeyHex: string, password: string): Promise<AppState> {
   const keyMaterial = buildWalletKeyMaterial(privateKeyHex);
   const encrypted = await encryptPrivateKeyHex(privateKeyHex, password);
   const record: EncryptedWalletRecord = {
     walletFormatVersion: WALLET_FORMAT_VERSION,
+    walletType: "private_key",
     address: privateKeyHexToAddress(privateKeyHex),
     publicKeyHex: keyMaterial.publicKeyHex,
+    accountIndex: 0,
     createdAt: Date.now(),
     ...encrypted,
   };
@@ -267,19 +323,65 @@ async function persistNewWallet(privateKeyHex: string, password: string): Promis
   await clearWalletDataCache();
   await saveWalletRecord(record);
   const settings = await loadSettings();
-  activeSession = makeUnlockedSession(privateKeyHex, settings.autoLockMinutes);
+  activeSession = makeUnlockedSession({ walletType: "private_key", privateKeyHex }, settings.autoLockMinutes, 0);
   await scheduleAutoLock(settings.autoLockMinutes);
   await refreshWalletDataCache(settings, record.address, { includeHistory: false });
   return getAppState();
 }
 
-function makeUnlockedSession(privateKeyHex: string, autoLockMinutes: number): UnlockedSession {
+async function persistSeedWallet(recoveryPhrase: string, password: string, accountIndex: number): Promise<AppState> {
+  const privateKeyHex = derivePrivateKeyHexFromRecoveryPhrase(recoveryPhrase, accountIndex);
+  const keyMaterial = buildWalletKeyMaterial(privateKeyHex);
+  const encrypted = await encryptWalletSecret(
+    {
+      walletType: "seed_phrase",
+      recoveryPhrase,
+      accountIndex,
+    },
+    password,
+  );
+  const record: EncryptedWalletRecord = {
+    walletFormatVersion: WALLET_FORMAT_VERSION,
+    walletType: "seed_phrase",
+    address: privateKeyHexToAddress(privateKeyHex),
+    publicKeyHex: keyMaterial.publicKeyHex,
+    accountIndex,
+    recoveryPhraseWordCount: RECOVERY_PHRASE_WORD_COUNT,
+    createdAt: Date.now(),
+    ...encrypted,
+  };
+  extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
+  await clearSubmittedTransactions();
+  await clearWalletDataCache();
+  await saveWalletRecord(record);
+  const settings = await loadSettings();
+  activeSession = makeUnlockedSession(
+    { walletType: "seed_phrase", recoveryPhrase, accountIndex },
+    settings.autoLockMinutes,
+    accountIndex,
+  );
+  await scheduleAutoLock(settings.autoLockMinutes);
+  await refreshWalletDataCache(settings, record.address, { includeHistory: false });
+  return getAppState();
+}
+
+function makeUnlockedSession(
+  secret: { walletType: "private_key"; privateKeyHex: string } | { walletType: "seed_phrase"; recoveryPhrase: string; accountIndex?: number },
+  autoLockMinutes: number,
+  accountIndex: number,
+): UnlockedSession {
+  const privateKeyHex = secret.walletType === "seed_phrase"
+    ? derivePrivateKeyHexFromRecoveryPhrase(secret.recoveryPhrase, accountIndex)
+    : secret.privateKeyHex;
   const keyMaterial = buildWalletKeyMaterial(privateKeyHex);
   const now = Date.now();
   return {
+    walletType: secret.walletType,
     privateKeyHex,
+    recoveryPhrase: secret.walletType === "seed_phrase" ? secret.recoveryPhrase : undefined,
     publicKeyHex: keyMaterial.publicKeyHex,
     address: privateKeyHexToAddress(privateKeyHex),
+    accountIndex,
     unlockedAt: now,
     expiresAt: now + minutesToMilliseconds(autoLockMinutes || DEFAULT_AUTO_LOCK_MINUTES),
   };

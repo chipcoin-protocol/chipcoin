@@ -43,6 +43,40 @@ describe("wallet session security", () => {
     await expect(exportPrivateKey({ confirmActiveSession: true })).resolves.toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("recovers the same wallet from the same recovery phrase", async () => {
+    const session = await import("../../src/background/session");
+    const { loadWalletRecord, clearWalletRecord } = await import("../../src/storage/wallet_store");
+
+    const recoveryPhrase = session.generateWalletRecoveryPhrase();
+    const createdState = await session.createWalletFromSeed(recoveryPhrase, "phase12-password");
+    const createdAddress = createdState.address;
+
+    await session.removeWallet();
+    await clearWalletRecord();
+
+    const recoveredState = await session.recoverWalletFromSeed(recoveryPhrase, "phase12-password");
+    const recoveredRecord = await loadWalletRecord();
+
+    expect(createdAddress).toBeTruthy();
+    expect(recoveredState.address).toBe(createdAddress);
+    expect(recoveredRecord?.walletType).toBe("seed_phrase");
+    expect(recoveredRecord?.accountIndex).toBe(0);
+  });
+
+  it("exports the recovery phrase for seed-based wallets only", async () => {
+    const session = await import("../../src/background/session");
+
+    const recoveryPhrase = session.generateWalletRecoveryPhrase();
+    await session.createWalletFromSeed(recoveryPhrase, "phase12-password");
+
+    await expect(session.exportRecoveryPhrase({})).rejects.toThrow("Explicit confirmation is required");
+    await expect(session.exportRecoveryPhrase({ confirmActiveSession: true })).resolves.toBe(recoveryPhrase);
+
+    await session.removeWallet();
+    await session.importWallet("0000000000000000000000000000000000000000000000000000000000000001", "phase12-password");
+    await expect(session.exportRecoveryPhrase({ confirmActiveSession: true })).rejects.toThrow("has no recovery phrase");
+  });
+
   it("clears wallet state, submitted cache, and local snapshot on remove", async () => {
     const session = await import("../../src/background/session");
     const { createSubmittedTransactionRecord } = await import("../../src/wallet/submitted_cache");

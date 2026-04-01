@@ -4,12 +4,16 @@ import type { HistoryEntry } from "../api/types";
 export type BackgroundRequest =
   | { type: "wallet:getState" }
   | { type: "wallet:getHistory" }
+  | { type: "wallet:generateRecoveryPhrase" }
   | { type: "wallet:create"; password: string }
+  | { type: "wallet:createFromSeed"; password: string; recoveryPhrase: string }
   | { type: "wallet:import"; password: string; privateKeyHex: string }
+  | { type: "wallet:recoverFromSeed"; password: string; recoveryPhrase: string }
   | { type: "wallet:unlock"; password: string }
   | { type: "wallet:lock" }
   | { type: "wallet:remove" }
   | { type: "wallet:exportPrivateKey"; password?: string; confirmActiveSession?: boolean }
+  | { type: "wallet:exportRecoveryPhrase"; password?: string; confirmActiveSession?: boolean }
   | { type: "wallet:updateNode"; nodeApiBaseUrl: string }
   | { type: "wallet:refresh" }
   | { type: "wallet:submit"; recipient: string; amountChipbits: number; feeChipbits: number };

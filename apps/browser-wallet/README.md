@@ -23,10 +23,12 @@ Connect to a node:
 - After first run, the selected endpoint is persisted in extension storage
 - If the node is remote, set `CHIPCOIN_HTTP_ALLOWED_ORIGINS` on the node to allow the wallet origin
 
-Create or import:
+Create, recover, or import:
 - Fresh install opens onboarding automatically
-- Choose `Create wallet` or `Import wallet`
-- Imports use the raw private key hex
+- Choose `Create new wallet`, `Recover wallet`, or `Import private key`
+- `Create new wallet` generates a local recovery phrase, requires you to acknowledge backup, then encrypts the wallet in extension storage
+- `Recover wallet` recreates the same wallet deterministically from the saved recovery phrase
+- `Import private key` remains available as a fallback path for advanced users
 
 Export private key:
 - Unlock the wallet
@@ -34,10 +36,21 @@ Export private key:
 - Read the warning, confirm it, and reveal the key only when needed
 - Copy is user-triggered only
 
-Recover from private key:
+Export recovery phrase:
+- Seed-based wallets can reveal the recovery phrase from `Backup`
+- The phrase is shown only after explicit confirmation
+- Private-key-imported wallets do not have a recovery phrase to export
+
+Recover from seed phrase:
 - Install or reload the extension
 - Open onboarding
-- Choose `Import wallet`
+- Choose `Recover wallet`
+- Paste the saved recovery phrase and set a new password
+
+Recover from private key fallback:
+- Install or reload the extension
+- Open onboarding
+- Choose `Import private key`
 - Paste the private key hex and set a new password
 
 Reset / remove:
@@ -47,6 +60,7 @@ Reset / remove:
 
 Included in this milestone:
 - local wallet creation and import
+- seed-based wallet creation and deterministic recovery
 - encrypted wallet storage
 - background-owned unlock session
 - Phase 2 API client wiring
@@ -66,7 +80,15 @@ Manual smoke test:
 6. Confirm the transaction later appears in confirmed history
 
 Not included:
-- seed phrase support
 - multisig
 - multiple accounts
 - mainnet support
+
+Storage model:
+- wallet secrets stay in browser extension local storage only
+- the stored secret is encrypted with the user password
+- seed-based wallets store the encrypted recovery phrase and derive account `0` deterministically
+- private-key-imported wallets store the encrypted private key directly
+
+Current limitation:
+- the recovery phrase format is Chipcoin-specific for now and is not advertised as BIP39-compatible
