@@ -57,10 +57,15 @@ class SessionHandle:
     announced_inventory_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     consecutive_ping_failures: int = 0
     last_activity_at: float = 0.0
+    sync_start_height: int | None = None
+    sync_target_height: int | None = None
+    sync_next_log_height: int | None = None
 
 
 class NodeRuntime:
     """Long-running TCP runtime coordinating peer sessions and sync."""
+
+    _SYNC_PROGRESS_LOG_INTERVAL = 100
 
     def __init__(
         self,
@@ -409,6 +414,7 @@ class NodeRuntime:
                 remote.start_height,
                 0 if self.service.chain_tip() is None else self.service.chain_tip().height,
             )
+            self._begin_sync_tracking(session, remote.start_height)
             await self._request_headers(session)
             await self._send_known_peers(session)
             await self._announce_current_mempool(session)
@@ -463,6 +469,14 @@ class NodeRuntime:
                 await self._request_headers(session)
                 return
             if ingest.missing_block_hashes:
+                self._begin_sync_tracking(
+                    session,
+                    max(
+                        self._sync_target_height(session),
+                        0 if self.service.chain_tip() is None else self.service.chain_tip().height + len(ingest.missing_block_hashes),
+                    ),
+                )
+                self._log_sync_progress(session, force=True)
                 self.logger.info(
                     "sync requesting blocks peer=%s count=%s first=%s last=%s",
                     self._format_peer_for_logs(session),
@@ -485,6 +499,7 @@ class NodeRuntime:
                     )
             else:
                 self.sync_manager.activate_best_chain_if_ready()
+                self._log_sync_progress(session, force=True)
             if ingest.needs_more_headers:
                 next_locator = None if not message.payload.headers else (message.payload.headers[-1].block_hash(),)
                 await self._request_headers(session, locator_hashes=next_locator)
@@ -562,25 +577,13 @@ class NodeRuntime:
                     result.common_ancestor,
                     result.reorg_depth,
                 )
-                self.logger.info(
-                    "reorg applied peer=%s block=%s activated_tip=%s accepted_blocks=%s",
-                    self._format_peer_for_logs(session),
-                    result.block_hash,
-                    result.activated_tip,
-                    result.accepted_blocks,
-                )
+                self._log_block_application(session, result, reorged=True)
                 self.logger.info(
                     "mempool reconciled after reorg readded_transactions=%s",
                     result.readded_transaction_count,
                 )
             else:
-                self.logger.info(
-                    "block applied peer=%s block=%s activated_tip=%s accepted_blocks=%s",
-                    self._format_peer_for_logs(session),
-                    result.block_hash,
-                    result.activated_tip,
-                    result.accepted_blocks,
-                )
+                self._log_block_application(session, result, reorged=False)
             self._invalidate_mining_template()
             await self._broadcast_inventory(
                 InventoryVector(object_type="block", object_hash=result.block_hash),
@@ -966,6 +969,102 @@ class NodeRuntime:
         if handle.last_activity_at <= 0:
             return False
         return (asyncio.get_running_loop().time() - handle.last_activity_at) < self.read_timeout
+
+    def _begin_sync_tracking(self, session: PeerProtocol, target_height: int) -> None:
+        """Track one peer catch-up session so progress logs stay aggregated."""
+
+        handle = self._sessions.get(session)
+        if handle is None:
+            return
+        local_tip = self.service.chain_tip()
+        local_height = -1 if local_tip is None else local_tip.height
+        target_height = max(target_height, local_height)
+        if handle.sync_target_height is None or target_height > handle.sync_target_height:
+            handle.sync_start_height = local_height
+            handle.sync_target_height = target_height
+            handle.sync_next_log_height = min(target_height, local_height + self._SYNC_PROGRESS_LOG_INTERVAL)
+
+    def _sync_target_height(self, session: PeerProtocol) -> int:
+        """Return the current sync target for one peer session."""
+
+        handle = self._sessions.get(session)
+        if handle is None or handle.sync_target_height is None:
+            remote = session.state.remote_version
+            return -1 if remote is None else remote.start_height
+        return handle.sync_target_height
+
+    def _sync_in_progress(self, session: PeerProtocol) -> bool:
+        """Return whether the local chain is still catching up to this peer."""
+
+        target_height = self._sync_target_height(session)
+        local_tip = self.service.chain_tip()
+        local_height = -1 if local_tip is None else local_tip.height
+        return target_height > local_height
+
+    def _log_sync_progress(self, session: PeerProtocol, *, force: bool = False) -> None:
+        """Emit compact sync progress instead of one info line per block."""
+
+        handle = self._sessions.get(session)
+        if handle is None:
+            return
+        target_height = self._sync_target_height(session)
+        local_tip = self.service.chain_tip()
+        local_height = -1 if local_tip is None else local_tip.height
+        if target_height <= local_height:
+            if handle.sync_target_height is not None:
+                self.logger.info(
+                    "sync complete peer=%s local_height=%s target_height=%s",
+                    self._format_peer_for_logs(session),
+                    local_height,
+                    target_height,
+                )
+            handle.sync_start_height = None
+            handle.sync_target_height = None
+            handle.sync_next_log_height = None
+            return
+
+        if not force and handle.sync_next_log_height is not None and local_height < handle.sync_next_log_height:
+            return
+
+        start_height = local_height if handle.sync_start_height is None else handle.sync_start_height
+        total_blocks = max(0, target_height - start_height)
+        synced_blocks = max(0, local_height - start_height)
+        remaining_blocks = max(0, target_height - local_height)
+        self.logger.info(
+            "syncing blocks peer=%s synced=%s/%s local_height=%s target_height=%s remaining=%s",
+            self._format_peer_for_logs(session),
+            synced_blocks,
+            total_blocks,
+            local_height,
+            target_height,
+            remaining_blocks,
+        )
+        handle.sync_next_log_height = min(target_height, local_height + self._SYNC_PROGRESS_LOG_INTERVAL)
+
+    def _log_block_application(self, session: PeerProtocol, result, *, reorged: bool) -> None:
+        """Log applied blocks compactly during catch-up and verbosely once in sync."""
+
+        if self._sync_in_progress(session):
+            self.logger.debug(
+                "%s peer=%s block=%s activated_tip=%s accepted_blocks=%s",
+                "reorg applied" if reorged else "block applied",
+                self._format_peer_for_logs(session),
+                result.block_hash,
+                result.activated_tip,
+                result.accepted_blocks,
+            )
+            self._log_sync_progress(session)
+            return
+
+        self.logger.info(
+            "%s peer=%s block=%s activated_tip=%s accepted_blocks=%s",
+            "reorg applied" if reorged else "block applied",
+            self._format_peer_for_logs(session),
+            result.block_hash,
+            result.activated_tip,
+            result.accepted_blocks,
+        )
+        self._log_sync_progress(session, force=True)
 
     def _forget_self_alias(self, session: PeerProtocol) -> None:
         """Drop one endpoint that resolves back to this local node."""
