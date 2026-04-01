@@ -548,6 +548,62 @@ def test_runtime_drops_session_after_reaching_ping_failure_threshold() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_tolerates_ping_timeout_while_peer_is_recently_active() -> None:
+    class _FakeSessionState:
+        handshake_complete = True
+        closed = False
+        remote_version = None
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.state = _FakeSessionState()
+            self.close_calls = 0
+            self.ping_calls = 0
+
+        async def ping(self, nonce: int, *, timeout: float = 5.0) -> None:
+            self.ping_calls += 1
+            raise TimeoutError("Timed out waiting for pong response.")
+
+        async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+            self.close_calls += 1
+            self.state.closed = True
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service, ping_interval=0.01, read_timeout=0.1, max_consecutive_ping_failures=2)
+            session = _FakeSession()
+            handle = SessionHandle(protocol=session, outbound=False)
+            runtime._sessions[session] = handle
+            dropped: list[_FakeSession] = []
+            penalties: list[str] = []
+
+            async def drop_session(_session) -> None:
+                dropped.append(_session)
+                runtime._sessions.pop(_session, None)
+
+            runtime._drop_session = drop_session  # type: ignore[method-assign]
+            runtime._apply_session_penalty = lambda _session, *, error, penalty: penalties.append(str(error))  # type: ignore[method-assign]
+            runtime._format_peer_for_logs = lambda _session: "fake-peer"  # type: ignore[method-assign]
+            runtime._running = True
+            runtime._mark_session_activity(session)
+
+            task = asyncio.create_task(runtime._ping_loop())
+            try:
+                await asyncio.sleep(0.05)
+            finally:
+                runtime._running = False
+                await task
+
+            assert session.close_calls == 0
+            assert dropped == []
+            assert penalties == []
+            assert handle.consecutive_ping_failures == 0
+            assert session.ping_calls >= 1
+
+    asyncio.run(scenario())
+
+
 def test_runtime_pauses_mining_until_initial_sync_is_caught_up() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

@@ -56,6 +56,7 @@ class SessionHandle:
     endpoint: OutboundPeer | None = None
     announced_inventory_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     consecutive_ping_failures: int = 0
+    last_activity_at: float = 0.0
 
 
 class NodeRuntime:
@@ -273,6 +274,14 @@ class NodeRuntime:
                     await session.ping(secrets.randbits(64), timeout=self.read_timeout)
                     handle.consecutive_ping_failures = 0
                 except Exception as exc:
+                    if self._session_has_recent_activity(session):
+                        handle.consecutive_ping_failures = 0
+                        self.logger.debug(
+                            "ping timeout ignored for recently active peer=%s error=%s",
+                            self._format_peer_for_logs(session),
+                            exc,
+                        )
+                        continue
                     handle.consecutive_ping_failures += 1
                     self.logger.info(
                         "ping failed peer=%s failure_count=%s/%s error=%s",
@@ -410,6 +419,8 @@ class NodeRuntime:
 
     async def _on_peer_message(self, session: PeerProtocol, message: MessageEnvelope) -> None:
         """Handle application-level peer protocol messages."""
+
+        self._mark_session_activity(session)
 
         if message.command == "getheaders":
             await session.send_message(MessageEnvelope(command="headers", payload=self.service.handle_getheaders(message.payload)))
@@ -937,6 +948,24 @@ class NodeRuntime:
             if peer.host == host and peer.port == port and peer.network == self.service.network:
                 return peer
         return None
+
+    def _mark_session_activity(self, session: PeerProtocol) -> None:
+        """Record recent peer activity for liveness decisions."""
+
+        handle = self._sessions.get(session)
+        if handle is None:
+            return
+        handle.last_activity_at = asyncio.get_running_loop().time()
+
+    def _session_has_recent_activity(self, session: PeerProtocol) -> bool:
+        """Return whether a peer recently exchanged useful sync traffic."""
+
+        handle = self._sessions.get(session)
+        if handle is None:
+            return False
+        if handle.last_activity_at <= 0:
+            return False
+        return (asyncio.get_running_loop().time() - handle.last_activity_at) < self.read_timeout
 
     def _forget_self_alias(self, session: PeerProtocol) -> None:
         """Drop one endpoint that resolves back to this local node."""
