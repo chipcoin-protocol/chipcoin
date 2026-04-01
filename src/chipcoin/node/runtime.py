@@ -274,7 +274,7 @@ class NodeRuntime:
                 try:
                     await self._connect_outbound(peer)
                 except Exception as exc:
-                    self.logger.info("outbound connect failed peer=%s:%s error=%s", peer.host, peer.port, exc)
+                    self.logger.debug("outbound connect failed peer=%s:%s error=%s", peer.host, peer.port, exc)
                     self._register_peer_failure(peer, error=exc, penalty=20)
             await asyncio.sleep(self.connect_interval)
 
@@ -382,7 +382,7 @@ class NodeRuntime:
 
             existing = self._sessions_by_node_id.get(remote.node_id)
             if existing is not None and existing is not session:
-                self.logger.info("duplicate peer connection rejected node_id=%s", remote.node_id)
+                self.logger.debug("duplicate peer connection rejected node_id=%s", remote.node_id)
                 error = DuplicateConnectionError("Duplicate peer connection.")
                 await session.close(reason=str(error), error=error)
                 return
@@ -781,7 +781,8 @@ class NodeRuntime:
                 protocol_error_class=classify_peer_error(current_error_obj or current_error),
                 disconnect_count=0 if existing is None or existing.disconnect_count is None else existing.disconnect_count + 1,
             )
-            self.logger.info(
+            log = self.logger.debug if self._is_low_value_session_drop(current_error_obj or current_error) else self.logger.info
+            log(
                 "session dropped peer=%s:%s handshake_complete=%s error=%s disconnects=%s",
                 endpoint.host,
                 endpoint.port,
@@ -1225,7 +1226,7 @@ class NodeRuntime:
         for alias in aliases:
             self._outbound_targets.pop((alias.host, alias.port), None)
             self.service.remove_peer(alias.host, alias.port)
-            self.logger.info("removed self-alias peer=%s:%s from outbound peer set", alias.host, alias.port)
+            self.logger.debug("removed self-alias peer=%s:%s from outbound peer set", alias.host, alias.port)
 
     def _purge_persisted_self_aliases(self) -> None:
         """Drop persisted peer aliases that resolve back to this local listener."""
@@ -1238,7 +1239,7 @@ class NodeRuntime:
         for peer in aliases:
             self._outbound_targets.pop((peer.host, peer.port), None)
             self.service.remove_peer(peer.host, peer.port)
-            self.logger.info("removed startup self-alias peer=%s:%s", peer.host, peer.port)
+            self.logger.debug("removed startup self-alias peer=%s:%s", peer.host, peer.port)
 
     def _purge_undialable_persisted_peers(self) -> None:
         """Drop persisted peer endpoints that should never be redialed automatically."""
@@ -1266,7 +1267,7 @@ class NodeRuntime:
         for peer in peers:
             self._outbound_targets.pop((peer.host, peer.port), None)
             self.service.remove_peer(peer.host, peer.port)
-            self.logger.info("removed startup duplicate alias peer=%s:%s", peer.host, peer.port)
+            self.logger.debug("removed startup duplicate alias peer=%s:%s", peer.host, peer.port)
 
     def _is_local_listener_alias(self, peer: OutboundPeer) -> bool:
         """Return whether a peer endpoint resolves back to this local listener."""
@@ -1358,12 +1359,13 @@ class NodeRuntime:
         now = self.service.time_provider()
         error_text = str(error)
         applied_penalty = self._penalty_for_error(error) if penalty is None else penalty
+        new_score = self._updated_peer_score(peer.host, peer.port, delta=-applied_penalty)
         self.service.record_peer_observation(
             host=peer.host,
             port=peer.port,
             direction="outbound",
             handshake_complete=False,
-            score=self._updated_peer_score(peer.host, peer.port, delta=-applied_penalty),
+            score=new_score,
             reconnect_attempts=attempts,
             backoff_until=backoff_until if backoff_until > now else now + 1,
             last_error=error_text,
@@ -1371,15 +1373,29 @@ class NodeRuntime:
             protocol_error_class=classify_peer_error(error),
             disconnect_count=0 if info is None or info.disconnect_count is None else info.disconnect_count + 1,
         )
-        self.logger.info(
+        log = self.logger.info if self._should_log_peer_failure_info(info, attempts=attempts, score=new_score) else self.logger.debug
+        log(
             "peer backoff applied peer=%s:%s reconnect_attempts=%s backoff_until=%s score=%s error=%s",
             peer.host,
             peer.port,
             attempts,
             backoff_until if backoff_until > now else now + 1,
-            self._updated_peer_score(peer.host, peer.port, delta=-applied_penalty),
+            new_score,
             error_text,
         )
+
+    def _should_log_peer_failure_info(self, info, *, attempts: int, score: int) -> bool:
+        """Keep terminally noisy reconnect churn out of INFO while preserving state changes."""
+
+        if attempts <= 3:
+            return True
+        previous_score = 0 if info is None or info.score is None else info.score
+        return previous_score > -100 >= score
+
+    def _is_low_value_session_drop(self, error: Exception | str | None) -> bool:
+        """Return whether one session drop is expected churn better kept out of INFO."""
+
+        return classify_peer_error(error) == "duplicate_connection"
 
     def _apply_session_penalty(self, session: PeerProtocol, *, error: Exception | str, penalty: int) -> None:
         """Penalize a peer session using the observed endpoint."""

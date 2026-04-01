@@ -14,6 +14,7 @@ from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
 from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress
+from chipcoin.node.p2p.errors import DuplicateConnectionError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
 from chipcoin.node.p2p.transport import PeerEndpoint
 from chipcoin.node.service import NodeService
@@ -202,6 +203,43 @@ def test_runtime_reuses_canonicalized_public_peer_after_restart() -> None:
 
         assert OutboundPeer("188.218.213.92", 18444) in desired
         assert OutboundPeer("tiltmediaconsulting.com", 18444) in desired
+
+
+def test_runtime_logs_initial_peer_failures_at_info_then_suppresses_terminal_churn() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        assert runtime._should_log_peer_failure_info(None, attempts=1, score=-20) is True
+
+        service.record_peer_observation(
+            host="173.212.193.13",
+            port=18444,
+            direction="outbound",
+            handshake_complete=False,
+            score=-100,
+            reconnect_attempts=12,
+            backoff_until=1_775_056_440,
+            last_error="connect failed",
+        )
+
+        info = next(
+            (peer for peer in service.list_peers() if peer.host == "173.212.193.13" and peer.port == 18444),
+            None,
+        )
+
+        assert info is not None
+        assert runtime._should_log_peer_failure_info(info, attempts=13, score=-100) is False
+
+
+def test_runtime_treats_duplicate_connection_drops_as_low_value_churn() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        assert runtime._is_low_value_session_drop(DuplicateConnectionError("Duplicate peer connection.")) is True
+        assert runtime._is_low_value_session_drop("Duplicate peer connection.") is True
+        assert runtime._is_low_value_session_drop("Peer connection closed while reading frame.") is False
 
 
 def test_runtime_does_not_redial_persisted_private_ip_peers() -> None:
