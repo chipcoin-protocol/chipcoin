@@ -70,6 +70,7 @@ def main() -> int:
 
     wallet_path: Path | None = None
     wallet_address: str | None = None
+    wallet_private_key_hex: str | None = None
     if role == "node":
         print("Node-only Phase 1 runtime does not consume a wallet yet. Skipping wallet setup.")
     else:
@@ -80,7 +81,7 @@ def main() -> int:
         )
         wallet_path = Path(WALLET_PATH)
         _prepare_wallet_path(wallet_path)
-        wallet_address = _handle_wallet(wallet_mode, wallet_path)
+        wallet_address, wallet_private_key_hex = _handle_wallet(wallet_mode, wallet_path)
 
     env_values = dict(DEFAULTS)
     env_values["CHIPCOIN_NETWORK"] = network
@@ -88,7 +89,7 @@ def main() -> int:
     _prepare_runtime_files(env_values)
 
     _write_env(env_values)
-    _print_success(role, network, runtime_mode, wallet_path, wallet_address, setup_mode, env_values)
+    _print_success(role, network, runtime_mode, wallet_path, wallet_address, wallet_private_key_hex, setup_mode, env_values)
     return 0
 
 
@@ -183,7 +184,7 @@ def _prepare_wallet_path(wallet_path: Path) -> None:
             _die("Setup aborted because the wallet file would be overwritten.")
 
 
-def _handle_wallet(wallet_mode: str, wallet_path: Path) -> str:
+def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str]:
     if wallet_mode == "generate":
         wallet_key = generate_wallet_key()
     else:
@@ -206,7 +207,7 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path) -> str:
         os.chmod(wallet_path, 0o600)
     except OSError:
         pass
-    return wallet_key.address
+    return wallet_key.address, wallet_key.private_key.hex()
 
 
 def _prepare_runtime_files(env_values: dict[str, str]) -> None:
@@ -231,6 +232,7 @@ def _print_success(
     runtime_mode: str,
     wallet_path: Path | None,
     wallet_address: str | None,
+    wallet_private_key_hex: str | None,
     setup_mode: str,
     env_values: dict[str, str],
 ) -> None:
@@ -248,6 +250,8 @@ def _print_success(
     if wallet_path is not None and wallet_address is not None:
         print(f"Wallet file: {wallet_path}")
         print(f"Wallet address: {wallet_address}")
+        if wallet_private_key_hex is not None:
+            print(f"Wallet private key: {wallet_private_key_hex}")
     else:
         print("Wallet: not required for node-only Phase 1 runtime")
         print("Note: node wallet support is reserved for future real node reward participation flows.")

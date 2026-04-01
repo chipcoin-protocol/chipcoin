@@ -9,7 +9,6 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY docker ./docker
 COPY docker/entrypoint.sh /usr/local/bin/chipcoin-entrypoint
-COPY services/bootstrap-seed/src ./services/bootstrap-seed/src
 
 RUN pip install --no-cache-dir .
 RUN chmod +x /usr/local/bin/chipcoin-entrypoint
