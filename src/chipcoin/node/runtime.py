@@ -129,6 +129,7 @@ class NodeRuntime:
         self._mining_template = None
         self._last_mined_monotonic: float | None = None
         self._mining_wait_logged = False
+        self._initial_sync_required = False
         self._relayed_mempool_txids: set[str] = set()
 
     @property
@@ -160,6 +161,7 @@ class NodeRuntime:
         self._purge_persisted_self_aliases()
         self._purge_undialable_persisted_peers()
         self._purge_persisted_startup_duplicate_aliases()
+        self._initial_sync_required = self.miner_address is not None and bool(self._desired_outbound_peers())
         self._stop_event.clear()
         self._spawn_task(self._connect_loop(), "connect-loop")
         self._spawn_task(self._ping_loop(), "ping-loop")
@@ -1380,7 +1382,7 @@ class NodeRuntime:
             if remote is not None
         ]
 
-        if self._desired_outbound_peers() and not active_remote_heights:
+        if self._initial_sync_required and not active_remote_heights:
             if not self._mining_wait_logged:
                 self.logger.info("mining paused reason=awaiting_initial_peer_sync local_height=%s", local_height)
                 self._mining_wait_logged = True
