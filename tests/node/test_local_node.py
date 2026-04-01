@@ -15,6 +15,7 @@ from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
 from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
+from chipcoin.node.p2p.transport import PeerEndpoint
 from chipcoin.node.service import NodeService
 from chipcoin.node.sync import HeaderIngestResult
 from chipcoin.storage.mempool import MempoolEntry
@@ -96,6 +97,111 @@ def test_runtime_does_not_redial_or_advertise_inbound_ephemeral_peers() -> None:
         inbound_peer = next(peer for peer in peers if peer.host == "172.18.0.2")
         assert runtime._is_advertisable_peer(outbound_peer) is True
         assert runtime._is_advertisable_peer(inbound_peer) is False
+
+
+def test_runtime_canonicalizes_public_inbound_peer_to_default_p2p_port() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+        runtime = NodeRuntime(service=service, listen_host="0.0.0.0", listen_port=18444)
+
+        canonical = runtime._canonicalize_reusable_inbound_endpoint(
+            PeerEndpoint(host="188.218.213.92", port=56693),
+            inbound=True,
+        )
+
+        assert canonical == OutboundPeer("188.218.213.92", 18444)
+
+
+def test_runtime_does_not_canonicalize_private_inbound_peer() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+        runtime = NodeRuntime(service=service, listen_host="0.0.0.0", listen_port=18444)
+
+        canonical = runtime._canonicalize_reusable_inbound_endpoint(
+            PeerEndpoint(host="172.18.0.2", port=36672),
+            inbound=True,
+        )
+
+        assert canonical is None
+
+
+def test_runtime_persists_public_inbound_peer_as_reusable_candidate() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+            runtime = NodeRuntime(service=service, listen_host="0.0.0.0", listen_port=18444)
+
+            class _FakeRemote:
+                node_id = "mac-node-id"
+                start_height = 3801
+
+            class _FakeState:
+                closed = False
+                handshake_complete = True
+                remote_version = _FakeRemote()
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeTransport:
+                @staticmethod
+                def peer_endpoint():
+                    return type("_Peer", (), {"host": "188.218.213.92", "port": 56693})()
+
+            class _FakeSession:
+                inbound = True
+                state = _FakeState()
+                transport = _FakeTransport()
+
+                async def send_message(self, message: MessageEnvelope) -> None:
+                    return None
+
+                async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+                    self.state.closed = True
+
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=False)
+
+            await runtime._on_handshake_complete(session)
+
+            peers = service.list_peers()
+            assert any(
+                peer.host == "188.218.213.92"
+                and peer.port == 18444
+                and peer.node_id == "mac-node-id"
+                and peer.direction is None
+                for peer in peers
+            )
+            assert not any(peer.host == "188.218.213.92" and peer.port == 56693 for peer in peers)
+            assert runtime._desired_outbound_peers() == [OutboundPeer("188.218.213.92", 18444)]
+            reusable_peer = next(peer for peer in peers if peer.host == "188.218.213.92" and peer.port == 18444)
+            assert runtime._is_advertisable_peer(reusable_peer) is True
+
+    asyncio.run(scenario())
+
+
+def test_runtime_reuses_canonicalized_public_peer_after_restart() -> None:
+    with TemporaryDirectory() as tempdir:
+        database_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+        service = NodeService.open_sqlite(database_path, network="devnet")
+        service.record_peer_observation(
+            host="188.218.213.92",
+            port=18444,
+            direction=None,
+            handshake_complete=True,
+            node_id="mac-node-id",
+        )
+        service.add_peer("tiltmediaconsulting.com", 18444)
+        runtime = NodeRuntime(
+            service=service,
+            listen_host="0.0.0.0",
+            listen_port=18444,
+            outbound_peers=[OutboundPeer("tiltmediaconsulting.com", 18444)],
+        )
+
+        desired = runtime._desired_outbound_peers()
+
+        assert OutboundPeer("188.218.213.92", 18444) in desired
+        assert OutboundPeer("tiltmediaconsulting.com", 18444) in desired
 
 
 def test_runtime_does_not_redial_persisted_private_ip_peers() -> None:

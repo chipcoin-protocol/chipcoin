@@ -382,11 +382,26 @@ class NodeRuntime:
             if handle is not None and handle.endpoint is not None:
                 self.service.add_peer(handle.endpoint.host, handle.endpoint.port)
             endpoint = self._session_endpoint(session, handle)
+            observation_direction = "inbound" if session.inbound else "outbound"
+            if handle is not None and endpoint is not None:
+                canonical_endpoint = self._canonicalize_reusable_inbound_endpoint(endpoint, inbound=session.inbound)
+                if canonical_endpoint is not None:
+                    if canonical_endpoint != endpoint:
+                        self.logger.info(
+                            "canonicalized inbound peer endpoint source=%s:%s reusable=%s:%s",
+                            endpoint.host,
+                            endpoint.port,
+                            canonical_endpoint.host,
+                            canonical_endpoint.port,
+                        )
+                    handle.endpoint = canonical_endpoint
+                    endpoint = canonical_endpoint
+                    observation_direction = None
             if endpoint is not None:
                 self.service.record_peer_observation(
                     host=endpoint.host,
                     port=endpoint.port,
-                    direction="inbound" if session.inbound else "outbound",
+                    direction=observation_direction,
                     handshake_complete=True,
                     last_known_height=remote.start_height,
                     node_id=remote.node_id,
@@ -832,6 +847,24 @@ class NodeRuntime:
             # Hostnames remain eligible; explicit configured peers are handled separately.
             return True
         return address.is_global
+
+    def _canonicalize_reusable_inbound_endpoint(
+        self,
+        endpoint: PeerEndpoint,
+        *,
+        inbound: bool,
+    ) -> OutboundPeer | None:
+        """Return a reusable public endpoint for an inbound peer when it is safe to do so."""
+
+        if not inbound or endpoint.port <= 0:
+            return None
+        try:
+            address = ipaddress.ip_address(endpoint.host)
+        except ValueError:
+            return None
+        if not address.is_global:
+            return None
+        return OutboundPeer(endpoint.host, get_network_config(self.service.network).default_p2p_port)
 
     def _is_announced_peer_dialable(self, peer: OutboundPeer) -> bool:
         """Return whether one peer announced through addr should be accepted."""
