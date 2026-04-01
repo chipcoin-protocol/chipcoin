@@ -76,9 +76,13 @@ Import currently uses raw private key hex.
 
 ## Connect To A Node
 
-The default wallet endpoint is:
+The browser wallet uses a fallback default endpoint from the repository `.env` at build time:
 
-- `http://127.0.0.1:8081`
+- `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT`
+
+In `.env.example`, that fallback is set to the public devnet node:
+
+- `http://tiltmediaconsulting.com:8081`
 
 To use a different node:
 
@@ -86,6 +90,12 @@ To use a different node:
 2. Go to `Settings`
 3. Change the Node API URL
 4. Save
+
+Behavior:
+
+- the fallback default is used on first run only
+- the user's chosen endpoint is persisted afterward
+- manual override in the UI remains available at any time
 
 If the node is remote, allow the wallet origin through `CHIPCOIN_HTTP_ALLOWED_ORIGINS`.
 

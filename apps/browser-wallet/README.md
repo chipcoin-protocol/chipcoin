@@ -17,8 +17,10 @@ Install:
 
 Connect to a node:
 - Open `Settings`
-- The default devnet endpoint is `http://127.0.0.1:8081`
+- The first-run fallback default comes from `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT` in the repo `.env`
+- In `.env.example`, the public devnet fallback is `http://tiltmediaconsulting.com:8081`
 - If needed, set a different Node API endpoint in `Settings`
+- After first run, the selected endpoint is persisted in extension storage
 - If the node is remote, set `CHIPCOIN_HTTP_ALLOWED_ORIGINS` on the node to allow the wallet origin
 
 Create or import:

@@ -2,12 +2,18 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 const targetBrowser = process.env.VITE_TARGET_BROWSER
   ?? (process.env.npm_lifecycle_event?.includes("firefox") ? "firefox" : "chrome");
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const repoEnv = loadEnv(mode, resolve(__dirname, "../.."), "");
+  const defaultNodeEndpoint = repoEnv.BROWSER_WALLET_DEFAULT_NODE_ENDPOINT
+    || repoEnv.DEFAULT_NODE_ENDPOINT
+    || "http://tiltmediaconsulting.com:8081";
+
+  return {
   plugins: [
     react(),
     {
@@ -22,6 +28,9 @@ export default defineConfig({
       },
     },
   ],
+  define: {
+    __CHIPCOIN_DEFAULT_NODE_ENDPOINT__: JSON.stringify(defaultNodeEndpoint),
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -39,4 +48,5 @@ export default defineConfig({
       },
     },
   },
+  };
 });

@@ -10,6 +10,14 @@ This public repository is centered on three components:
 
 The current public release target is `devnet`, not mainnet.
 
+Public devnet fallback defaults included in `.env.example`:
+
+- node API: `http://tiltmediaconsulting.com:8081`
+- bootstrap peer: `tiltmediaconsulting.com:18444`
+- explorer URL: `http://tiltmediaconsulting.com:4173`
+
+These are fallback defaults only. They are not required and can be replaced with your own node, peer, and inspection tooling.
+
 ## Current Status
 
 What works today:
@@ -27,7 +35,7 @@ What is intentionally limited today:
 - the node runtime does not use a wallet file yet
 - browser wallet import uses raw private key hex, not seed phrases
 - no multisig, no multiple accounts, no hardware wallet support
-- bootstrap and explorer are not part of the publication scope of this repo entry point
+- explorer and bootstrap service deployment are outside the primary public onboarding path for this repository
 
 ## Repository Scope
 
@@ -59,14 +67,24 @@ cd Chipcoin-v2
 cp .env.example .env
 ```
 
-Edit `.env` for your machine. At minimum, review:
+Edit `.env` for your machine before running Docker. The placeholder paths in `.env.example` will not work until you replace them with real paths on your machine.
+
+At minimum, set real values for:
 
 - `CHIPCOIN_RUNTIME_DIR`
 - `NODE_DATA_PATH`
 - `MINER_DATA_PATH`
 - `MINER_WALLET_FILE`
-- `DIRECT_PEER`
-- `BOOTSTRAP_URL`
+
+For the shortest first run, you can either keep the public devnet defaults from `.env.example` or replace them with your own values.
+
+If you want a fully local first run, set:
+
+- `DIRECT_PEER=`
+- `BOOTSTRAP_URL=`
+- `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
+
+This starts an isolated local node/miner pair and avoids any external bootstrap dependency in the first-user path.
 
 ### Create A Miner Wallet
 
@@ -142,6 +160,8 @@ mkdir -p /home/komarek/Chipcoin-runtime/wallets
 mkdir -p /home/komarek/Chipcoin-runtime/logs
 ```
 
+Then edit `.env` and replace every `/path/to/Chipcoin-runtime/...` placeholder with your real runtime directory before running `docker compose up`.
+
 Create a local-only override file when you need machine-specific customization:
 
 ```yaml
@@ -182,11 +202,28 @@ That produces:
 - `apps/browser-wallet/dist-chrome`
 - `apps/browser-wallet/dist-firefox`
 
-Load the unpacked extension and point it to your node API from `Settings`.
+On first run, the browser wallet uses `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT` from your local `.env` as its initial fallback endpoint.
+
+In `.env.example`, that points to the public devnet node on Contabo. The user can override it in `Settings`, and the chosen endpoint is persisted afterward.
 
 Detailed instructions:
 
 - `docs/browser-wallet.md`
+
+## First-User Path
+
+The shortest supported path from clone to a working local stack is:
+
+1. Clone the repository and create `.env` from `.env.example`.
+2. Edit `.env` and replace all `/path/to/Chipcoin-runtime/...` placeholders with real local paths.
+3. Create the runtime directories referenced by `.env`.
+4. Generate a miner wallet file at `MINER_WALLET_FILE`.
+5. Start the local stack with `docker compose up --build node miner`.
+6. Verify the node API with `curl http://127.0.0.1:8081/v1/status`.
+7. Build and load the browser wallet from `apps/browser-wallet`.
+8. Point the browser wallet to `http://127.0.0.1:8081`.
+9. Create or import a wallet in the extension.
+10. Send a test transaction and verify it through the node API or your chosen inspection tooling.
 
 ## Documentation
 

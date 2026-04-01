@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
@@ -27,10 +26,16 @@ RUNTIME_ROOT = Path.home() / "Chipcoin-runtime"
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 MINER_DATA_PATH = str(RUNTIME_ROOT / "data" / "miner-devnet.sqlite3")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
+PUBLIC_DEVNET_NODE_ENDPOINT = "http://tiltmediaconsulting.com:8081"
+PUBLIC_DEVNET_BOOTSTRAP_PEER = "tiltmediaconsulting.com:18444"
+PUBLIC_DEVNET_EXPLORER_URL = "http://tiltmediaconsulting.com:4173"
 DEFAULTS = {
     "CHIPCOIN_NETWORK": "devnet",
     "COMPOSE_PROJECT_NAME": "chipcoin",
     "CHIPCOIN_RUNTIME_DIR": str(RUNTIME_ROOT),
+    "DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
+    "DEFAULT_BOOTSTRAP_PEER": PUBLIC_DEVNET_BOOTSTRAP_PEER,
+    "DEFAULT_EXPLORER_URL": PUBLIC_DEVNET_EXPLORER_URL,
     "NODE_DATA_PATH": NODE_DATA_PATH,
     "NODE_LOG_LEVEL": "INFO",
     "NODE_P2P_BIND_PORT": "18444",
@@ -41,9 +46,7 @@ DEFAULTS = {
     "MINER_WALLET_FILE": WALLET_PATH,
     "MINER_P2P_BIND_PORT": "18445",
     "MINING_MIN_INTERVAL_SECONDS": "1.0",
-    "EXPLORER_PORT": "4173",
-    "EXPLORER_DIST_PATH": "./apps/explorer/dist",
-    "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": "http://127.0.0.1:8081",
+    "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
     "DIRECT_PEER": "",
     "BOOTSTRAP_URL": "",
 }
@@ -52,21 +55,18 @@ DEFAULTS = {
 def main() -> int:
     print("Chipcoin Phase 1 Setup Wizard")
     _check_prerequisites()
+    setup_mode = _ask_choice(
+        "Select setup mode",
+        {
+            "quick": "Quick start (use public devnet defaults)",
+            "custom": "Custom configuration",
+            "local": "Local/self-hosted",
+        },
+        "quick",
+    )
     role = _ask_choice("What do you want to run?", {"node": "Node", "miner": "Miner", "both": "Both"}, "both")
     network = _ask_choice("Which network do you want to use?", {"devnet": "Devnet"}, "devnet")
     runtime_mode = _ask_choice("How should services run?", {"foreground": "Foreground", "background": "Background"}, "foreground")
-    connectivity_mode = _ask_choice(
-        "How should peer discovery work?",
-        {"direct": "Use direct peer", "bootstrap": "Use bootstrap", "isolated": "Start isolated"},
-        "isolated",
-    )
-
-    direct_peer = ""
-    bootstrap_url = ""
-    if connectivity_mode == "direct":
-        direct_peer = _ask_direct_peer()
-    elif connectivity_mode == "bootstrap":
-        bootstrap_url = _ask_bootstrap_url()
 
     wallet_path: Path | None = None
     wallet_address: str | None = None
@@ -84,12 +84,11 @@ def main() -> int:
 
     env_values = dict(DEFAULTS)
     env_values["CHIPCOIN_NETWORK"] = network
-    env_values["DIRECT_PEER"] = direct_peer
-    env_values["BOOTSTRAP_URL"] = bootstrap_url
+    _apply_setup_mode(env_values, setup_mode)
     _prepare_runtime_files(env_values)
 
     _write_env(env_values)
-    _print_success(role, network, runtime_mode, wallet_path, wallet_address, direct_peer, bootstrap_url)
+    _print_success(role, network, runtime_mode, wallet_path, wallet_address, setup_mode, env_values)
     return 0
 
 
@@ -128,13 +127,52 @@ def _ask_direct_peer() -> str:
         print("Invalid peer format. Expected host:port.")
 
 
-def _ask_bootstrap_url() -> str:
+def _ask_http_url(prompt: str, default: str) -> str:
     while True:
-        answer = input("Enter the bootstrap URL: ").strip()
-        parsed = urlparse(answer)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
+        answer = input(f"{prompt} [{default}]: ").strip()
+        if not answer:
+            return default
+        if answer.startswith(("http://", "https://")):
             return answer
-        print("Invalid bootstrap URL. Expected http://host or https://host.")
+        print("Invalid URL. Expected http://host or https://host.")
+
+
+def _ask_optional_peer(prompt: str, default: str) -> str:
+    while True:
+        answer = input(f"{prompt} [{default}]: ").strip()
+        if not answer:
+            return default
+        host, sep, port = answer.rpartition(":")
+        if sep and host and port.isdigit():
+            return answer
+        print("Invalid peer format. Expected host:port.")
+
+
+def _apply_setup_mode(env_values: dict[str, str], setup_mode: str) -> None:
+    if setup_mode == "quick":
+        env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
+        env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        env_values["DEFAULT_EXPLORER_URL"] = PUBLIC_DEVNET_EXPLORER_URL
+        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
+        env_values["DIRECT_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        return
+
+    if setup_mode == "custom":
+        node_endpoint = _ask_http_url("Enter node endpoint", PUBLIC_DEVNET_NODE_ENDPOINT)
+        bootstrap_peer = _ask_optional_peer("Enter bootstrap peer", PUBLIC_DEVNET_BOOTSTRAP_PEER)
+        explorer_url = _ask_http_url("Enter explorer URL", PUBLIC_DEVNET_EXPLORER_URL)
+        env_values["DEFAULT_NODE_ENDPOINT"] = node_endpoint
+        env_values["DEFAULT_BOOTSTRAP_PEER"] = bootstrap_peer
+        env_values["DEFAULT_EXPLORER_URL"] = explorer_url
+        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = node_endpoint
+        env_values["DIRECT_PEER"] = bootstrap_peer
+        return
+
+    env_values["DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
+    env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
+    env_values["DEFAULT_EXPLORER_URL"] = ""
+    env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
+    env_values["DIRECT_PEER"] = ""
 
 
 def _prepare_wallet_path(wallet_path: Path) -> None:
@@ -193,8 +231,8 @@ def _print_success(
     runtime_mode: str,
     wallet_path: Path | None,
     wallet_address: str | None,
-    direct_peer: str,
-    bootstrap_url: str,
+    setup_mode: str,
+    env_values: dict[str, str],
 ) -> None:
     command_suffix = {
         "node": "node",
@@ -214,12 +252,16 @@ def _print_success(
         print("Wallet: not required for node-only Phase 1 runtime")
         print("Note: node wallet support is reserved for future real node reward participation flows.")
     print(f"Runtime directory: {DEFAULTS['CHIPCOIN_RUNTIME_DIR']}")
-    if direct_peer:
-        print(f"Discovery: direct peer ({direct_peer})")
-    elif bootstrap_url:
-        print(f"Discovery: bootstrap ({bootstrap_url})")
+    print(f"Setup mode: {setup_mode}")
+    print(f"Default node endpoint: {env_values['DEFAULT_NODE_ENDPOINT']}")
+    if env_values["DEFAULT_BOOTSTRAP_PEER"]:
+        print(f"Default bootstrap peer: {env_values['DEFAULT_BOOTSTRAP_PEER']}")
     else:
-        print("Discovery: isolated")
+        print("Default bootstrap peer: none")
+    if env_values["DEFAULT_EXPLORER_URL"]:
+        print(f"Default explorer URL: {env_values['DEFAULT_EXPLORER_URL']}")
+    else:
+        print("Default explorer URL: none")
     print()
     print("Next commands:")
     print(f"  {compose_up}")
