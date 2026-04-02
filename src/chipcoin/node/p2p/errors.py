@@ -35,6 +35,10 @@ class ProtocolTimeoutError(ProtocolError):
     """Raised when the peer protocol exceeds a configured timeout."""
 
 
+class BlockRequestStalledError(ProtocolTimeoutError):
+    """Raised when a block download request stalls and must be reassigned."""
+
+
 class DuplicateConnectionError(ProtocolError):
     """Raised when a duplicate connection is observed for the same peer."""
 

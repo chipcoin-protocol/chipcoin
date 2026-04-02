@@ -21,11 +21,11 @@ from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
 from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress
-from chipcoin.node.p2p.errors import DuplicateConnectionError, InvalidBlockError, ProtocolError
+from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
 from chipcoin.node.p2p.transport import PeerEndpoint
 from chipcoin.node.service import NodeService
-from chipcoin.node.sync import BlockDownloadAssignment, BlockRequestState, HeaderIngestResult
+from chipcoin.node.sync import BlockDownloadAssignment, BlockIngestResult, BlockRequestState, HeaderIngestResult
 from chipcoin.storage.peers import SQLitePeerRepository
 from chipcoin.storage.mempool import MempoolEntry
 from chipcoin.wallet.signer import TransactionSigner
@@ -1290,11 +1290,78 @@ def test_runtime_reassigns_stalled_block_requests_and_disconnects_repeat_offende
             await runtime._expire_stalled_block_requests()
 
             assert penalties == ["block request stalled:10"]
-            assert close_calls and isinstance(close_calls[0][1], ProtocolError)
+            assert close_calls and isinstance(close_calls[0][1], BlockRequestStalledError)
             assert dropped == [session]
 
     close_calls: list[tuple[str | None, Exception | None]] = []
     asyncio.run(scenario())
+
+
+def test_runtime_does_not_classify_block_request_stall_as_misbehavior() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.add_peer("127.0.0.1", 18444, source="manual")
+        runtime = NodeRuntime(service=service)
+        session = type(
+            "_FakeSession",
+            (),
+            {
+                "state": type(
+                    "_FakeState",
+                    (),
+                    {
+                        "handshake_complete": True,
+                        "remote_version": type("_Remote", (), {"node_id": "peer-a", "start_height": 20})(),
+                    },
+                )(),
+            },
+        )()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("127.0.0.1", 18444),
+        )
+        events: list[str] = []
+        runtime._observe_peer_misbehavior = lambda **kwargs: events.append(str(kwargs["event"]))  # type: ignore[method-assign]
+
+        runtime._apply_session_penalty(session, error=BlockRequestStalledError("block request stalled"), penalty=10)
+
+        assert runtime._should_penalize_as_misbehavior(
+            BlockRequestStalledError("block request stalled"),
+            handshake_complete=True,
+        ) is False
+        assert events == []
+
+
+def test_runtime_logs_applied_block_height(caplog) -> None:
+    class _FakeSessionState:
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 0})()
+
+    class _FakeSession:
+        state = _FakeSessionState()
+
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service)
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("127.0.0.1", 18444),
+        )
+        mined = _mine_block(service.build_candidate_block("miner").block)
+        service.apply_block(mined)
+        result = BlockIngestResult(
+            block_hash=mined.block_hash(),
+            activated_tip=mined.block_hash(),
+            reorged=False,
+            accepted_blocks=1,
+        )
+
+        with caplog.at_level(logging.INFO):
+            runtime._log_block_application(session, result, reorged=False)
+
+        assert "block applied peer=127.0.0.1:18444/peer-a height=0" in caplog.text
 
 
 def test_runtime_rejects_invalid_headers_message(monkeypatch) -> None:

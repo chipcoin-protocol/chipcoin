@@ -16,6 +16,7 @@ from ..config import get_network_config
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..utils.logging import configure_logging
 from .p2p.errors import (
+    BlockRequestStalledError,
     DuplicateConnectionError,
     HandshakeFailedError,
     InvalidBlockError,
@@ -943,7 +944,7 @@ class NodeRuntime:
             )
             if session is None or handle is None:
                 continue
-            penalty = ProtocolError("block request stalled")
+            penalty = BlockRequestStalledError("block request stalled")
             self._apply_session_penalty(session, error=penalty, penalty=10)
             if handle.block_stall_count >= self._BLOCK_STALL_DISCONNECT_THRESHOLD:
                 await session.close(reason=str(penalty), error=penalty)
@@ -1837,11 +1838,14 @@ class NodeRuntime:
     def _log_block_application(self, session: PeerProtocol, result, *, reorged: bool) -> None:
         """Log applied blocks compactly during catch-up and verbosely once in sync."""
 
+        local_tip = self.service.chain_tip()
+        local_height = None if local_tip is None else local_tip.height
         if self._sync_in_progress(session):
             self.logger.debug(
-                "%s peer=%s block=%s activated_tip=%s accepted_blocks=%s",
+                "%s peer=%s height=%s block=%s activated_tip=%s accepted_blocks=%s",
                 "reorg applied" if reorged else "block applied",
                 self._format_peer_for_logs(session),
+                local_height,
                 result.block_hash,
                 result.activated_tip,
                 result.accepted_blocks,
@@ -1850,9 +1854,10 @@ class NodeRuntime:
             return
 
         self.logger.info(
-            "%s peer=%s block=%s activated_tip=%s accepted_blocks=%s",
+            "%s peer=%s height=%s block=%s activated_tip=%s accepted_blocks=%s",
             "reorg applied" if reorged else "block applied",
             self._format_peer_for_logs(session),
+            local_height,
             result.block_hash,
             result.activated_tip,
             result.accepted_blocks,
@@ -2083,6 +2088,8 @@ class NodeRuntime:
     def _should_penalize_as_misbehavior(self, error: Exception | str | None, *, handshake_complete: bool) -> bool:
         """Return whether one peer failure should contribute to misbehavior score."""
 
+        if isinstance(error, BlockRequestStalledError):
+            return False
         classification = classify_peer_error(error)
         if classification in {"wrong_network_magic", "checksum_error", "malformed_message", "invalid_block", "invalid_tx"}:
             return True
