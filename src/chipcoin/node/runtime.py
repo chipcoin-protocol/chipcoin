@@ -13,7 +13,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from ..config import get_network_config
-from ..consensus.validation import ValidationError
+from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..utils.logging import configure_logging
 from .p2p.errors import (
     DuplicateConnectionError,
@@ -63,14 +63,25 @@ class SessionHandle:
     sync_target_height: int | None = None
     sync_total_missing_blocks: int | None = None
     sync_next_log_height: int | None = None
+    headers_sync_active: bool = False
+    last_headers_requested_at: float = 0.0
+    inflight_block_hashes: set[str] = field(default_factory=set)
+    block_stall_count: int = 0
+    headers_contributed: int = 0
+    blocks_contributed: int = 0
+    addr_relay_window_started_at: float = 0.0
+    addr_relay_entries_sent: int = 0
 
 
 class NodeRuntime:
     """Long-running TCP runtime coordinating peer sessions and sync."""
 
     _SYNC_PROGRESS_LOG_INTERVAL = 100
+    _SYNC_SCHEDULER_INTERVAL = 0.25
     _LOCAL_PEER_SEED_RETRY_INTERVAL = 30.0
     _MAX_LOCAL_PEER_SEED_IMPORTS = 8
+    _SEVERE_MISBEHAVIOR_DELTA = 100
+    _BLOCK_STALL_DISCONNECT_THRESHOLD = 2
 
     def __init__(
         self,
@@ -94,7 +105,28 @@ class NodeRuntime:
         max_inventory_items: int = 500,
         max_addr_records: int = 1000,
         max_headers_per_message: int = 2000,
+        headers_sync_enabled: bool = True,
+        block_download_window_size: int = 128,
+        block_max_inflight_per_peer: int = 16,
+        block_request_timeout_seconds: float = 10.0,
+        headers_sync_parallel_peers: int = 2,
+        headers_sync_start_height_gap_threshold: int = 1,
         duplicate_inventory_limit: int = 20,
+        peer_discovery_enabled: bool = True,
+        peerbook_max_size: int = 1024,
+        peer_addr_max_per_message: int = 250,
+        peer_addr_relay_limit_per_interval: int = 250,
+        peer_addr_relay_interval_seconds: int = 30,
+        peer_stale_after_seconds: int = 604800,
+        peer_retry_backoff_base_seconds: float = 1.0,
+        peer_retry_backoff_max_seconds: float = 30.0,
+        peer_discovery_startup_prefer_persisted: bool = True,
+        misbehavior_warning_threshold: int = 25,
+        misbehavior_disconnect_threshold: int = 50,
+        misbehavior_ban_threshold: int = 100,
+        misbehavior_ban_duration_seconds: int = 1800,
+        misbehavior_decay_interval_seconds: int = 300,
+        misbehavior_decay_step: int = 5,
         local_peer_seed_url: str | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -114,12 +146,40 @@ class NodeRuntime:
         self.max_connect_backoff_seconds = max(1.0, max_connect_backoff_seconds)
         self.max_consecutive_ping_failures = max(1, max_consecutive_ping_failures)
         self.max_inventory_items = max_inventory_items
-        self.max_addr_records = max_addr_records
+        self.max_addr_records = min(max_addr_records, peer_addr_max_per_message)
         self.max_headers_per_message = max_headers_per_message
+        self.headers_sync_enabled = headers_sync_enabled
+        self.block_download_window_size = max(1, block_download_window_size)
+        self.block_max_inflight_per_peer = max(1, block_max_inflight_per_peer)
+        self.block_request_timeout_seconds = max(1.0, block_request_timeout_seconds)
+        self.headers_sync_parallel_peers = max(1, headers_sync_parallel_peers)
+        self.headers_sync_start_height_gap_threshold = max(0, headers_sync_start_height_gap_threshold)
         self.duplicate_inventory_limit = duplicate_inventory_limit
+        self.peer_discovery_enabled = peer_discovery_enabled
+        self.peerbook_max_size = max(16, peerbook_max_size)
+        self.peer_addr_max_per_message = max(1, min(peer_addr_max_per_message, max_addr_records))
+        self.peer_addr_relay_limit_per_interval = max(1, peer_addr_relay_limit_per_interval)
+        self.peer_addr_relay_interval_seconds = max(1, peer_addr_relay_interval_seconds)
+        self.peer_stale_after_seconds = max(60, peer_stale_after_seconds)
+        self.peer_retry_backoff_base_seconds = max(0.5, peer_retry_backoff_base_seconds)
+        self.peer_retry_backoff_max_seconds = max(1.0, peer_retry_backoff_max_seconds)
+        self.peer_discovery_startup_prefer_persisted = peer_discovery_startup_prefer_persisted
+        self.misbehavior_warning_threshold = max(1, misbehavior_warning_threshold)
+        self.misbehavior_disconnect_threshold = max(
+            self.misbehavior_warning_threshold,
+            misbehavior_disconnect_threshold,
+        )
+        self.misbehavior_ban_threshold = max(
+            self.misbehavior_disconnect_threshold,
+            misbehavior_ban_threshold,
+        )
+        self.misbehavior_ban_duration_seconds = max(1, misbehavior_ban_duration_seconds)
+        self.misbehavior_decay_interval_seconds = max(1, misbehavior_decay_interval_seconds)
+        self.misbehavior_decay_step = max(1, misbehavior_decay_step)
         self.local_peer_seed_url = None if local_peer_seed_url is None else local_peer_seed_url.rstrip("/")
         self.logger = logger or logging.getLogger("chipcoin.node.runtime")
         self.sync_manager = SyncManager(node=service)
+        self.sync_manager.max_headers = max_headers_per_message
         self.node_id = secrets.token_hex(16)
 
         self._server: asyncio.AbstractServer | None = None
@@ -130,6 +190,9 @@ class NodeRuntime:
         self._sessions_by_node_id: dict[str, PeerProtocol] = {}
         self._outbound_targets: dict[tuple[str, int], OutboundPeer] = {
             (peer.host, peer.port): peer for peer in (outbound_peers or [])
+        }
+        self._outbound_target_sources: dict[tuple[str, int], str] = {
+            (peer.host, peer.port): "manual" for peer in (outbound_peers or [])
         }
         self._mining_template_key: tuple[str | None, tuple[str, ...]] | None = None
         self._mining_nonce_cursor = 0
@@ -166,15 +229,21 @@ class NodeRuntime:
             self.ping_interval,
             self.read_timeout,
         )
+        self._persist_configured_peer_targets()
         self._purge_persisted_self_aliases()
         self._purge_undialable_persisted_peers()
+        self._purge_stale_persisted_peers()
+        self._trim_peerbook_to_capacity()
         self._purge_persisted_startup_duplicate_aliases()
         await self._seed_outbound_peers_from_local_node_if_needed()
         self._initial_sync_required = self.miner_address is not None and bool(self._desired_outbound_peers())
+        self._update_sync_status()
         self._stop_event.clear()
         self._spawn_task(self._connect_loop(), "connect-loop")
         self._spawn_task(self._ping_loop(), "ping-loop")
         self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop")
+        if self.headers_sync_enabled:
+            self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop")
         if self.miner_address is not None:
             self._spawn_task(self._mining_loop(), "mining-loop")
 
@@ -217,6 +286,7 @@ class NodeRuntime:
         self._sessions.clear()
         self._sessions_by_node_id.clear()
         self._relayed_mempool_txids.clear()
+        self.service.set_runtime_sync_status(None)
         self._stop_event.set()
         self.logger.info("runtime stopped network=%s", self.service.network)
 
@@ -259,6 +329,9 @@ class NodeRuntime:
             await self._seed_outbound_peers_from_local_node_if_needed()
             for peer in list(self._desired_outbound_peers()):
                 if self._has_active_endpoint(peer):
+                    continue
+                if self._is_peer_currently_banned(peer.host, peer.port):
+                    self.logger.debug("outbound connect skipped for banned peer=%s:%s", peer.host, peer.port)
                     continue
                 if self._is_backoff_active(peer):
                     info = self._known_peer_info(peer.host, peer.port)
@@ -320,6 +393,11 @@ class NodeRuntime:
         transport = TCPTransport(reader, writer, read_timeout=self.read_timeout, write_timeout=self.write_timeout)
         endpoint = transport.peer_endpoint()
         self.logger.info("inbound connection accepted peer=%s:%s", endpoint.host, endpoint.port)
+        if self._is_peer_currently_banned(endpoint.host, endpoint.port):
+            self.logger.info("inbound connection rejected peer=%s:%s reason=temporary_ban", endpoint.host, endpoint.port)
+            writer.close()
+            await writer.wait_closed()
+            return
         session = PeerProtocol(
             transport=transport,
             identity=self._local_identity(),
@@ -390,9 +468,14 @@ class NodeRuntime:
             self._sessions_by_node_id[remote.node_id] = session
             handle = self._sessions.get(session)
             if handle is not None and handle.endpoint is not None:
-                self.service.add_peer(handle.endpoint.host, handle.endpoint.port)
+                self.service.add_peer(
+                    handle.endpoint.host,
+                    handle.endpoint.port,
+                    source=self._configured_peer_source(handle.endpoint),
+                )
             endpoint = self._session_endpoint(session, handle)
             observation_direction = "inbound" if session.inbound else "outbound"
+            observation_source = "discovered"
             if handle is not None and endpoint is not None:
                 canonical_endpoint = self._canonicalize_reusable_inbound_endpoint(endpoint, inbound=session.inbound)
                 if canonical_endpoint is not None:
@@ -407,12 +490,18 @@ class NodeRuntime:
                     handle.endpoint = canonical_endpoint
                     endpoint = canonical_endpoint
                     observation_direction = None
+                elif handle.outbound and endpoint is not None:
+                    observation_source = self._configured_peer_source(endpoint)
             if endpoint is not None:
+                existing = self._known_peer_info(endpoint.host, endpoint.port)
                 self.service.record_peer_observation(
                     host=endpoint.host,
                     port=endpoint.port,
+                    source=observation_source if existing is None or existing.source is None else existing.source,
                     direction=observation_direction,
                     handshake_complete=True,
+                    last_success=self.service.time_provider(),
+                    success_count=1 if existing is None or existing.success_count is None else existing.success_count + 1,
                     last_known_height=remote.start_height,
                     node_id=remote.node_id,
                     score=self._updated_peer_score(endpoint.host, endpoint.port, delta=1),
@@ -442,9 +531,13 @@ class NodeRuntime:
                 0 if self.service.chain_tip() is None else self.service.chain_tip().height,
             )
             self._begin_sync_tracking(session, remote.start_height)
-            await self._request_headers(session)
+            if self.headers_sync_enabled:
+                await self._drive_header_sync()
+            else:
+                await self._request_headers(session)
             await self._send_known_peers(session)
             await self._announce_current_mempool(session)
+            self._update_sync_status()
         except Exception as exc:
             self.logger.info("handshake follow-up failed error=%s", exc)
             await session.close(reason=str(exc))
@@ -462,29 +555,46 @@ class NodeRuntime:
         if message.command == "headers":
             if len(message.payload.headers) > self.max_headers_per_message:
                 error = ProtocolError("headers message exceeded limit")
-                self._apply_session_penalty(session, error=error, penalty=15)
+                self._apply_session_penalty(session, error=error, penalty=25)
                 await session.close(reason=str(error), error=error)
                 await self._drop_session(session)
                 return
-            ingest = self.sync_manager.ingest_headers(message.payload.headers)
+            handle = self._sessions.get(session)
+            if handle is not None:
+                handle.headers_sync_active = False
+            try:
+                ingest = self.sync_manager.ingest_headers(
+                    message.payload.headers,
+                    peer_id=self._sync_peer_id(session),
+                )
+            except (StatelessValidationError, ContextualValidationError, ValueError) as exc:
+                error = ProtocolError(f"invalid headers: {exc}")
+                self._apply_session_penalty(session, error=error, penalty=self._SEVERE_MISBEHAVIOR_DELTA)
+                await session.close(reason=str(error), error=error)
+                await self._drop_session(session)
+                return
+            if handle is not None:
+                handle.headers_contributed += ingest.headers_received
             if ingest.headers_received > 0 or ingest.parent_unknown is not None or ingest.missing_block_hashes:
                 self.logger.info(
-                    "headers received peer=%s count=%s stored=%s missing_blocks=%s best_tip=%s continue=%s",
+                    "headers received peer=%s count=%s stored=%s missing_blocks=%s best_tip=%s best_height=%s continue=%s",
                     self._format_peer_for_logs(session),
                     len(message.payload.headers),
                     ingest.headers_received,
                     len(ingest.missing_block_hashes),
                     ingest.best_tip_hash,
+                    ingest.best_tip_height,
                     ingest.needs_more_headers,
                 )
             else:
                 self.logger.debug(
-                    "headers received peer=%s count=%s stored=%s missing_blocks=%s best_tip=%s continue=%s",
+                    "headers received peer=%s count=%s stored=%s missing_blocks=%s best_tip=%s best_height=%s continue=%s",
                     self._format_peer_for_logs(session),
                     len(message.payload.headers),
                     ingest.headers_received,
                     len(ingest.missing_block_hashes),
                     ingest.best_tip_hash,
+                    ingest.best_tip_height,
                     ingest.needs_more_headers,
                 )
             if ingest.parent_unknown is not None:
@@ -498,36 +608,38 @@ class NodeRuntime:
             if ingest.missing_block_hashes:
                 self._begin_sync_tracking(
                     session,
-                    self._sync_target_height(session),
+                    ingest.best_tip_height if ingest.best_tip_height is not None else self._sync_target_height(session),
                     total_missing_blocks=len(ingest.missing_block_hashes),
                 )
                 self._log_sync_progress(session, force=True)
-                self.logger.info(
-                    "sync requesting blocks peer=%s count=%s first=%s last=%s",
-                    self._format_peer_for_logs(session),
-                    len(ingest.missing_block_hashes),
-                    ingest.missing_block_hashes[0],
-                    ingest.missing_block_hashes[-1],
-                )
-                for start in range(0, len(ingest.missing_block_hashes), self.max_inventory_items):
-                    batch = ingest.missing_block_hashes[start : start + self.max_inventory_items]
-                    await session.send_message(
-                        MessageEnvelope(
-                            command="getdata",
-                            payload=GetDataMessage(
-                                items=tuple(
-                                    InventoryVector(object_type="block", object_hash=block_hash)
-                                    for block_hash in batch
-                                )
-                            ),
-                        )
+                if not self.headers_sync_enabled:
+                    self.logger.info(
+                        "sync requesting blocks peer=%s count=%s first=%s last=%s",
+                        self._format_peer_for_logs(session),
+                        len(ingest.missing_block_hashes),
+                        ingest.missing_block_hashes[0],
+                        ingest.missing_block_hashes[-1],
                     )
+                    for start in range(0, len(ingest.missing_block_hashes), self.max_inventory_items):
+                        batch = ingest.missing_block_hashes[start : start + self.max_inventory_items]
+                        await session.send_message(
+                            MessageEnvelope(
+                                command="getdata",
+                                payload=GetDataMessage(
+                                    items=tuple(
+                                        InventoryVector(object_type="block", object_hash=block_hash)
+                                        for block_hash in batch
+                                    )
+                                ),
+                            )
+                        )
             else:
                 self.sync_manager.activate_best_chain_if_ready()
                 self._log_sync_progress(session, force=True)
             if ingest.needs_more_headers:
                 next_locator = None if not message.payload.headers else (message.payload.headers[-1].block_hash(),)
                 await self._request_headers(session, locator_hashes=next_locator)
+            self._update_sync_status()
             return
 
         if message.command == "getblocks":
@@ -537,7 +649,7 @@ class NodeRuntime:
         if message.command == "inv":
             if len(message.payload.items) > self.max_inventory_items:
                 error = ProtocolError("inventory message exceeded limit")
-                self._apply_session_penalty(session, error=error, penalty=15)
+                self._apply_session_penalty(session, error=error, penalty=25)
                 await session.close(reason=str(error), error=error)
                 await self._drop_session(session)
                 return
@@ -559,7 +671,7 @@ class NodeRuntime:
         if message.command == "getdata":
             if len(message.payload.items) > self.max_inventory_items:
                 error = ProtocolError("getdata message exceeded limit")
-                self._apply_session_penalty(session, error=error, penalty=10)
+                self._apply_session_penalty(session, error=error, penalty=25)
                 await session.close(reason=str(error), error=error)
                 await self._drop_session(session)
                 return
@@ -580,10 +692,15 @@ class NodeRuntime:
             except ValidationError as exc:
                 self.logger.debug("peer sent invalid block: %s", exc)
                 typed_error = InvalidBlockError(f"invalid block: {exc}")
-                self._apply_session_penalty(session, error=typed_error, penalty=25)
+                self._apply_session_penalty(session, error=typed_error, penalty=self._SEVERE_MISBEHAVIOR_DELTA)
                 await session.close(reason=str(typed_error), error=typed_error)
                 await self._drop_session(session)
                 return
+            self._clear_inflight_block_hash(result.block_hash)
+            handle = self._sessions.get(session)
+            if handle is not None:
+                handle.blocks_contributed += result.accepted_blocks
+                handle.block_stall_count = 0
             if result.parent_unknown is not None:
                 self.logger.info(
                     "sync orphan block peer=%s block=%s parent=%s",
@@ -614,6 +731,7 @@ class NodeRuntime:
                 InventoryVector(object_type="block", object_hash=result.block_hash),
                 exclude=session,
             )
+            self._update_sync_status()
             return
 
         if message.command == "tx":
@@ -636,16 +754,21 @@ class NodeRuntime:
             return
 
         if message.command == "getaddr":
+            if not self.peer_discovery_enabled:
+                return
             await self._send_known_peers(session)
             return
 
         if message.command == "addr":
+            if not self.peer_discovery_enabled:
+                return
             if len(message.payload.addresses) > self.max_addr_records:
                 error = ProtocolError("addr message exceeded limit")
-                self._apply_session_penalty(session, error=error, penalty=10)
+                self._apply_session_penalty(session, error=error, penalty=25)
                 await session.close(reason=str(error), error=error)
                 await self._drop_session(session)
                 return
+            accepted = 0
             for address in message.payload.addresses:
                 announced = OutboundPeer(address.host, address.port)
                 if self._is_local_listener_alias(announced):
@@ -655,8 +778,11 @@ class NodeRuntime:
                 if self._is_known_peer_alias(announced):
                     continue
                 self._outbound_targets[(address.host, address.port)] = announced
-                self.service.add_peer(address.host, address.port)
-            self.logger.debug("peer announced addresses count=%s", len(message.payload.addresses))
+                self._outbound_target_sources[(address.host, address.port)] = "discovered"
+                self.service.add_peer(address.host, address.port, source="discovered")
+                accepted += 1
+            self._trim_peerbook_to_capacity()
+            self.logger.debug("peer announced addresses count=%s accepted=%s", len(message.payload.addresses), accepted)
             return
 
     async def _broadcast_inventory(self, item: InventoryVector, *, exclude: PeerProtocol | None = None) -> None:
@@ -713,9 +839,223 @@ class NodeRuntime:
                 self.logger.debug("mempool relay loop failed: %s", exc)
             await asyncio.sleep(self.mempool_relay_interval)
 
+    async def _sync_scheduler_loop(self) -> None:
+        """Drive headers-first sync, block scheduling, and stall reassignment."""
+
+        while self._running:
+            try:
+                await self._expire_stalled_block_requests()
+                await self._drive_header_sync()
+                await self._dispatch_block_downloads()
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("sync scheduler loop failed: %s", exc)
+            self._update_sync_status()
+            await asyncio.sleep(self._SYNC_SCHEDULER_INTERVAL)
+
+    async def _drive_header_sync(self) -> None:
+        """Request headers from a bounded set of suitable peers."""
+
+        now = asyncio.get_running_loop().time()
+        for session, handle in list(self._sessions.items()):
+            if not handle.headers_sync_active:
+                continue
+            if handle.last_headers_requested_at <= 0:
+                continue
+            if (now - handle.last_headers_requested_at) < self.block_request_timeout_seconds:
+                continue
+            handle.headers_sync_active = False
+            error = ProtocolError("headers request stalled")
+            self._apply_session_penalty(session, error=error, penalty=10)
+            self.logger.info("sync headers request stalled peer=%s action=deprioritize", self._format_peer_for_logs(session))
+        active = sum(
+            1
+            for handle in self._sessions.values()
+            if handle.headers_sync_active and not handle.protocol.state.closed and handle.protocol.state.handshake_complete
+        )
+        for session in self._eligible_header_sync_sessions():
+            if active >= self.headers_sync_parallel_peers:
+                break
+            handle = self._sessions.get(session)
+            if handle is None or handle.headers_sync_active:
+                continue
+            await self._request_headers(session)
+            active += 1
+
+    async def _dispatch_block_downloads(self) -> None:
+        """Assign block downloads across multiple healthy peers."""
+
+        sessions = self._eligible_block_download_sessions()
+        if not sessions:
+            return
+        peer_ids = tuple(self._sync_peer_id(session) for session in sessions)
+        now = asyncio.get_running_loop().time()
+        assignments = self.sync_manager.reserve_block_downloads(
+            peer_ids=peer_ids,
+            max_window_size=self.block_download_window_size,
+            max_inflight_per_peer=self.block_max_inflight_per_peer,
+            timeout_seconds=self.block_request_timeout_seconds,
+            now=now,
+        )
+        if not assignments:
+            return
+        grouped: dict[str, list[InventoryVector]] = {}
+        for assignment in assignments:
+            grouped.setdefault(assignment.peer_id, []).append(
+                InventoryVector(object_type="block", object_hash=assignment.block_hash)
+            )
+        for session in sessions:
+            peer_id = self._sync_peer_id(session)
+            items = grouped.get(peer_id)
+            if not items:
+                continue
+            handle = self._sessions.get(session)
+            if handle is None:
+                continue
+            for item in items:
+                handle.inflight_block_hashes.add(item.object_hash)
+            for start in range(0, len(items), self.max_inventory_items):
+                batch = tuple(items[start : start + self.max_inventory_items])
+                await session.send_message(MessageEnvelope(command="getdata", payload=GetDataMessage(items=batch)))
+            self.logger.info(
+                "sync scheduled block downloads peer=%s count=%s inflight=%s",
+                self._format_peer_for_logs(session),
+                len(items),
+                len(handle.inflight_block_hashes),
+            )
+
+    async def _expire_stalled_block_requests(self) -> None:
+        """Expire stalled block requests and reassign them on the next scheduler tick."""
+
+        now = asyncio.get_running_loop().time()
+        expired = self.sync_manager.expire_block_requests(now=now)
+        for request in expired:
+            session = self._session_for_sync_peer(request.peer_id)
+            handle = None if session is None else self._sessions.get(session)
+            if handle is not None:
+                handle.inflight_block_hashes.discard(request.block_hash)
+                handle.block_stall_count += 1
+            self.logger.info(
+                "sync block request stalled peer=%s block=%s attempt=%s action=reassign",
+                request.peer_id,
+                request.block_hash,
+                request.attempt,
+            )
+            if session is None or handle is None:
+                continue
+            penalty = ProtocolError("block request stalled")
+            self._apply_session_penalty(session, error=penalty, penalty=10)
+            if handle.block_stall_count >= self._BLOCK_STALL_DISCONNECT_THRESHOLD:
+                await session.close(reason=str(penalty), error=penalty)
+                await self._drop_session(session)
+
+    def _eligible_header_sync_sessions(self) -> list[PeerProtocol]:
+        """Return peers eligible to contribute headers-first sync."""
+
+        return sorted(
+            [
+                session
+                for session in self._sessions
+                if self._session_can_contribute_headers(session)
+            ],
+            key=self._sync_session_rank_key,
+        )
+
+    def _eligible_block_download_sessions(self) -> list[PeerProtocol]:
+        """Return peers eligible to serve block downloads."""
+
+        best_header_height = self.sync_manager.best_header_height()
+        sessions = [
+            session
+            for session in self._sessions
+            if self._session_can_download_blocks(session, best_header_height=best_header_height)
+        ]
+        return sorted(sessions, key=self._sync_session_rank_key)
+
+    def _session_can_contribute_headers(self, session: PeerProtocol) -> bool:
+        """Return whether one session should be queried for headers."""
+
+        if session.state.closed or not session.state.handshake_complete:
+            return False
+        handle = self._sessions.get(session)
+        if handle is None:
+            return False
+        remote = session.state.remote_version
+        if remote is None:
+            return False
+        local_tip = self.service.chain_tip()
+        local_height = -1 if local_tip is None else local_tip.height
+        best_header_height = self.sync_manager.best_header_height()
+        current_height = max(local_height, -1 if best_header_height is None else best_header_height)
+        return remote.start_height >= current_height + self.headers_sync_start_height_gap_threshold
+
+    def _session_can_download_blocks(self, session: PeerProtocol, *, best_header_height: int | None) -> bool:
+        """Return whether one session can be used for block download work."""
+
+        if session.state.closed or not session.state.handshake_complete:
+            return False
+        if best_header_height is None:
+            return False
+        handle = self._sessions.get(session)
+        if handle is None:
+            return False
+        if len(handle.inflight_block_hashes) >= self.block_max_inflight_per_peer:
+            return False
+        remote = session.state.remote_version
+        if remote is None:
+            return False
+        return remote.start_height >= best_header_height or remote.start_height >= max(0, best_header_height - 1)
+
+    def _sync_session_rank_key(self, session: PeerProtocol) -> tuple[int, int, int, str]:
+        """Prefer healthier peers for header and block sync work."""
+
+        handle = self._sessions.get(session)
+        endpoint = self._session_endpoint(session, handle)
+        if endpoint is None:
+            return (1, 0, 0, "unknown")
+        info = self._known_peer_info(endpoint.host, endpoint.port)
+        success_count = 0 if info is None or info.success_count is None else info.success_count
+        score = 0 if info is None or info.score is None else info.score
+        stall_count = 0 if handle is None else handle.block_stall_count
+        return (stall_count, -success_count, -score, f"{endpoint.host}:{endpoint.port}")
+
+    def _sync_peer_id(self, session: PeerProtocol) -> str:
+        """Return a stable sync scheduler identifier for one session."""
+
+        remote = session.state.remote_version
+        if remote is not None:
+            return remote.node_id
+        handle = self._sessions.get(session)
+        endpoint = self._session_endpoint(session, handle)
+        if endpoint is not None:
+            return f"{endpoint.host}:{endpoint.port}"
+        return f"session:{id(session)}"
+
+    def _session_for_sync_peer(self, peer_id: str) -> PeerProtocol | None:
+        """Return the active session matching one scheduler peer identifier."""
+
+        for session in self._sessions:
+            if self._sync_peer_id(session) == peer_id:
+                return session
+        return None
+
+    def _clear_inflight_block_hash(self, block_hash: str) -> None:
+        """Remove one completed block request from all session handles."""
+
+        for handle in self._sessions.values():
+            handle.inflight_block_hashes.discard(block_hash)
+
+    def _update_sync_status(self) -> None:
+        """Publish the latest sync snapshot through the service diagnostics surface."""
+
+        self.service.set_runtime_sync_status(self.sync_manager.sync_status())
+
     async def _request_headers(self, session: PeerProtocol, *, locator_hashes: tuple[str, ...] | None = None) -> None:
         """Request headers from a peer using the local block locator."""
 
+        handle = self._sessions.get(session)
+        if handle is not None:
+            handle.headers_sync_active = True
+            handle.last_headers_requested_at = asyncio.get_running_loop().time()
         await session.send_message(
             MessageEnvelope(
                 command="getheaders",
@@ -735,21 +1075,69 @@ class NodeRuntime:
     async def _send_known_peers(self, session: PeerProtocol) -> None:
         """Send known peer addresses to a remote session."""
 
+        if not self.peer_discovery_enabled:
+            return
+        handle = self._sessions.get(session)
+        if handle is not None:
+            now = asyncio.get_running_loop().time()
+            if (
+                handle.addr_relay_window_started_at <= 0
+                or (now - handle.addr_relay_window_started_at) >= self.peer_addr_relay_interval_seconds
+            ):
+                handle.addr_relay_window_started_at = now
+                handle.addr_relay_entries_sent = 0
+            remaining = self.peer_addr_relay_limit_per_interval - handle.addr_relay_entries_sent
+            if remaining <= 0:
+                peer_label = "unknown"
+                try:
+                    peer_label = self._format_peer_for_logs(session)
+                except Exception:  # noqa: BLE001
+                    peer_label = "unknown"
+                self.logger.debug("addr relay skipped peer=%s reason=rate_limited", peer_label)
+                return
+        else:
+            remaining = self.peer_addr_max_per_message
         remote = session.state.remote_version
+        relay_cap = min(self.peer_addr_max_per_message, remaining)
+        advertised_peers = sorted(
+            (
+                peer
+                for peer in self.service.list_peers()
+                if self._is_advertisable_peer(peer)
+                and not self._is_stale_peer(peer)
+                and peer.node_id != self.node_id
+                and (remote is None or peer.node_id != remote.node_id)
+            ),
+            key=lambda peer: (
+                0 if (peer.success_count or 0) > 0 else 1,
+                {"manual": 0, "seed": 1, "discovered": 2}.get(peer.source, 3),
+                -(0 if peer.success_count is None else peer.success_count),
+                -(0 if peer.score is None else peer.score),
+                peer.host,
+                peer.port,
+            ),
+        )[:relay_cap]
         addresses = tuple(
             PeerAddress(host=peer.host, port=peer.port, services=0, timestamp=self.service.time_provider())
-            for peer in self.service.list_peers()
-            if self._is_advertisable_peer(peer)
-            and peer.node_id != self.node_id
-            and (remote is None or peer.node_id != remote.node_id)
+            for peer in advertised_peers
         )
         await session.send_message(MessageEnvelope(command="addr", payload=AddrMessage(addresses=addresses)))
+        if handle is not None:
+            handle.addr_relay_entries_sent += len(addresses)
         self.logger.debug("sent addr records count=%s", len(addresses))
 
     async def _drop_session(self, session: PeerProtocol) -> None:
         """Remove a session from runtime tracking."""
 
         handle = self._sessions.pop(session, None)
+        peer_id = self._sync_peer_id(session)
+        released_requests = self.sync_manager.release_peer_requests(peer_id)
+        for request in released_requests:
+            self.logger.info(
+                "sync block request released peer=%s block=%s reason=session_dropped",
+                peer_id,
+                request.block_hash,
+            )
         remote = session.state.remote_version
         endpoint = self._session_endpoint(session, handle)
         if endpoint is not None:
@@ -791,9 +1179,11 @@ class NodeRuntime:
                 0 if existing is None or existing.disconnect_count is None else existing.disconnect_count + 1,
             )
         if handle is None:
+            self._update_sync_status()
             return
         if remote is not None and self._sessions_by_node_id.get(remote.node_id) is session:
             del self._sessions_by_node_id[remote.node_id]
+        self._update_sync_status()
 
     def _has_active_endpoint(self, peer: OutboundPeer) -> bool:
         """Return whether an active outbound session already targets the endpoint."""
@@ -818,17 +1208,37 @@ class NodeRuntime:
                 return True
         return False
 
+    def _configured_peer_source(self, peer: OutboundPeer) -> str:
+        """Return the configured source classification for one explicit target."""
+
+        return self._outbound_target_sources.get((peer.host, peer.port), "manual")
+
+    def _persist_configured_peer_targets(self) -> None:
+        """Persist explicitly configured peer targets with their source classification."""
+
+        for peer in self._outbound_targets.values():
+            self.service.add_peer(peer.host, peer.port, source=self._configured_peer_source(peer))
+
     def _desired_outbound_peers(self) -> list[OutboundPeer]:
         """Return configured and persisted peers excluding the local listener."""
 
-        peers = set(self._outbound_targets.values())
-        for peer in self.service.list_peers():
-            if not self._is_dialable_peer(peer):
-                continue
-            peers.add(OutboundPeer(peer.host, peer.port))
+        persisted_peers = [peer for peer in self.service.list_peers() if self._is_dialable_peer(peer)]
+        peers = set()
+        use_configured_fallback = True
+        if self.peer_discovery_startup_prefer_persisted:
+            healthy_persisted = [peer for peer in persisted_peers if self._is_healthy_persisted_peer(peer)]
+            if healthy_persisted:
+                peers.update(OutboundPeer(peer.host, peer.port) for peer in healthy_persisted)
+                use_configured_fallback = False
+            else:
+                peers.update(OutboundPeer(peer.host, peer.port) for peer in persisted_peers)
+        else:
+            peers.update(OutboundPeer(peer.host, peer.port) for peer in persisted_peers)
+        if use_configured_fallback:
+            peers.update(self._outbound_targets.values())
         deduped: dict[str, OutboundPeer] = {}
         unnamed: list[OutboundPeer] = []
-        for peer in sorted(peers, key=lambda peer: (peer.host, peer.port)):
+        for peer in sorted(peers, key=self._outbound_peer_rank_key):
             if self._is_local_listener_alias(peer):
                 continue
             info = self._known_peer_info(peer.host, peer.port)
@@ -840,13 +1250,43 @@ class NodeRuntime:
             current = deduped.get(info.node_id)
             if current is None or (peer.host, peer.port) in self._outbound_targets:
                 deduped[info.node_id] = peer
-        return sorted([*self._dedupe_unidentified_outbound_peers(unnamed), *deduped.values()], key=lambda peer: (peer.host, peer.port))
+        return sorted([*self._dedupe_unidentified_outbound_peers(unnamed), *deduped.values()], key=self._outbound_peer_rank_key)
+
+    def _is_healthy_persisted_peer(self, peer) -> bool:
+        """Return whether one persisted peer is good enough to outrank manual seed fallback."""
+
+        if peer.source not in {"manual", "seed", "discovered"}:
+            return False
+        if self._is_peer_currently_banned(peer.host, peer.port):
+            return False
+        if self._is_stale_peer(peer):
+            return False
+        if peer.backoff_until is not None and peer.backoff_until > self.service.time_provider():
+            return False
+        if (peer.success_count or 0) > 0:
+            return True
+        return (peer.handshake_complete is True) or ((peer.score or 0) > 0)
+
+    def _outbound_peer_rank_key(self, peer: OutboundPeer) -> tuple[int, int, int, int, str, int]:
+        """Prefer reliable persisted peers before fallback seed/manual endpoints."""
+
+        info = self._known_peer_info(peer.host, peer.port)
+        source = None if info is None else info.source
+        source_rank = {"discovered": 0, "manual": 1, "seed": 2}.get(source, 3)
+        success_count = 0 if info is None or info.success_count is None else info.success_count
+        score = 0 if info is None or info.score is None else info.score
+        last_success = 0 if info is None or info.last_success is None else info.last_success
+        return (source_rank, -success_count, -score, -last_success, peer.host, peer.port)
 
     def _is_dialable_peer(self, peer) -> bool:
         """Return whether a persisted peer is safe to use for outbound dialing."""
 
         if peer.direction == "inbound" or peer.port <= 0:
             return False
+        if self._is_peer_currently_banned(peer.host, peer.port):
+            return False
+        if peer.source in {"manual", "seed"}:
+            return self._is_valid_peer_host(peer.host)
         return self._is_persisted_peer_host_dialable(peer.host)
 
     def _is_persisted_peer_host_dialable(self, host: str) -> bool:
@@ -865,6 +1305,8 @@ class NodeRuntime:
         info = self._known_peer_info(peer.host, peer.port)
         if info is None:
             return True
+        if self._is_peer_currently_banned(peer.host, peer.port):
+            return False
         if info.score is not None and info.score <= -100:
             return False
         if info.backoff_until is not None and info.backoff_until > self.service.time_provider():
@@ -911,7 +1353,7 @@ class NodeRuntime:
                 continue
             if self._is_known_peer_alias(candidate):
                 continue
-            self.service.add_peer(candidate.host, candidate.port)
+            self.service.add_peer(candidate.host, candidate.port, source="seed")
             imported += 1
             self.logger.info("miner seeded peer imported peer=%s:%s source=%s", candidate.host, candidate.port, self.local_peer_seed_url)
         return imported
@@ -934,11 +1376,14 @@ class NodeRuntime:
             direction = row.get("direction")
             score = row.get("score")
             backoff_until = row.get("backoff_until")
+            banned = row.get("banned")
             if not isinstance(host, str) or not host:
                 continue
             if not isinstance(port, int) or port <= 0:
                 continue
             if direction == "inbound":
+                continue
+            if banned is True:
                 continue
             if isinstance(score, int) and score <= -100:
                 continue
@@ -967,10 +1412,74 @@ class NodeRuntime:
             return None
         return OutboundPeer(endpoint.host, get_network_config(self.service.network).default_p2p_port)
 
+    def _is_valid_peer_host(self, host: str) -> bool:
+        """Return whether one advertised host string is syntactically reasonable."""
+
+        if not host or len(host) > 253 or any(character.isspace() for character in host):
+            return False
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            labels = host.split(".")
+            if any(not label or len(label) > 63 for label in labels):
+                return False
+            for label in labels:
+                if label.startswith("-") or label.endswith("-"):
+                    return False
+                if not all(character.isalnum() or character == "-" for character in label):
+                    return False
+            return True
+        return True
+
+    def _is_stale_peer(self, peer) -> bool:
+        """Return whether one persisted peer should age out of the automatic peerbook."""
+
+        if peer.source in {"manual", "seed"}:
+            return False
+        anchor = peer.last_success or peer.last_seen or peer.first_seen
+        if anchor is None:
+            return False
+        return (self.service.time_provider() - anchor) >= self.peer_stale_after_seconds
+
+    def _purge_stale_persisted_peers(self) -> None:
+        """Drop stale discovered peers so startup candidate selection stays bounded."""
+
+        stale_peers = [peer for peer in self.service.list_peers() if self._is_stale_peer(peer)]
+        for peer in stale_peers:
+            self._outbound_targets.pop((peer.host, peer.port), None)
+            self.service.remove_peer(peer.host, peer.port)
+            self.logger.info("removed stale peer=%s:%s source=%s", peer.host, peer.port, peer.source)
+
+    def _peerbook_trim_sort_key(self, peer) -> tuple[int, int, int, int, int, str, int]:
+        """Order peers from worst to best when trimming the persistent peerbook."""
+
+        source_rank = {"discovered": 0, "seed": 1, "manual": 2}.get(peer.source, -1)
+        banned_rank = 1 if self._is_peer_currently_banned(peer.host, peer.port) else 0
+        success_count = 0 if peer.success_count is None else peer.success_count
+        score = 0 if peer.score is None else peer.score
+        last_seen = 0 if peer.last_seen is None else peer.last_seen
+        return (source_rank, banned_rank, success_count, score, last_seen, peer.host, peer.port)
+
+    def _trim_peerbook_to_capacity(self) -> None:
+        """Keep the persistent peerbook within the configured capacity."""
+
+        peers = self.service.list_peers()
+        if len(peers) <= self.peerbook_max_size:
+            return
+        removable = sorted(
+            [peer for peer in peers if peer.source != "manual"],
+            key=self._peerbook_trim_sort_key,
+        )
+        overflow = len(peers) - self.peerbook_max_size
+        for peer in removable[:overflow]:
+            self._outbound_targets.pop((peer.host, peer.port), None)
+            self.service.remove_peer(peer.host, peer.port)
+            self.logger.info("trimmed peerbook peer=%s:%s source=%s", peer.host, peer.port, peer.source)
+
     def _is_announced_peer_dialable(self, peer: OutboundPeer) -> bool:
         """Return whether one peer announced through addr should be accepted."""
 
-        if peer.port <= 0:
+        if peer.port <= 0 or not self._is_valid_peer_host(peer.host):
             return False
         return self._is_persisted_peer_host_dialable(peer.host)
 
@@ -1076,7 +1585,119 @@ class NodeRuntime:
     def _is_advertisable_peer(self, peer) -> bool:
         """Return whether a persisted peer should be re-announced to other peers."""
 
-        return peer.direction != "inbound" and peer.port > 0
+        return peer.direction != "inbound" and peer.port > 0 and not self._is_peer_currently_banned(peer.host, peer.port)
+
+    def _decayed_misbehavior_state(self, info, *, now: int) -> tuple[int, int]:
+        """Return the peer misbehavior score after applying passive decay."""
+
+        score = 0 if info is None or info.misbehavior_score is None else max(0, info.misbehavior_score)
+        updated_at = now if info is None or info.misbehavior_last_updated_at is None else info.misbehavior_last_updated_at
+        if score <= 0:
+            return 0, updated_at
+        elapsed = max(0, now - updated_at)
+        if elapsed < self.misbehavior_decay_interval_seconds:
+            return score, updated_at
+        decay_steps = elapsed // self.misbehavior_decay_interval_seconds
+        decayed_score = max(0, score - (decay_steps * self.misbehavior_decay_step))
+        return decayed_score, updated_at + (decay_steps * self.misbehavior_decay_interval_seconds)
+
+    def _ban_state_for_peer(self, host: str, port: int) -> tuple[bool, int | None]:
+        """Return whether one peer or host-equivalent alias is still banned."""
+
+        now = self.service.time_provider()
+        exact = self._known_peer_info(host, port)
+        for candidate in [exact, *self.service.list_peers()]:
+            if candidate is None or candidate.host != host:
+                continue
+            ban_until = candidate.ban_until
+            if ban_until is not None and ban_until > now:
+                return True, ban_until
+        return False, None
+
+    def _is_peer_currently_banned(self, host: str, port: int) -> bool:
+        """Return whether one peer endpoint is under an active temporary ban."""
+
+        banned, _ban_until = self._ban_state_for_peer(host, port)
+        return banned
+
+    def _observe_peer_misbehavior(
+        self,
+        *,
+        host: str,
+        port: int,
+        event: str,
+        delta: int,
+        direction: str | None,
+        handshake_complete: bool | None,
+        last_known_height: int | None = None,
+        node_id: str | None = None,
+        reconnect_attempts: int | None = None,
+        backoff_until: int | None = None,
+        disconnect_count: int | None = None,
+        session_started_at: int | None = None,
+        last_error: str | None = None,
+        protocol_error_class_name: str | None = None,
+        score: int | None = None,
+        force_disconnect: bool = False,
+    ) -> str:
+        """Apply one misbehavior event, persist it, and return the action taken."""
+
+        info = self._known_peer_info(host, port)
+        now = self.service.time_provider()
+        current_score, updated_at = self._decayed_misbehavior_state(info, now=now)
+        next_score = min(10_000, current_score + max(0, delta))
+        source = None if info is None else info.source
+        action = "observe"
+        ban_until = None if info is None else info.ban_until
+        if ban_until is not None and ban_until <= now:
+            ban_until = None
+        if next_score >= self.misbehavior_ban_threshold:
+            action = "ban"
+            ban_until = now + self.misbehavior_ban_duration_seconds
+        elif force_disconnect or next_score >= self.misbehavior_disconnect_threshold:
+            action = "disconnect"
+            ban_until = None if ban_until is None or ban_until <= now else ban_until
+        elif next_score >= self.misbehavior_warning_threshold:
+            action = "warn"
+            ban_until = None if ban_until is None or ban_until <= now else ban_until
+        self.service.record_peer_observation(
+            host=host,
+            port=port,
+            source=source,
+            direction=direction,
+            handshake_complete=handshake_complete,
+            last_failure=now if last_error is not None else None,
+            failure_count=(
+                None if last_error is None else (1 if info is None or info.failure_count is None else info.failure_count + 1)
+            ),
+            last_known_height=last_known_height,
+            node_id=node_id,
+            score=score,
+            reconnect_attempts=reconnect_attempts,
+            backoff_until=backoff_until,
+            last_error=last_error,
+            last_error_at=now if last_error is not None else None,
+            protocol_error_class=protocol_error_class_name,
+            disconnect_count=disconnect_count,
+            session_started_at=session_started_at,
+            misbehavior_score=next_score,
+            misbehavior_last_updated_at=now if next_score != current_score else updated_at,
+            ban_until=ban_until,
+            last_penalty_reason=event,
+            last_penalty_at=now,
+        )
+        self._trim_peerbook_to_capacity()
+        self.logger.info(
+            "peer misbehavior peer=%s:%s event=%s score_delta=%s score=%s action=%s ban_until=%s",
+            host,
+            port,
+            event,
+            delta,
+            next_score,
+            action,
+            ban_until,
+        )
+        return action
 
     def _known_peer_info(self, host: str, port: int):
         """Return the current persisted peer info for one endpoint when known."""
@@ -1247,7 +1868,7 @@ class NodeRuntime:
         peers = [
             peer
             for peer in self.service.list_peers()
-            if not self._is_persisted_peer_host_dialable(peer.host)
+            if peer.source not in {"manual", "seed"} and not self._is_persisted_peer_host_dialable(peer.host)
         ]
         for peer in peers:
             self._outbound_targets.pop((peer.host, peer.port), None)
@@ -1360,27 +1981,29 @@ class NodeRuntime:
         error_text = str(error)
         applied_penalty = self._penalty_for_error(error) if penalty is None else penalty
         new_score = self._updated_peer_score(peer.host, peer.port, delta=-applied_penalty)
-        self.service.record_peer_observation(
+        action = self._observe_peer_misbehavior(
             host=peer.host,
             port=peer.port,
+            event=classify_peer_error(error) or "connect_failure",
+            delta=applied_penalty,
             direction="outbound",
             handshake_complete=False,
-            score=new_score,
             reconnect_attempts=attempts,
             backoff_until=backoff_until if backoff_until > now else now + 1,
-            last_error=error_text,
-            last_error_at=now,
-            protocol_error_class=classify_peer_error(error),
             disconnect_count=0 if info is None or info.disconnect_count is None else info.disconnect_count + 1,
+            last_error=error_text,
+            protocol_error_class_name=classify_peer_error(error),
+            score=new_score,
         )
         log = self.logger.info if self._should_log_peer_failure_info(info, attempts=attempts, score=new_score) else self.logger.debug
         log(
-            "peer backoff applied peer=%s:%s reconnect_attempts=%s backoff_until=%s score=%s error=%s",
+            "peer backoff applied peer=%s:%s reconnect_attempts=%s backoff_until=%s score=%s action=%s error=%s",
             peer.host,
             peer.port,
             attempts,
             backoff_until if backoff_until > now else now + 1,
             new_score,
+            action,
             error_text,
         )
 
@@ -1406,21 +2029,22 @@ class NodeRuntime:
             return
         info = self._known_peer_info(endpoint.host, endpoint.port)
         error_text = str(error)
-        self.service.record_peer_observation(
+        self._observe_peer_misbehavior(
             host=endpoint.host,
             port=endpoint.port,
+            event=classify_peer_error(error) or "protocol_violation",
+            delta=penalty,
             direction=None if handle is None else ("outbound" if handle.outbound else "inbound"),
             handshake_complete=False if not session.state.handshake_complete else True,
             last_known_height=None if session.state.remote_version is None else session.state.remote_version.start_height,
             node_id=None if session.state.remote_version is None else session.state.remote_version.node_id,
-            score=self._updated_peer_score(endpoint.host, endpoint.port, delta=-penalty),
             reconnect_attempts=None if info is None else info.reconnect_attempts,
             backoff_until=None if info is None else info.backoff_until,
-            last_error=error_text,
-            last_error_at=self.service.time_provider(),
-            protocol_error_class=classify_peer_error(error),
             disconnect_count=None if info is None else info.disconnect_count,
             session_started_at=None if info is None else info.session_started_at,
+            last_error=error_text,
+            protocol_error_class_name=classify_peer_error(error),
+            score=self._updated_peer_score(endpoint.host, endpoint.port, delta=-penalty),
         )
 
     def _is_duplicate_inventory(self, session: PeerProtocol, item: InventoryVector) -> bool:
@@ -1438,7 +2062,10 @@ class NodeRuntime:
         """Return reconnect attempts and absolute backoff deadline for one peer."""
 
         attempts = 1 if info is None or info.reconnect_attempts is None else info.reconnect_attempts + 1
-        delay_seconds = min(self.max_connect_backoff_seconds, self.connect_interval * (2 ** min(attempts - 1, 5)))
+        delay_seconds = min(
+            self.peer_retry_backoff_max_seconds,
+            self.peer_retry_backoff_base_seconds * (2 ** min(attempts - 1, 5)),
+        )
         now = self.service.time_provider()
         return attempts, now + max(1, int(delay_seconds))
 
@@ -1447,15 +2074,15 @@ class NodeRuntime:
 
         classification = protocol_error_class(error)
         if classification in {"wrong_network_magic", "checksum_error", "malformed_message", "invalid_block"}:
-            return 25
+            return self._SEVERE_MISBEHAVIOR_DELTA
         if classification == "handshake_failed":
-            return 20
+            return 25
         if classification == "timeout":
             return 10
         if classification == "duplicate_connection":
-            return 5
+            return 1
         if classification in {"invalid_tx", "connection_closed"}:
-            return 5
+            return 10 if classification == "invalid_tx" else 5
         return 5
 
     def _local_identity(self) -> LocalPeerIdentity:
@@ -1546,6 +2173,14 @@ class NodeRuntime:
             return False
 
         max_remote_height = max(active_remote_heights, default=local_height)
+        sync_snapshot = self.sync_manager.sync_status()
+        if (
+            local_tip is None
+            and max_remote_height == 0
+            and int(sync_snapshot.get("missing_block_count", 0)) == 0
+            and sync_snapshot.get("best_header_hash") is None
+        ):
+            max_remote_height = local_height
         if max_remote_height > local_height:
             if not self._mining_wait_logged:
                 self.logger.info(

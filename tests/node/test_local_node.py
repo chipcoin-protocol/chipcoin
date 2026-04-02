@@ -7,18 +7,25 @@ from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
 from chipcoin.consensus.models import Block, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import serialize_transaction
-from chipcoin.consensus.validation import ValidationContext, validate_block, ValidationError, transaction_signature_digest
+from chipcoin.consensus.validation import (
+    ContextualValidationError,
+    ValidationContext,
+    validate_block,
+    ValidationError,
+    transaction_signature_digest,
+)
 from chipcoin.consensus.utxo import InMemoryUtxoView
 from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
 from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress
-from chipcoin.node.p2p.errors import DuplicateConnectionError
+from chipcoin.node.p2p.errors import DuplicateConnectionError, InvalidBlockError, ProtocolError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
 from chipcoin.node.p2p.transport import PeerEndpoint
 from chipcoin.node.service import NodeService
-from chipcoin.node.sync import HeaderIngestResult
+from chipcoin.node.sync import BlockDownloadAssignment, BlockRequestState, HeaderIngestResult
+from chipcoin.storage.peers import SQLitePeerRepository
 from chipcoin.storage.mempool import MempoolEntry
 from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import put_wallet_utxo, signed_payment, spend_candidates_for_wallet, wallet_key
@@ -76,7 +83,7 @@ def test_node_service_opens_devnet_with_devnet_params() -> None:
 def test_runtime_does_not_redial_or_advertise_inbound_ephemeral_peers() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-        service.add_peer("127.0.0.1", 18444)
+        service.add_peer("127.0.0.1", 18444, source="manual")
         service.record_peer_observation(
             host="172.18.0.2",
             port=36672,
@@ -191,7 +198,7 @@ def test_runtime_reuses_canonicalized_public_peer_after_restart() -> None:
             handshake_complete=True,
             node_id="mac-node-id",
         )
-        service.add_peer("tiltmediaconsulting.com", 18444)
+        service.add_peer("tiltmediaconsulting.com", 18444, source="manual")
         runtime = NodeRuntime(
             service=service,
             listen_host="0.0.0.0",
@@ -230,6 +237,127 @@ def test_runtime_logs_initial_peer_failures_at_info_then_suppresses_terminal_chu
 
         assert info is not None
         assert runtime._should_log_peer_failure_info(info, attempts=13, score=-100) is False
+
+
+def test_runtime_accumulates_misbehavior_and_bans_peer_after_threshold() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        runtime._observe_peer_misbehavior(
+            host="node-a.example",
+            port=18444,
+            event="handshake_failed",
+            delta=25,
+            direction="outbound",
+            handshake_complete=False,
+        )
+        runtime._observe_peer_misbehavior(
+            host="node-a.example",
+            port=18444,
+            event="timeout",
+            delta=10,
+            direction="outbound",
+            handshake_complete=False,
+        )
+        action = runtime._observe_peer_misbehavior(
+            host="node-a.example",
+            port=18444,
+            event="malformed_message",
+            delta=70,
+            direction="outbound",
+            handshake_complete=False,
+        )
+
+        info = next(peer for peer in service.list_peers() if peer.host == "node-a.example" and peer.port == 18444)
+        assert action == "ban"
+        assert info.misbehavior_score == 105
+        assert info.ban_until is not None
+        assert runtime._is_peer_currently_banned("node-a.example", 18444) is True
+        assert OutboundPeer("node-a.example", 18444) not in runtime._desired_outbound_peers()
+
+
+def test_runtime_decays_misbehavior_score_over_time() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_700_000_900)
+        service.record_peer_observation(
+            host="node-b.example",
+            port=18444,
+            misbehavior_score=55,
+            misbehavior_last_updated_at=1_700_000_000,
+        )
+        runtime = NodeRuntime(
+            service=service,
+            listen_host="127.0.0.1",
+            listen_port=18445,
+            misbehavior_decay_interval_seconds=300,
+            misbehavior_decay_step=10,
+        )
+
+        info = next(peer for peer in service.list_peers() if peer.host == "node-b.example" and peer.port == 18444)
+        score, updated_at = runtime._decayed_misbehavior_state(info, now=service.time_provider())
+
+        assert score == 25
+        assert updated_at == 1_700_000_900
+
+
+def test_runtime_allows_reconnect_after_ban_expiry() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_700_000_500)
+        service.record_peer_observation(
+            host="node-c.example",
+            port=18444,
+            direction="outbound",
+            misbehavior_score=100,
+            misbehavior_last_updated_at=1_700_000_000,
+            ban_until=1_700_000_200,
+        )
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        assert runtime._is_peer_currently_banned("node-c.example", 18444) is False
+        assert runtime._desired_outbound_peers() == [OutboundPeer("node-c.example", 18444)]
+
+
+def test_runtime_bans_severe_invalid_block_violation() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        class _FakeRemote:
+            node_id = "bad-peer"
+            start_height = 12
+
+        class _FakeState:
+            closed = False
+            handshake_complete = True
+            remote_version = _FakeRemote()
+
+        class _FakeSession:
+            inbound = False
+            state = _FakeState()
+            transport = type(
+                "_FakeTransport",
+                (),
+                {"peer_endpoint": staticmethod(lambda: type("_Peer", (), {"host": "198.51.100.20", "port": 18444})())},
+            )()
+
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("198.51.100.20", 18444),
+        )
+
+        runtime._apply_session_penalty(
+            session,
+            error=InvalidBlockError("invalid block: bad merkle root"),
+            penalty=runtime._SEVERE_MISBEHAVIOR_DELTA,
+        )
+
+        info = next(peer for peer in service.list_peers() if peer.host == "198.51.100.20" and peer.port == 18444)
+        assert info.misbehavior_score == runtime._SEVERE_MISBEHAVIOR_DELTA
+        assert info.ban_until is not None
+        assert info.last_penalty_reason == "invalid_block"
 
 
 def test_runtime_treats_duplicate_connection_drops_as_low_value_churn() -> None:
@@ -343,11 +471,47 @@ def test_runtime_ignores_private_ip_addresses_announced_by_peers() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_rejects_invalid_announced_hostnames() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+
+            await runtime._on_peer_message(
+                _FakeSession(),
+                MessageEnvelope(
+                    command="addr",
+                    payload=AddrMessage(
+                        addresses=(
+                            PeerAddress(host="bad host name", port=18444, services=0, timestamp=1_700_000_000),
+                            PeerAddress(host="node?.example", port=18444, services=0, timestamp=1_700_000_000),
+                        )
+                    ),
+                ),
+            )
+
+            assert runtime._desired_outbound_peers() == []
+            assert service.list_peers() == []
+
+    asyncio.run(scenario())
+
+
 def test_runtime_ignores_announced_alias_of_known_peer(monkeypatch) -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
             service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-            service.add_peer("173.212.193.13", 18444)
+            service.add_peer("173.212.193.13", 18444, source="manual")
             runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
 
             def fake_getaddrinfo(host: str, port: int, type: int):
@@ -396,11 +560,203 @@ def test_runtime_ignores_announced_alias_of_known_peer(monkeypatch) -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_learns_discovered_peers_from_addr_gossip_and_persists_source() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            database_path = Path(tempdir) / "chipcoin.sqlite3"
+            service = _make_service(database_path)
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+
+            await runtime._on_peer_message(
+                _FakeSession(),
+                MessageEnvelope(
+                    command="addr",
+                    payload=AddrMessage(
+                        addresses=(PeerAddress(host="188.218.213.92", port=18444, services=0, timestamp=1_700_000_000),)
+                    ),
+                ),
+            )
+
+            restarted = NodeRuntime(service=NodeService.open_sqlite(database_path), listen_host="127.0.0.1", listen_port=18445)
+            peers = restarted.service.list_peers()
+            learned = next(peer for peer in peers if peer.host == "188.218.213.92" and peer.port == 18444)
+            assert learned.source == "discovered"
+            assert learned.first_seen is not None
+            assert OutboundPeer("188.218.213.92", 18444) in restarted._desired_outbound_peers()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_startup_prefers_persisted_healthy_peer_over_manual_seed() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.record_peer_observation(
+            host="188.218.213.92",
+            port=18444,
+            source="discovered",
+            handshake_complete=True,
+            success_count=2,
+            last_success=1_700_000_010,
+            score=5,
+        )
+        runtime = NodeRuntime(
+            service=service,
+            listen_host="127.0.0.1",
+            listen_port=18445,
+            outbound_peers=[OutboundPeer("tiltmediaconsulting.com", 18444)],
+        )
+        runtime._outbound_target_sources[( "tiltmediaconsulting.com", 18444)] = "seed"
+
+        assert runtime._desired_outbound_peers() == [OutboundPeer("188.218.213.92", 18444)]
+
+
+def test_runtime_purges_stale_discovered_peers_but_keeps_manual_peers() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_800_000_000)
+        assert isinstance(service.peer_repository, SQLitePeerRepository)
+        service.peer_repository.add(
+            PeerInfo(
+                host="188.218.213.92",
+                port=18444,
+                network="mainnet",
+                source="discovered",
+                first_seen=1_700_000_000,
+                last_seen=1_700_000_000,
+            )
+        )
+        service.peer_repository.add(
+            PeerInfo(
+                host="manual.example",
+                port=18444,
+                network="mainnet",
+                source="manual",
+                first_seen=1_700_000_000,
+                last_seen=1_700_000_000,
+            )
+        )
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445, peer_stale_after_seconds=60)
+
+        runtime._purge_stale_persisted_peers()
+
+        peers = service.list_peers()
+        assert not any(peer.host == "188.218.213.92" for peer in peers)
+        assert any(peer.host == "manual.example" for peer in peers)
+
+
+def test_runtime_limits_addr_relay_per_message_and_interval() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            for index in range(5):
+                service.record_peer_observation(
+                    host=f"198.51.100.{index + 10}",
+                    port=18444,
+                    source="discovered",
+                    success_count=1,
+                    last_success=1_700_000_010 + index,
+                )
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="127.0.0.1",
+                listen_port=18445,
+                peer_addr_max_per_message=2,
+                peer_addr_relay_limit_per_interval=3,
+                peer_addr_relay_interval_seconds=60,
+            )
+
+            sent_messages: list[MessageEnvelope] = []
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+
+                async def send_message(self, message: MessageEnvelope) -> None:
+                    sent_messages.append(message)
+
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=False)
+
+            await runtime._send_known_peers(session)
+            await runtime._send_known_peers(session)
+            await runtime._send_known_peers(session)
+
+            assert [len(message.payload.addresses) for message in sent_messages] == [2, 1]
+
+    asyncio.run(scenario())
+
+
+def test_runtime_does_not_relay_banned_peers_in_addr_messages() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_700_000_100)
+            service.record_peer_observation(
+                host="198.51.100.10",
+                port=18444,
+                source="discovered",
+                success_count=1,
+                last_success=1_700_000_010,
+            )
+            service.record_peer_observation(
+                host="198.51.100.11",
+                port=18444,
+                source="discovered",
+                success_count=1,
+                last_success=1_700_000_011,
+                ban_until=1_700_000_999,
+            )
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+            sent_messages: list[MessageEnvelope] = []
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+
+                async def send_message(self, message: MessageEnvelope) -> None:
+                    sent_messages.append(message)
+
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=False)
+
+            await runtime._send_known_peers(session)
+
+            relayed_hosts = [address.host for address in sent_messages[0].payload.addresses]
+            assert "198.51.100.10" in relayed_hosts
+            assert "198.51.100.11" not in relayed_hosts
+
+    asyncio.run(scenario())
+
+
 def test_runtime_dedupes_unidentified_outbound_aliases(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-        service.add_peer("173.212.193.13", 18444)
-        service.add_peer("tiltmediaconsulting.com", 18444)
+        service.add_peer("173.212.193.13", 18444, source="manual")
+        service.add_peer("tiltmediaconsulting.com", 18444, source="manual")
         runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
 
         def fake_getaddrinfo(host: str, port: int, type: int):
@@ -450,8 +806,8 @@ def test_runtime_treats_alias_of_active_endpoint_as_already_connected(monkeypatc
 def test_runtime_forget_self_alias_removes_equivalent_peer_targets(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-        service.add_peer("173.212.193.13", 18444)
-        service.add_peer("tiltmediaconsulting.com", 18444)
+        service.add_peer("173.212.193.13", 18444, source="manual")
+        service.add_peer("tiltmediaconsulting.com", 18444, source="manual")
         runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
         runtime._outbound_targets[("173.212.193.13", 18444)] = OutboundPeer("173.212.193.13", 18444)
         runtime._outbound_targets[("tiltmediaconsulting.com", 18444)] = OutboundPeer("tiltmediaconsulting.com", 18444)
@@ -489,7 +845,7 @@ def test_runtime_forget_self_alias_removes_equivalent_peer_targets(monkeypatch) 
 def test_service_remove_peer_deletes_persisted_entry() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-        service.add_peer("node-a", 18444)
+        service.add_peer("node-a", 18444, source="manual")
 
         assert any(peer.host == "node-a" and peer.port == 18444 for peer in service.list_peers())
         service.remove_peer("node-a", 18444)
@@ -593,16 +949,23 @@ def test_runtime_chunks_block_getdata_requests_to_inventory_limit(monkeypatch) -
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
             service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445, max_inventory_items=2)
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="127.0.0.1",
+                listen_port=18445,
+                max_inventory_items=2,
+                headers_sync_enabled=False,
+            )
 
             missing_hashes = tuple(f"{index:064x}" for index in range(5))
             monkeypatch.setattr(
                 runtime.sync_manager,
                 "ingest_headers",
-                lambda headers: HeaderIngestResult(
+                lambda headers, **_kwargs: HeaderIngestResult(
                     headers_received=len(headers),
                     parent_unknown=None,
                     best_tip_hash=missing_hashes[-1],
+                    best_tip_height=4,
                     missing_block_hashes=missing_hashes,
                     needs_more_headers=False,
                 ),
@@ -639,6 +1002,207 @@ def test_runtime_chunks_block_getdata_requests_to_inventory_limit(monkeypatch) -
             assert [len(message.payload.items) for message in getdata_messages] == [2, 2, 1]
             assert [item.object_hash for message in getdata_messages for item in message.payload.items] == list(missing_hashes)
 
+    asyncio.run(scenario())
+
+
+def test_runtime_requests_headers_from_parallel_peers_up_to_limit() -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+        def __init__(self, node_id: str, start_height: int) -> None:
+            self.remote_version = type("_Remote", (), {"node_id": node_id, "start_height": start_height})()
+
+    class _FakeSession:
+        inbound = False
+
+        def __init__(self, node_id: str, start_height: int) -> None:
+            self.state = _FakeSessionState(node_id, start_height)
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            sent_messages.append((self.state.remote_version.node_id, message.command))
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service, headers_sync_parallel_peers=2, headers_sync_start_height_gap_threshold=1)
+            sessions = [_FakeSession(f"peer-{index}", 10) for index in range(3)]
+            for session in sessions:
+                runtime._sessions[session] = SessionHandle(
+                    protocol=session,
+                    outbound=True,
+                    endpoint=OutboundPeer("127.0.0.1", 18000 + int(session.state.remote_version.node_id.split("-")[-1])),
+                )
+            await runtime._drive_header_sync()
+            requested = [peer_id for peer_id, command in sent_messages if command == "getheaders"]
+            assert requested == ["peer-0", "peer-1"]
+
+    sent_messages: list[tuple[str, str]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_dispatches_block_downloads_across_multiple_peers(monkeypatch) -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+        def __init__(self, node_id: str, start_height: int) -> None:
+            self.remote_version = type("_Remote", (), {"node_id": node_id, "start_height": start_height})()
+
+    class _FakeSession:
+        inbound = False
+
+        def __init__(self, node_id: str, start_height: int) -> None:
+            self.state = _FakeSessionState(node_id, start_height)
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            sent_messages.append((self.state.remote_version.node_id, message))
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service, max_inventory_items=10)
+            sessions = [_FakeSession("peer-a", 20), _FakeSession("peer-b", 20)]
+            runtime._sessions[sessions[0]] = SessionHandle(
+                protocol=sessions[0],
+                outbound=True,
+                endpoint=OutboundPeer("127.0.0.1", 18444),
+            )
+            runtime._sessions[sessions[1]] = SessionHandle(
+                protocol=sessions[1],
+                outbound=True,
+                endpoint=OutboundPeer("127.0.0.1", 18445),
+            )
+            monkeypatch.setattr(
+                runtime.sync_manager,
+                "best_header_height",
+                lambda: 20,
+            )
+            monkeypatch.setattr(
+                runtime.sync_manager,
+                "reserve_block_downloads",
+                lambda **_kwargs: (
+                    BlockDownloadAssignment(block_hash="aa" * 32, peer_id="peer-a", deadline_at=10.0, attempt=1),
+                    BlockDownloadAssignment(block_hash="bb" * 32, peer_id="peer-b", deadline_at=10.0, attempt=1),
+                    BlockDownloadAssignment(block_hash="cc" * 32, peer_id="peer-a", deadline_at=10.0, attempt=1),
+                ),
+            )
+            await runtime._dispatch_block_downloads()
+
+            messages_by_peer = {
+                peer_id: [item.object_hash for item in message.payload.items]
+                for peer_id, message in sent_messages
+                if message.command == "getdata"
+            }
+            assert messages_by_peer == {
+                "peer-a": ["aa" * 32, "cc" * 32],
+                "peer-b": ["bb" * 32],
+            }
+            assert runtime._sessions[sessions[0]].inflight_block_hashes == {"aa" * 32, "cc" * 32}
+            assert runtime._sessions[sessions[1]].inflight_block_hashes == {"bb" * 32}
+
+    sent_messages: list[tuple[str, MessageEnvelope]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_reassigns_stalled_block_requests_and_disconnects_repeat_offender(monkeypatch) -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 20})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = False
+        state = _FakeSessionState()
+
+        async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+            close_calls.append((reason, error))
+            self.state.closed = True
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            handle = SessionHandle(protocol=session, outbound=True, inflight_block_hashes={"aa" * 32}, block_stall_count=1)
+            runtime._sessions[session] = handle
+            penalties: list[str] = []
+            dropped: list[_FakeSession] = []
+
+            async def drop_session(_session) -> None:
+                dropped.append(_session)
+                runtime._sessions.pop(_session, None)
+
+            runtime._drop_session = drop_session  # type: ignore[method-assign]
+            runtime._apply_session_penalty = lambda _session, *, error, penalty: penalties.append(f"{error}:{penalty}")  # type: ignore[method-assign]
+            monkeypatch.setattr(
+                runtime.sync_manager,
+                "expire_block_requests",
+                lambda **_kwargs: (
+                    BlockRequestState(block_hash="aa" * 32, peer_id="peer-a", requested_at=0.0, deadline_at=0.0, attempt=2),
+                ),
+            )
+            await runtime._expire_stalled_block_requests()
+
+            assert penalties == ["block request stalled:10"]
+            assert close_calls and isinstance(close_calls[0][1], ProtocolError)
+            assert dropped == [session]
+
+    close_calls: list[tuple[str | None, Exception | None]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_rejects_invalid_headers_message(monkeypatch) -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 20})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = False
+        state = _FakeSessionState()
+
+        async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+            close_calls.append((reason, error))
+            self.state.closed = True
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=True)
+            penalties: list[int] = []
+            dropped: list[_FakeSession] = []
+
+            async def drop_session(_session) -> None:
+                dropped.append(_session)
+
+            runtime._drop_session = drop_session  # type: ignore[method-assign]
+            runtime._apply_session_penalty = lambda _session, *, error, penalty: penalties.append(penalty)  # type: ignore[method-assign]
+            monkeypatch.setattr(
+                runtime.sync_manager,
+                "ingest_headers",
+                lambda *args, **kwargs: (_ for _ in ()).throw(ContextualValidationError("bad header linkage")),
+            )
+            await runtime._on_peer_message(
+                session,
+                MessageEnvelope(command="headers", payload=HeadersMessage(headers=())),
+            )
+
+            assert penalties == [runtime._SEVERE_MISBEHAVIOR_DELTA]
+            assert close_calls
+            assert dropped == [session]
+
+    close_calls: list[tuple[str | None, Exception | None]] = []
     asyncio.run(scenario())
 
 
@@ -791,7 +1355,7 @@ def test_runtime_pauses_mining_until_initial_sync_is_caught_up() -> None:
 def test_runtime_pauses_mining_for_persisted_startup_peer_until_sync_is_caught_up() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-        service.add_peer("173.212.193.13", 18444)
+        service.add_peer("173.212.193.13", 18444, source="manual")
         runtime = NodeRuntime(
             service=service,
             listen_host="127.0.0.1",

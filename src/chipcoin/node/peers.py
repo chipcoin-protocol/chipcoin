@@ -14,8 +14,14 @@ class PeerInfo:
     host: str
     port: int
     network: str
+    source: str | None = None
+    first_seen: int | None = None
     direction: str | None = None
     last_seen: int | None = None
+    last_success: int | None = None
+    last_failure: int | None = None
+    failure_count: int | None = None
+    success_count: int | None = None
     handshake_complete: bool | None = None
     last_known_height: int | None = None
     node_id: str | None = None
@@ -27,6 +33,11 @@ class PeerInfo:
     protocol_error_class: str | None = None
     disconnect_count: int | None = None
     session_started_at: int | None = None
+    misbehavior_score: int | None = None
+    misbehavior_last_updated_at: int | None = None
+    ban_until: int | None = None
+    last_penalty_reason: str | None = None
+    last_penalty_at: int | None = None
 
 
 def classify_peer_error(error: Exception | str | None) -> str | None:
@@ -53,8 +64,14 @@ class PeerManager:
             host=peer.host,
             port=peer.port,
             network=peer.network,
+            source=peer.source if peer.source is not None else existing.source,
+            first_seen=existing.first_seen if existing.first_seen is not None else peer.first_seen,
             direction=peer.direction if peer.direction is not None else existing.direction,
             last_seen=peer.last_seen if peer.last_seen is not None else existing.last_seen,
+            last_success=peer.last_success if peer.last_success is not None else existing.last_success,
+            last_failure=peer.last_failure if peer.last_failure is not None else existing.last_failure,
+            failure_count=peer.failure_count if peer.failure_count is not None else existing.failure_count,
+            success_count=peer.success_count if peer.success_count is not None else existing.success_count,
             handshake_complete=(
                 peer.handshake_complete if peer.handshake_complete is not None else existing.handshake_complete
             ),
@@ -72,6 +89,19 @@ class PeerManager:
             ),
             disconnect_count=peer.disconnect_count if peer.disconnect_count is not None else existing.disconnect_count,
             session_started_at=peer.session_started_at if peer.session_started_at is not None else existing.session_started_at,
+            misbehavior_score=(
+                peer.misbehavior_score if peer.misbehavior_score is not None else existing.misbehavior_score
+            ),
+            misbehavior_last_updated_at=(
+                peer.misbehavior_last_updated_at
+                if peer.misbehavior_last_updated_at is not None
+                else existing.misbehavior_last_updated_at
+            ),
+            ban_until=peer.ban_until if peer.ban_until is not None else existing.ban_until,
+            last_penalty_reason=(
+                peer.last_penalty_reason if peer.last_penalty_reason is not None else existing.last_penalty_reason
+            ),
+            last_penalty_at=peer.last_penalty_at if peer.last_penalty_at is not None else existing.last_penalty_at,
         )
 
     def remove(self, peer: PeerInfo) -> None:

@@ -34,6 +34,30 @@ def test_initialize_database_returns_sqlite_connection() -> None:
             connection.close()
 
 
+def test_initialize_database_adds_peer_misbehavior_columns() -> None:
+    with TemporaryDirectory() as tempdir:
+        connection = initialize_database(Path(tempdir) / "chipcoin.sqlite3")
+        try:
+            rows = connection.execute("PRAGMA table_info(peers)").fetchall()
+        finally:
+            connection.close()
+
+    columns = {row["name"] for row in rows}
+    assert {
+        "source",
+        "first_seen",
+        "last_success",
+        "last_failure",
+        "failure_count",
+        "success_count",
+        "misbehavior_score",
+        "misbehavior_last_updated_at",
+        "ban_until",
+        "last_penalty_reason",
+        "last_penalty_at",
+    } <= columns
+
+
 def test_ensure_column_ignores_duplicate_column_race() -> None:
     class _Cursor:
         def fetchall(self):

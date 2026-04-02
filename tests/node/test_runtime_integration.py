@@ -227,6 +227,51 @@ def test_runtime_chunks_getdata_requests_to_inventory_limit() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_sync_downloads_blocks_from_multiple_peers() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+            latest_block = None
+            for _ in range(6):
+                latest_block = _mine_block(source_service.build_candidate_block("CHCminer-a").block)
+                source_service.apply_block(latest_block)
+            assert latest_block is not None
+
+            source_runtime_a = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
+            source_runtime_b = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
+            await source_runtime_a.start()
+            await source_runtime_b.start()
+
+            target_service = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+            target_runtime = NodeRuntime(
+                service=target_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[
+                    OutboundPeer("127.0.0.1", source_runtime_a.bound_port),
+                    OutboundPeer("127.0.0.1", source_runtime_b.bound_port),
+                ],
+                connect_interval=0.1,
+                ping_interval=0.2,
+                headers_sync_parallel_peers=2,
+                block_download_window_size=4,
+                block_max_inflight_per_peer=2,
+            )
+            await target_runtime.start()
+            try:
+                await _wait_until(lambda: target_service.chain_tip() is not None and target_service.chain_tip().block_hash == latest_block.block_hash())
+                sync_status = target_service.status()["sync"]
+                assert sync_status["mode"] == "synced"
+                assert sync_status["best_header_hash"] == latest_block.block_hash()
+                assert len(sync_status["block_peers"]) == 2
+            finally:
+                await target_runtime.stop()
+                await source_runtime_b.stop()
+                await source_runtime_a.stop()
+
+    asyncio.run(scenario())
+
+
 def test_runtime_miner_produces_blocks_end_to_end() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:

@@ -61,6 +61,7 @@ def test_http_api_health_status_and_tip() -> None:
         assert health_body == {"status": "ok"}
         assert status_status == "200 OK"
         assert status_body["network"] == "mainnet"
+        assert status_body["sync"]["mode"] == "idle"
         assert tip_status == "200 OK"
         assert tip_body == {"height": None, "block_hash": None}
 
@@ -239,7 +240,7 @@ def test_http_api_mempool_includes_machine_friendly_fee_rate() -> None:
 def test_http_api_peers_and_peers_summary() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
-        service.add_peer("127.0.0.1", 8333)
+        service.add_peer("127.0.0.1", 8333, source="manual")
         app = HttpApiApp(service)
 
         peers_status, _, peers_body = _call_wsgi(app, method="GET", path="/v1/peers")
@@ -247,9 +248,16 @@ def test_http_api_peers_and_peers_summary() -> None:
 
         assert peers_status == "200 OK"
         assert peers_body[0]["host"] == "127.0.0.1"
+        assert peers_body[0]["source"] == "manual"
+        assert peers_body[0]["peer_state"] == "manual"
         assert "handshake_complete" in peers_body[0]
+        assert "misbehavior_score" in peers_body[0]
+        assert "banned" in peers_body[0]
         assert summary_status == "200 OK"
         assert summary_body["peer_count"] == 1
+        assert summary_body["banned_peer_count"] == 0
+        assert summary_body["peer_count_by_source"] == {"manual": 1}
+        assert summary_body["peer_count_by_state"] == {"manual": 1}
         assert summary_body["peer_count_by_network"]["mainnet"] == 1
 
 

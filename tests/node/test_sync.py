@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint
 from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
+from chipcoin.consensus.validation import ContextualValidationError
 from chipcoin.node.messages import GetHeadersMessage, HeadersMessage
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.service import NodeService
@@ -155,6 +156,75 @@ def test_sync_manager_accepts_orphan_block_after_parent_arrives() -> None:
         assert target.get_block_by_hash(blocks[1].block_hash()) == blocks[1]
         assert target.chain_tip() is not None
         assert target.chain_tip().block_hash == blocks[1].block_hash()
+
+
+def test_sync_manager_rejects_invalid_header_sequence() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        alt_source = _make_service(Path(tempdir) / "alt-source.sqlite3", start_time=1_700_000_500)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 2, "CHCminer-source")
+        alt_blocks = _mine_chain(alt_source, 1, "CHCminer-alt")
+        manager = SyncManager(node=target)
+        manager.ingest_headers((blocks[0].header,))
+
+        try:
+            manager.ingest_headers((blocks[1].header, alt_blocks[0].header))
+            raise AssertionError("Expected invalid header sequence to fail.")
+        except ContextualValidationError as exc:
+            assert "Header sequence" in str(exc)
+
+
+def test_sync_manager_schedules_parallel_block_download_window() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 5, "CHCminer-source")
+        manager = SyncManager(node=target)
+        ingest = manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+
+        assert ingest.best_tip_height == 4
+        assignments = manager.reserve_block_downloads(
+            peer_ids=("peer-a", "peer-b"),
+            max_window_size=4,
+            max_inflight_per_peer=2,
+            timeout_seconds=5.0,
+            now=100.0,
+        )
+
+        assert len(assignments) == 4
+        assert [assignment.block_hash for assignment in assignments] == [block.block_hash() for block in blocks[:4]]
+        assert sum(1 for assignment in assignments if assignment.peer_id == "peer-a") == 2
+        assert sum(1 for assignment in assignments if assignment.peer_id == "peer-b") == 2
+
+
+def test_sync_manager_reassigns_expired_block_requests() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 3, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        first = manager.reserve_block_downloads(
+            peer_ids=("peer-a",),
+            max_window_size=2,
+            max_inflight_per_peer=2,
+            timeout_seconds=5.0,
+            now=100.0,
+        )
+
+        assert len(first) == 2
+        expired = manager.expire_block_requests(now=106.0)
+        assert [request.block_hash for request in expired] == [block.block_hash() for block in blocks[:2]]
+
+        reassigned = manager.reserve_block_downloads(
+            peer_ids=("peer-b",),
+            max_window_size=2,
+            max_inflight_per_peer=2,
+            timeout_seconds=5.0,
+            now=107.0,
+        )
+        assert [assignment.peer_id for assignment in reassigned] == ["peer-b", "peer-b"]
 
 
 def test_service_retargets_difficulty_every_thousand_blocks() -> None:

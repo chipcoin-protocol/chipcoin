@@ -67,6 +67,25 @@ def _disconnect_sort_key(peer: dict[str, object]) -> tuple[int, int, str, int]:
     return (disconnects, -score, str(peer["host"]), int(peer["port"]))
 
 
+def _misbehavior_sort_key(peer: dict[str, object]) -> tuple[int, str, int]:
+    """Order peers by misbehavior score and endpoint."""
+
+    misbehavior = int(peer["misbehavior_score"]) if isinstance(peer.get("misbehavior_score"), int) else 0
+    return (misbehavior, str(peer["host"]), int(peer["port"]))
+
+
+def _peer_state(peer: PeerInfo, *, now: int) -> str:
+    """Return one coarse operational peer state for diagnostics."""
+
+    if peer.ban_until is not None and peer.ban_until > now:
+        return "banned"
+    if (peer.success_count or 0) > 0 and (peer.failure_count or 0) <= (peer.success_count or 0):
+        return "good"
+    if (peer.failure_count or 0) > 0 or (peer.backoff_until or 0) > now or (peer.score or 0) < 0:
+        return "questionable"
+    return peer.source or "discovered"
+
+
 class NodeService:
     """Local node orchestrator for validation, chain persistence, and sync."""
 
@@ -102,6 +121,7 @@ class NodeService:
             policy=MempoolPolicy(),
         )
         self.mining = MiningCoordinator(params=params, time_provider=time_provider)
+        self._runtime_sync_status: dict[str, object] | None = None
 
     @classmethod
     def open_sqlite(
@@ -347,10 +367,22 @@ class NodeService:
         result = self.find_transaction(txid)
         return None if result is None else result["transaction"]
 
-    def add_peer(self, host: str, port: int) -> PeerInfo:
+    def add_peer(self, host: str, port: int, *, source: str = "discovered") -> PeerInfo:
         """Add a peer to the in-memory local peerbook."""
 
-        peer = PeerInfo(host=host, port=port, network=self.network)
+        existing = next(
+            (peer for peer in self.peerbook.list_all(network=self.network) if peer.host == host and peer.port == port),
+            None,
+        )
+        now = self.time_provider()
+        peer = PeerInfo(
+            host=host,
+            port=port,
+            network=self.network,
+            source=source if existing is None or existing.source is None else existing.source,
+            first_seen=now if existing is None or existing.first_seen is None else existing.first_seen,
+            last_seen=now,
+        )
         self.peerbook.add(peer)
         if self.peer_repository is not None:
             self.peer_repository.add(peer)
@@ -390,23 +422,37 @@ class NodeService:
 
         peers = self.peer_diagnostics()
         by_error_class: dict[str, int] = {}
+        by_penalty_reason: dict[str, int] = {}
         by_network: dict[str, int] = {}
         by_direction: dict[str, int] = {}
+        by_source: dict[str, int] = {}
+        by_state: dict[str, int] = {}
         by_handshake_status = {"complete": 0, "incomplete": 0, "unknown": 0}
         backoff_peers = []
         recent_errors = []
         worst_peer = None
+        highest_misbehavior_peer = None
         most_disconnected_peer = None
+        banned_peer_count = 0
 
         for peer in peers:
             error_class = peer["protocol_error_class"]
             if isinstance(error_class, str):
                 by_error_class[error_class] = by_error_class.get(error_class, 0) + 1
+            penalty_reason = peer["last_penalty_reason"]
+            if isinstance(penalty_reason, str):
+                by_penalty_reason[penalty_reason] = by_penalty_reason.get(penalty_reason, 0) + 1
             network = str(peer["network"])
             by_network[network] = by_network.get(network, 0) + 1
             direction = peer["direction"]
             if isinstance(direction, str):
                 by_direction[direction] = by_direction.get(direction, 0) + 1
+            source = peer["source"]
+            if isinstance(source, str):
+                by_source[source] = by_source.get(source, 0) + 1
+            peer_state = peer["peer_state"]
+            if isinstance(peer_state, str):
+                by_state[peer_state] = by_state.get(peer_state, 0) + 1
             handshake_complete = peer["handshake_complete"]
             if handshake_complete is True:
                 by_handshake_status["complete"] += 1
@@ -420,8 +466,12 @@ class NodeService:
                 recent_errors.append(peer)
             if worst_peer is None or _peer_sort_key(peer) < _peer_sort_key(worst_peer):
                 worst_peer = peer
+            if highest_misbehavior_peer is None or _misbehavior_sort_key(peer) > _misbehavior_sort_key(highest_misbehavior_peer):
+                highest_misbehavior_peer = peer
             if most_disconnected_peer is None or _disconnect_sort_key(peer) > _disconnect_sort_key(most_disconnected_peer):
                 most_disconnected_peer = peer
+            if peer["banned"] is True:
+                banned_peer_count += 1
 
         backoff_peers.sort(key=lambda peer: (peer["backoff_until"], peer["host"], peer["port"]))
         recent_errors.sort(
@@ -433,12 +483,17 @@ class NodeService:
         )
         return {
             "error_class_counts": dict(sorted(by_error_class.items())),
+            "penalty_reason_counts": dict(sorted(by_penalty_reason.items())),
             "peer_count_by_network": dict(sorted(by_network.items())),
             "peer_count_by_direction": dict(sorted(by_direction.items())),
+            "peer_count_by_source": dict(sorted(by_source.items())),
+            "peer_count_by_state": dict(sorted(by_state.items())),
             "peer_count_by_handshake_status": by_handshake_status,
             "backoff_peer_count": len(backoff_peers),
+            "banned_peer_count": banned_peer_count,
             "backoff_peers": backoff_peers,
             "worst_score_peer": worst_peer,
+            "highest_misbehavior_peer": highest_misbehavior_peer,
             "most_disconnected_peer": most_disconnected_peer,
             "most_recent_error_peer": None if not recent_errors else recent_errors[0],
             "peer_count": len(peers),
@@ -450,6 +505,12 @@ class NodeService:
         host: str,
         port: int,
         direction: str | None = None,
+        source: str | None = None,
+        first_seen: int | None = None,
+        last_success: int | None = None,
+        last_failure: int | None = None,
+        failure_count: int | None = None,
+        success_count: int | None = None,
         handshake_complete: bool | None = None,
         last_known_height: int | None = None,
         node_id: str | None = None,
@@ -461,15 +522,33 @@ class NodeService:
         protocol_error_class: str | None = None,
         disconnect_count: int | None = None,
         session_started_at: int | None = None,
+        misbehavior_score: int | None = None,
+        misbehavior_last_updated_at: int | None = None,
+        ban_until: int | None = None,
+        last_penalty_reason: str | None = None,
+        last_penalty_at: int | None = None,
     ) -> PeerInfo:
         """Persist the latest peer session metadata for diagnostics."""
 
+        existing = next(
+            (peer for peer in self.peerbook.list_all(network=self.network) if peer.host == host and peer.port == port),
+            None,
+        )
+        now = self.time_provider()
         peer = PeerInfo(
             host=host,
             port=port,
             network=self.network,
+            source=source if source is not None else (None if existing is None else existing.source),
+            first_seen=(
+                first_seen if first_seen is not None else (now if existing is None or existing.first_seen is None else existing.first_seen)
+            ),
             direction=direction,
-            last_seen=self.time_provider(),
+            last_seen=now,
+            last_success=last_success,
+            last_failure=last_failure,
+            failure_count=failure_count,
+            success_count=success_count,
             handshake_complete=handshake_complete,
             last_known_height=last_known_height,
             node_id=node_id,
@@ -481,6 +560,11 @@ class NodeService:
             protocol_error_class=protocol_error_class,
             disconnect_count=disconnect_count,
             session_started_at=session_started_at,
+            misbehavior_score=misbehavior_score,
+            misbehavior_last_updated_at=misbehavior_last_updated_at,
+            ban_until=ban_until,
+            last_penalty_reason=last_penalty_reason,
+            last_penalty_at=last_penalty_at,
         )
         self.peerbook.add(peer)
         if self.peer_repository is not None:
@@ -491,14 +575,22 @@ class NodeService:
         """Render one peer record into deterministic diagnostic JSON fields."""
 
         network_magic_hex = get_network_config(peer.network).magic.hex()
+        now = self.time_provider()
         return {
             "host": peer.host,
             "port": peer.port,
             "network": peer.network,
             "network_magic_hex": network_magic_hex,
+            "source": peer.source,
+            "peer_state": _peer_state(peer, now=now),
+            "first_seen": peer.first_seen,
             "direction": peer.direction,
             "node_id": peer.node_id,
             "handshake_complete": peer.handshake_complete,
+            "last_success": peer.last_success,
+            "last_failure": peer.last_failure,
+            "failure_count": peer.failure_count,
+            "success_count": peer.success_count,
             "score": peer.score,
             "reconnect_attempts": peer.reconnect_attempts,
             "backoff_until": peer.backoff_until,
@@ -509,6 +601,12 @@ class NodeService:
             "last_error": peer.last_error,
             "last_error_at": peer.last_error_at,
             "protocol_error_class": peer.protocol_error_class,
+            "misbehavior_score": peer.misbehavior_score,
+            "misbehavior_last_updated_at": peer.misbehavior_last_updated_at,
+            "ban_until": peer.ban_until,
+            "banned": peer.ban_until is not None and peer.ban_until > self.time_provider(),
+            "last_penalty_reason": peer.last_penalty_reason,
+            "last_penalty_at": peer.last_penalty_at,
         }
 
     def status(self) -> dict[str, object]:
@@ -540,6 +638,10 @@ class NodeService:
             "mempool_size": len(self.mempool.list_transactions()),
             "peer_count": len(peers),
             "handshaken_peer_count": sum(1 for peer in peers if peer.handshake_complete),
+            "banned_peer_count": sum(
+                1 for peer in peers if peer.ban_until is not None and peer.ban_until > self.time_provider()
+            ),
+            "sync": self.sync_status(),
             "next_block_reward_winners": [
                 {
                     "node_id": rewarded_node.node_id,
@@ -549,6 +651,39 @@ class NodeService:
                 }
                 for rewarded_node in rewarded_nodes
             ],
+        }
+
+    def set_runtime_sync_status(self, payload: dict[str, object] | None) -> None:
+        """Persist one runtime-owned sync snapshot for diagnostics surfaces."""
+
+        self._runtime_sync_status = None if payload is None else dict(payload)
+
+    def sync_status(self) -> dict[str, object]:
+        """Return the latest sync snapshot or a deterministic idle fallback."""
+
+        if self._runtime_sync_status is not None:
+            return dict(self._runtime_sync_status)
+        tip = self.chain_tip()
+        return {
+            "mode": "idle",
+            "validated_tip_height": None if tip is None else tip.height,
+            "validated_tip_hash": None if tip is None else tip.block_hash,
+            "best_header_height": None if tip is None else tip.height,
+            "best_header_hash": None if tip is None else tip.block_hash,
+            "missing_block_count": 0,
+            "queued_block_count": 0,
+            "inflight_block_count": 0,
+            "inflight_block_hashes": (),
+            "header_peer_count": 0,
+            "header_peers": (),
+            "block_peer_count": 0,
+            "block_peers": (),
+            "stalled_peers": (),
+            "download_window": {
+                "start_height": None,
+                "end_height": None,
+                "size": 0,
+            },
         }
 
     def tip_diagnostics(self) -> dict[str, object] | None:

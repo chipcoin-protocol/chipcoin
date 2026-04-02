@@ -112,15 +112,27 @@ Initial message set:
 - `headers`
 - `getblocks`
 
+`getaddr` / `addr` are discovery-only messages. They help nodes exchange bounded peer candidates and do not carry any consensus authority.
+
 ## Synchronization Strategy
 
 Synchronization is intended to be header-first:
 
 1. exchange versions
-2. request headers
-3. compare cumulative work
-4. request missing blocks
-5. apply validated blocks to local chainstate
+2. request headers from one or more suitable peers
+3. validate header linkage, proof of work, and expected difficulty where possible
+4. compare cumulative work across competing header tips
+5. open a bounded moving block-download window for the strongest known header chain
+6. request blocks in parallel from multiple healthy peers with per-peer in-flight caps
+7. reassign overdue block requests when peers stall
+8. apply full block validation before activating any new chain tip
+
+Operational notes:
+
+- `headers` improve download planning but do not bypass full block validation
+- block downloads are not pinned to the same peer that first supplied the headers
+- bounded windows and timeout-based reassignment avoid unbounded orphan and stall behavior
+- peer misbehavior and temporary bans still apply during sync for malformed or invalid protocol data
 
 ## Serialization Requirement
 

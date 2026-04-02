@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "add-peer":
             assert service is not None
-            peer = service.add_peer(args.host, args.port)
+            peer = service.add_peer(args.host, args.port, source="manual")
             _print_json({"host": peer.host, "port": peer.port, "network": peer.network})
             return 0
 
@@ -480,9 +480,32 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--listen-host", default="127.0.0.1")
     run_parser.add_argument("--listen-port", type=int, default=None)
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
+    run_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
     run_parser.add_argument("--peer-seed-url", default=None, help="Optional local HTTP API endpoint used to seed peers.")
     run_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
     run_parser.add_argument("--miner-address", default=None, help="Enable local mining to the supplied payout address.")
+    run_parser.add_argument("--peer-discovery-enabled", type=_parse_bool, default=True)
+    run_parser.add_argument("--peerbook-max-size", type=int, default=1024)
+    run_parser.add_argument("--peer-addr-max-per-message", type=int, default=250)
+    run_parser.add_argument("--peer-addr-relay-limit-per-interval", type=int, default=250)
+    run_parser.add_argument("--peer-addr-relay-interval-seconds", type=int, default=30)
+    run_parser.add_argument("--peer-stale-after-seconds", type=int, default=604800)
+    run_parser.add_argument("--peer-retry-backoff-base-seconds", type=float, default=1.0)
+    run_parser.add_argument("--peer-retry-backoff-max-seconds", type=float, default=30.0)
+    run_parser.add_argument("--peer-discovery-startup-prefer-persisted", type=_parse_bool, default=True)
+    run_parser.add_argument("--headers-sync-enabled", type=_parse_bool, default=True)
+    run_parser.add_argument("--headers-max-per-message", type=int, default=2000)
+    run_parser.add_argument("--block-download-window-size", type=int, default=128)
+    run_parser.add_argument("--block-max-inflight-per-peer", type=int, default=16)
+    run_parser.add_argument("--block-request-timeout-seconds", type=float, default=10.0)
+    run_parser.add_argument("--headers-sync-parallel-peers", type=int, default=2)
+    run_parser.add_argument("--headers-sync-start-height-gap-threshold", type=int, default=1)
+    run_parser.add_argument("--misbehavior-warning-threshold", type=int, default=25)
+    run_parser.add_argument("--misbehavior-disconnect-threshold", type=int, default=50)
+    run_parser.add_argument("--misbehavior-ban-threshold", type=int, default=100)
+    run_parser.add_argument("--misbehavior-ban-duration-seconds", type=int, default=1800)
+    run_parser.add_argument("--misbehavior-decay-interval-seconds", type=int, default=300)
+    run_parser.add_argument("--misbehavior-decay-step", type=int, default=5)
     run_parser.add_argument(
         "--mining-min-interval-seconds",
         type=float,
@@ -493,9 +516,32 @@ def _build_parser() -> argparse.ArgumentParser:
     mine_parser.add_argument("--listen-host", default="127.0.0.1")
     mine_parser.add_argument("--listen-port", type=int, default=None)
     mine_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
+    mine_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
     mine_parser.add_argument("--peer-seed-url", default=None, help="Optional local HTTP API endpoint used to seed peers.")
     mine_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
     mine_parser.add_argument("--miner-address", required=True, help="Mining reward payout address.")
+    mine_parser.add_argument("--peer-discovery-enabled", type=_parse_bool, default=True)
+    mine_parser.add_argument("--peerbook-max-size", type=int, default=1024)
+    mine_parser.add_argument("--peer-addr-max-per-message", type=int, default=250)
+    mine_parser.add_argument("--peer-addr-relay-limit-per-interval", type=int, default=250)
+    mine_parser.add_argument("--peer-addr-relay-interval-seconds", type=int, default=30)
+    mine_parser.add_argument("--peer-stale-after-seconds", type=int, default=604800)
+    mine_parser.add_argument("--peer-retry-backoff-base-seconds", type=float, default=1.0)
+    mine_parser.add_argument("--peer-retry-backoff-max-seconds", type=float, default=30.0)
+    mine_parser.add_argument("--peer-discovery-startup-prefer-persisted", type=_parse_bool, default=True)
+    mine_parser.add_argument("--headers-sync-enabled", type=_parse_bool, default=True)
+    mine_parser.add_argument("--headers-max-per-message", type=int, default=2000)
+    mine_parser.add_argument("--block-download-window-size", type=int, default=128)
+    mine_parser.add_argument("--block-max-inflight-per-peer", type=int, default=16)
+    mine_parser.add_argument("--block-request-timeout-seconds", type=float, default=10.0)
+    mine_parser.add_argument("--headers-sync-parallel-peers", type=int, default=2)
+    mine_parser.add_argument("--headers-sync-start-height-gap-threshold", type=int, default=1)
+    mine_parser.add_argument("--misbehavior-warning-threshold", type=int, default=25)
+    mine_parser.add_argument("--misbehavior-disconnect-threshold", type=int, default=50)
+    mine_parser.add_argument("--misbehavior-ban-threshold", type=int, default=100)
+    mine_parser.add_argument("--misbehavior-ban-duration-seconds", type=int, default=1800)
+    mine_parser.add_argument("--misbehavior-decay-interval-seconds", type=int, default=300)
+    mine_parser.add_argument("--misbehavior-decay-step", type=int, default=5)
     mine_parser.add_argument(
         "--mining-min-interval-seconds",
         type=float,
@@ -622,6 +668,17 @@ def _print_error(message: str) -> None:
     sys.stderr.write("\n")
 
 
+def _parse_bool(raw: str) -> bool:
+    """Parse one shell-friendly boolean CLI value."""
+
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"invalid boolean value: {raw}")
+
+
 async def _run_runtime(service: NodeService, args, miner_address: str | None = None) -> None:
     """Run the persistent node runtime."""
 
@@ -632,11 +689,36 @@ async def _run_runtime(service: NodeService, args, miner_address: str | None = N
         listen_host=args.listen_host,
         listen_port=network_config.default_p2p_port if args.listen_port is None else args.listen_port,
         outbound_peers=peers,
+        peer_discovery_enabled=getattr(args, "peer_discovery_enabled", True),
+        peerbook_max_size=getattr(args, "peerbook_max_size", 1024),
+        peer_addr_max_per_message=getattr(args, "peer_addr_max_per_message", 250),
+        peer_addr_relay_limit_per_interval=getattr(args, "peer_addr_relay_limit_per_interval", 250),
+        peer_addr_relay_interval_seconds=getattr(args, "peer_addr_relay_interval_seconds", 30),
+        peer_stale_after_seconds=getattr(args, "peer_stale_after_seconds", 604800),
+        peer_retry_backoff_base_seconds=getattr(args, "peer_retry_backoff_base_seconds", 1.0),
+        peer_retry_backoff_max_seconds=getattr(args, "peer_retry_backoff_max_seconds", 30.0),
+        peer_discovery_startup_prefer_persisted=getattr(args, "peer_discovery_startup_prefer_persisted", True),
+        headers_sync_enabled=getattr(args, "headers_sync_enabled", True),
+        max_headers_per_message=getattr(args, "headers_max_per_message", 2000),
+        block_download_window_size=getattr(args, "block_download_window_size", 128),
+        block_max_inflight_per_peer=getattr(args, "block_max_inflight_per_peer", 16),
+        block_request_timeout_seconds=getattr(args, "block_request_timeout_seconds", 10.0),
+        headers_sync_parallel_peers=getattr(args, "headers_sync_parallel_peers", 2),
+        headers_sync_start_height_gap_threshold=getattr(args, "headers_sync_start_height_gap_threshold", 1),
         miner_address=miner_address if miner_address is not None else getattr(args, "miner_address", None),
         mining_min_interval_seconds=getattr(args, "mining_min_interval_seconds", 0.0),
+        misbehavior_warning_threshold=getattr(args, "misbehavior_warning_threshold", 25),
+        misbehavior_disconnect_threshold=getattr(args, "misbehavior_disconnect_threshold", 50),
+        misbehavior_ban_threshold=getattr(args, "misbehavior_ban_threshold", 100),
+        misbehavior_ban_duration_seconds=getattr(args, "misbehavior_ban_duration_seconds", 1800),
+        misbehavior_decay_interval_seconds=getattr(args, "misbehavior_decay_interval_seconds", 300),
+        misbehavior_decay_step=getattr(args, "misbehavior_decay_step", 5),
         local_peer_seed_url=getattr(args, "peer_seed_url", None),
         logger=None,
     )
+    configured_peer_source = getattr(args, "peer_source", "manual")
+    if hasattr(runtime, "_outbound_target_sources"):
+        runtime._outbound_target_sources.update({(peer.host, peer.port): configured_peer_source for peer in peers})
     await runtime.start()
     if args.run_seconds is not None:
         await asyncio.sleep(args.run_seconds)

@@ -26,6 +26,9 @@ What works today:
 
 - SQLite-backed node runtime
 - P2P block and transaction relay
+- peer misbehavior scoring with temporary bans and decay
+- persistent peerbook with bounded addr/getaddr discovery
+- headers-first initial sync with bounded multi-peer block download
 - HTTP API for status, blocks, transactions, peers, and address data
 - external miner process using a wallet file
 - browser wallet for Chrome and Firefox
@@ -35,7 +38,7 @@ What is intentionally limited today:
 
 - `devnet` is the only supported public network for this release
 - the node runtime does not use a wallet file yet
-- browser wallet import uses raw private key hex, not seed phrases
+- browser wallet recovery phrases are Chipcoin-specific and not BIP39-compatible yet
 - no multisig, no multiple accounts, no hardware wallet support
 - explorer and bootstrap service deployment are outside the primary public onboarding path for this repository
 
@@ -122,6 +125,51 @@ If you want a fully local first run, set:
 This starts an isolated local node/miner pair and avoids any external bootstrap dependency in the first-user path.
 
 If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=18444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it.
+
+Peer misbehavior defaults in `.env.example`:
+
+- `PEER_MISBEHAVIOR_WARNING_THRESHOLD=25`
+- `PEER_MISBEHAVIOR_DISCONNECT_THRESHOLD=50`
+- `PEER_MISBEHAVIOR_BAN_THRESHOLD=100`
+- `PEER_MISBEHAVIOR_BAN_DURATION_SECONDS=1800`
+- `PEER_MISBEHAVIOR_DECAY_INTERVAL_SECONDS=300`
+- `PEER_MISBEHAVIOR_DECAY_STEP=5`
+
+These control networking policy only. They do not change consensus validity or monetary behavior.
+
+Peer discovery defaults in `.env.example`:
+
+- `PEER_DISCOVERY_ENABLED=true`
+- `PEERBOOK_MAX_SIZE=1024`
+- `PEER_ADDR_MAX_PER_MESSAGE=250`
+- `PEER_ADDR_RELAY_LIMIT_PER_INTERVAL=250`
+- `PEER_ADDR_RELAY_INTERVAL_SECONDS=30`
+- `PEER_STALE_AFTER_SECONDS=604800`
+- `PEER_RETRY_BACKOFF_BASE_SECONDS=1`
+- `PEER_RETRY_BACKOFF_MAX_SECONDS=30`
+- `PEER_DISCOVERY_STARTUP_PREFER_PERSISTED=true`
+
+After a node has learned the network, the persisted peerbook becomes the primary reconnection source. Manual peers and bootstrap-derived seed peers remain supported, but are treated as fallback startup inputs when healthy persisted peers already exist.
+
+Headers-first sync defaults in `.env.example`:
+
+- `HEADERS_SYNC_ENABLED=true`
+- `HEADERS_MAX_PER_MESSAGE=2000`
+- `BLOCK_DOWNLOAD_WINDOW_SIZE=128`
+- `BLOCK_MAX_INFLIGHT_PER_PEER=16`
+- `BLOCK_REQUEST_TIMEOUT_SECONDS=10`
+- `HEADERS_SYNC_PARALLEL_PEERS=2`
+- `HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD=1`
+
+With these defaults, the node:
+
+1. requests headers from suitable peers
+2. tracks the best known header tip separately from the validated chain tip
+3. schedules block downloads inside a bounded moving window
+4. spreads block requests across multiple healthy peers
+5. reassigns stalled block requests after timeout
+
+Full block validation still happens before chain acceptance. Headers-first sync is a download strategy, not a consensus shortcut.
 
 ## Setup Wizard
 
@@ -212,11 +260,21 @@ docker compose up -d --build node miner
 docker compose ps
 docker compose logs -f node
 docker compose logs -f miner
+chipcoin --data /path/to/node.sqlite3 peer-summary
 ```
 
 Node HTTP API default:
 
 - `http://127.0.0.1:8081`
+
+Peer diagnostics now expose:
+
+- active backoff state
+- misbehavior score
+- last penalty reason
+- active temporary bans
+- peer source (`manual`, `seed`, `discovered`)
+- peer state (`manual`, `seed`, `discovered`, `good`, `questionable`, `banned`)
 
 Useful examples:
 

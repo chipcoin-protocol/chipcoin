@@ -34,6 +34,7 @@ PY
 
 resolve_peer() {
   if [[ -n "${DIRECT_PEER:-}" ]]; then
+    DISCOVERY_SOURCE="manual"
     printf '%s' "$DIRECT_PEER"
     return 0
   fi
@@ -54,6 +55,7 @@ if not peers:
 print(f"{peers[0].host}:{peers[0].port}")
 PY
 ); then
+      DISCOVERY_SOURCE="seed"
       printf '%s' "$peer"
       return 0
     fi
@@ -90,7 +92,7 @@ run_node() {
   local -a peer_args=()
   if peer="$(resolve_peer)"; then
     log "Node discovery target=${peer}"
-    peer_args=(--peer "$peer")
+    peer_args=(--peer "$peer" --peer-source "${DISCOVERY_SOURCE:-manual}")
   else
     log "Node discovery target=isolated"
   fi
@@ -106,6 +108,28 @@ run_node() {
     run \
     --listen-host 0.0.0.0 \
     --listen-port "${NODE_P2P_BIND_PORT}" \
+    --peer-discovery-enabled "${PEER_DISCOVERY_ENABLED:-true}" \
+    --peerbook-max-size "${PEERBOOK_MAX_SIZE:-1024}" \
+    --peer-addr-max-per-message "${PEER_ADDR_MAX_PER_MESSAGE:-250}" \
+    --peer-addr-relay-limit-per-interval "${PEER_ADDR_RELAY_LIMIT_PER_INTERVAL:-250}" \
+    --peer-addr-relay-interval-seconds "${PEER_ADDR_RELAY_INTERVAL_SECONDS:-30}" \
+    --peer-stale-after-seconds "${PEER_STALE_AFTER_SECONDS:-604800}" \
+    --peer-retry-backoff-base-seconds "${PEER_RETRY_BACKOFF_BASE_SECONDS:-1}" \
+    --peer-retry-backoff-max-seconds "${PEER_RETRY_BACKOFF_MAX_SECONDS:-30}" \
+    --peer-discovery-startup-prefer-persisted "${PEER_DISCOVERY_STARTUP_PREFER_PERSISTED:-true}" \
+    --headers-sync-enabled "${HEADERS_SYNC_ENABLED:-true}" \
+    --headers-max-per-message "${HEADERS_MAX_PER_MESSAGE:-2000}" \
+    --block-download-window-size "${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}" \
+    --block-max-inflight-per-peer "${BLOCK_MAX_INFLIGHT_PER_PEER:-16}" \
+    --block-request-timeout-seconds "${BLOCK_REQUEST_TIMEOUT_SECONDS:-10}" \
+    --headers-sync-parallel-peers "${HEADERS_SYNC_PARALLEL_PEERS:-2}" \
+    --headers-sync-start-height-gap-threshold "${HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD:-1}" \
+    --misbehavior-warning-threshold "${PEER_MISBEHAVIOR_WARNING_THRESHOLD:-25}" \
+    --misbehavior-disconnect-threshold "${PEER_MISBEHAVIOR_DISCONNECT_THRESHOLD:-50}" \
+    --misbehavior-ban-threshold "${PEER_MISBEHAVIOR_BAN_THRESHOLD:-100}" \
+    --misbehavior-ban-duration-seconds "${PEER_MISBEHAVIOR_BAN_DURATION_SECONDS:-1800}" \
+    --misbehavior-decay-interval-seconds "${PEER_MISBEHAVIOR_DECAY_INTERVAL_SECONDS:-300}" \
+    --misbehavior-decay-step "${PEER_MISBEHAVIOR_DECAY_STEP:-5}" \
     "${peer_args[@]}"
 }
 
@@ -126,7 +150,7 @@ run_miner() {
   local -a peer_args=()
   if peer="$(resolve_peer)"; then
     log "Miner discovery target=${peer}"
-    peer_args=(--peer "$peer")
+    peer_args=(--peer "$peer" --peer-source "${DISCOVERY_SOURCE:-manual}")
   else
     log "Miner discovery target=isolated"
   fi
@@ -141,6 +165,28 @@ run_miner() {
     --miner-address "${miner_address}" \
     --mining-min-interval-seconds "${MINING_MIN_INTERVAL_SECONDS}" \
     --peer-seed-url "${MINER_LOCAL_NODE_ENDPOINT:-http://node:8081}" \
+    --peer-discovery-enabled "${PEER_DISCOVERY_ENABLED:-true}" \
+    --peerbook-max-size "${PEERBOOK_MAX_SIZE:-1024}" \
+    --peer-addr-max-per-message "${PEER_ADDR_MAX_PER_MESSAGE:-250}" \
+    --peer-addr-relay-limit-per-interval "${PEER_ADDR_RELAY_LIMIT_PER_INTERVAL:-250}" \
+    --peer-addr-relay-interval-seconds "${PEER_ADDR_RELAY_INTERVAL_SECONDS:-30}" \
+    --peer-stale-after-seconds "${PEER_STALE_AFTER_SECONDS:-604800}" \
+    --peer-retry-backoff-base-seconds "${PEER_RETRY_BACKOFF_BASE_SECONDS:-1}" \
+    --peer-retry-backoff-max-seconds "${PEER_RETRY_BACKOFF_MAX_SECONDS:-30}" \
+    --peer-discovery-startup-prefer-persisted "${PEER_DISCOVERY_STARTUP_PREFER_PERSISTED:-true}" \
+    --headers-sync-enabled "${HEADERS_SYNC_ENABLED:-true}" \
+    --headers-max-per-message "${HEADERS_MAX_PER_MESSAGE:-2000}" \
+    --block-download-window-size "${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}" \
+    --block-max-inflight-per-peer "${BLOCK_MAX_INFLIGHT_PER_PEER:-16}" \
+    --block-request-timeout-seconds "${BLOCK_REQUEST_TIMEOUT_SECONDS:-10}" \
+    --headers-sync-parallel-peers "${HEADERS_SYNC_PARALLEL_PEERS:-2}" \
+    --headers-sync-start-height-gap-threshold "${HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD:-1}" \
+    --misbehavior-warning-threshold "${PEER_MISBEHAVIOR_WARNING_THRESHOLD:-25}" \
+    --misbehavior-disconnect-threshold "${PEER_MISBEHAVIOR_DISCONNECT_THRESHOLD:-50}" \
+    --misbehavior-ban-threshold "${PEER_MISBEHAVIOR_BAN_THRESHOLD:-100}" \
+    --misbehavior-ban-duration-seconds "${PEER_MISBEHAVIOR_BAN_DURATION_SECONDS:-1800}" \
+    --misbehavior-decay-interval-seconds "${PEER_MISBEHAVIOR_DECAY_INTERVAL_SECONDS:-300}" \
+    --misbehavior-decay-step "${PEER_MISBEHAVIOR_DECAY_STEP:-5}" \
     "${peer_args[@]}"
 }
 

@@ -100,7 +100,13 @@ def initialize_database(path: Path) -> sqlite3.Connection:
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
         _ensure_column(connection, table="peers", column="direction", definition="TEXT")
+        _ensure_column(connection, table="peers", column="source", definition="TEXT")
+        _ensure_column(connection, table="peers", column="first_seen", definition="INTEGER")
         _ensure_column(connection, table="peers", column="last_seen", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="last_success", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="last_failure", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="failure_count", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="success_count", definition="INTEGER")
         _ensure_column(connection, table="peers", column="handshake_complete", definition="INTEGER")
         _ensure_column(connection, table="peers", column="last_known_height", definition="INTEGER")
         _ensure_column(connection, table="peers", column="node_id", definition="TEXT")
@@ -112,6 +118,11 @@ def initialize_database(path: Path) -> sqlite3.Connection:
         _ensure_column(connection, table="peers", column="protocol_error_class", definition="TEXT")
         _ensure_column(connection, table="peers", column="disconnect_count", definition="INTEGER")
         _ensure_column(connection, table="peers", column="session_started_at", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="misbehavior_score", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="misbehavior_last_updated_at", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="ban_until", definition="INTEGER")
+        _ensure_column(connection, table="peers", column="last_penalty_reason", definition="TEXT")
+        _ensure_column(connection, table="peers", column="last_penalty_at", definition="INTEGER")
     return connection
 
 

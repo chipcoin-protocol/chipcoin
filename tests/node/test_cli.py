@@ -103,6 +103,7 @@ def test_cli_status_and_tip() -> None:
         assert status_payload["current_bits"] == mined.header.bits
         assert status_payload["cumulative_work"] is not None
         assert status_payload["expected_next_bits"] == mined.header.bits
+        assert status_payload["sync"]["mode"] == "idle"
         assert tip_code == 0
         assert tip_payload["block_hash"] == mined.block_hash()
         assert tip_payload["bits"] == mined.header.bits
@@ -158,27 +159,17 @@ def test_cli_add_peer_and_list_peers() -> None:
         assert add_code == 0
         assert add_payload["host"] == "127.0.0.1"
         assert list_code == 0
-        assert list_payload == [
-            {
-                "host": "127.0.0.1",
-                "backoff_until": None,
-                "disconnect_count": None,
-                "direction": None,
-                "handshake_complete": None,
-                "last_error": None,
-                "last_error_at": None,
-                "last_known_height": None,
-                "last_seen": None,
-                "network": "mainnet",
-                "network_magic_hex": "f9beb4d9",
-                "node_id": None,
-                "port": 8333,
-                "protocol_error_class": None,
-                "reconnect_attempts": None,
-                "score": None,
-                "session_started_at": None,
-            }
-        ]
+        assert len(list_payload) == 1
+        peer = list_payload[0]
+        assert peer["host"] == "127.0.0.1"
+        assert peer["port"] == 8333
+        assert peer["network"] == "mainnet"
+        assert peer["source"] == "manual"
+        assert peer["peer_state"] == "manual"
+        assert isinstance(peer["first_seen"], int)
+        assert isinstance(peer["last_seen"], int)
+        assert peer["ban_until"] is None
+        assert peer["banned"] is False
 
 
 def test_cli_list_peers_and_peer_detail_show_protocol_error_class() -> None:
@@ -200,6 +191,11 @@ def test_cli_list_peers_and_peer_detail_show_protocol_error_class() -> None:
             disconnect_count=3,
             session_started_at=1_700_000_120,
             last_known_height=42,
+            misbehavior_score=60,
+            misbehavior_last_updated_at=1_700_000_124,
+            ban_until=2_700_000_224,
+            last_penalty_reason="wrong_network_magic",
+            last_penalty_at=1_700_000_124,
         )
 
         list_code, list_payload = _run_cli(["--data", str(db_path), "list-peers"])
@@ -214,8 +210,15 @@ def test_cli_list_peers_and_peer_detail_show_protocol_error_class() -> None:
                 "network": "mainnet",
                 "network_magic_hex": "f9beb4d9",
                 "direction": "outbound",
+                "source": None,
+                "peer_state": "banned",
+                "first_seen": 1_700_000_000,
                 "node_id": "peer-a",
                 "handshake_complete": False,
+                "last_success": None,
+                "last_failure": None,
+                "failure_count": None,
+                "success_count": None,
                 "score": -25,
                 "reconnect_attempts": 2,
                 "backoff_until": 1_700_000_123,
@@ -225,7 +228,13 @@ def test_cli_list_peers_and_peer_detail_show_protocol_error_class() -> None:
                 "disconnect_count": 3,
                 "last_error": "Unexpected network magic.",
                 "last_error_at": 1_700_000_124,
+                "last_penalty_at": 1_700_000_124,
+                "last_penalty_reason": "wrong_network_magic",
                 "protocol_error_class": "wrong_network_magic",
+                "misbehavior_last_updated_at": 1_700_000_124,
+                "misbehavior_score": 60,
+                "ban_until": 2_700_000_224,
+                "banned": True,
             }
         ]
         assert detail_payload == list_payload[0]
@@ -250,6 +259,11 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
             disconnect_count=3,
             session_started_at=1_700_000_120,
             last_known_height=42,
+            misbehavior_score=60,
+            misbehavior_last_updated_at=1_700_000_124,
+            ban_until=2_700_000_224,
+            last_penalty_reason="wrong_network_magic",
+            last_penalty_at=1_700_000_124,
         )
         service.record_peer_observation(
             host="127.0.0.2",
@@ -266,6 +280,10 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
             disconnect_count=7,
             session_started_at=1_700_000_121,
             last_known_height=43,
+            misbehavior_score=10,
+            misbehavior_last_updated_at=1_700_000_125,
+            last_penalty_reason="duplicate_connection",
+            last_penalty_at=1_700_000_125,
         )
 
         code, payload = _run_cli(["--data", str(db_path), "peer-summary"])
@@ -277,8 +295,16 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
         }
         assert payload["peer_count_by_network"] == {"mainnet": 2}
         assert payload["peer_count_by_direction"] == {"inbound": 1, "outbound": 1}
+        assert payload["peer_count_by_source"] == {}
+        assert payload["peer_count_by_state"] == {"banned": 1, "questionable": 1}
         assert payload["peer_count_by_handshake_status"] == {"complete": 1, "incomplete": 1, "unknown": 0}
         assert payload["backoff_peer_count"] == 1
+        assert payload["banned_peer_count"] == 1
+        assert payload["penalty_reason_counts"] == {
+            "duplicate_connection": 1,
+            "wrong_network_magic": 1,
+        }
+        assert payload["highest_misbehavior_peer"]["node_id"] == "peer-a"
         assert payload["worst_score_peer"]["node_id"] == "peer-a"
         assert payload["most_disconnected_peer"]["node_id"] == "peer-b"
         assert payload["most_recent_error_peer"]["node_id"] == "peer-b"
