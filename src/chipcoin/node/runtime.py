@@ -478,7 +478,11 @@ class NodeRuntime:
             observation_direction = "inbound" if session.inbound else "outbound"
             observation_source = "discovered"
             if handle is not None and endpoint is not None:
-                canonical_endpoint = self._canonicalize_reusable_inbound_endpoint(endpoint, inbound=session.inbound)
+                canonical_endpoint = self._canonicalize_reusable_inbound_endpoint(
+                    endpoint,
+                    inbound=session.inbound,
+                    node_id=remote.node_id,
+                )
                 if canonical_endpoint is not None:
                     if canonical_endpoint != endpoint:
                         self.logger.info(
@@ -1411,6 +1415,7 @@ class NodeRuntime:
         endpoint: PeerEndpoint,
         *,
         inbound: bool,
+        node_id: str | None = None,
     ) -> OutboundPeer | None:
         """Return a reusable public endpoint for an inbound peer when it is safe to do so."""
 
@@ -1422,7 +1427,11 @@ class NodeRuntime:
             return None
         if not address.is_global:
             return None
-        return OutboundPeer(endpoint.host, get_network_config(self.service.network).default_p2p_port)
+        canonical = OutboundPeer(endpoint.host, get_network_config(self.service.network).default_p2p_port)
+        existing = self._known_peer_info(canonical.host, canonical.port)
+        if existing is not None and existing.node_id is not None and node_id is not None and existing.node_id != node_id:
+            return None
+        return canonical
 
     def _is_valid_peer_host(self, host: str) -> bool:
         """Return whether one advertised host string is syntactically reasonable."""

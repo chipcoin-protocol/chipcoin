@@ -121,6 +121,27 @@ def test_runtime_canonicalizes_public_inbound_peer_to_default_p2p_port() -> None
         assert canonical == OutboundPeer("188.218.213.92", 18444)
 
 
+def test_runtime_does_not_canonicalize_public_inbound_peer_when_canonical_endpoint_belongs_to_other_node_id() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=18444,
+            direction=None,
+            handshake_complete=True,
+            node_id="tobia-node-id",
+        )
+        runtime = NodeRuntime(service=service, listen_host="0.0.0.0", listen_port=18444)
+
+        canonical = runtime._canonicalize_reusable_inbound_endpoint(
+            PeerEndpoint(host="188.217.94.86", port=47740),
+            inbound=True,
+            node_id="tobia-miner-id",
+        )
+
+        assert canonical is None
+
+
 def test_runtime_does_not_canonicalize_private_inbound_peer() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
@@ -184,6 +205,70 @@ def test_runtime_persists_public_inbound_peer_as_reusable_candidate() -> None:
             assert runtime._desired_outbound_peers() == [OutboundPeer("188.218.213.92", 18444)]
             reusable_peer = next(peer for peer in peers if peer.host == "188.218.213.92" and peer.port == 18444)
             assert runtime._is_advertisable_peer(reusable_peer) is True
+
+    asyncio.run(scenario())
+
+
+def test_runtime_keeps_conflicting_public_inbound_peer_on_ephemeral_port() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+            service.record_peer_observation(
+                host="188.217.94.86",
+                port=18444,
+                direction=None,
+                handshake_complete=True,
+                node_id="tobia-node-id",
+            )
+            runtime = NodeRuntime(service=service, listen_host="0.0.0.0", listen_port=18444)
+
+            class _FakeRemote:
+                node_id = "tobia-miner-id"
+                start_height = 3921
+
+            class _FakeState:
+                closed = False
+                handshake_complete = True
+                remote_version = _FakeRemote()
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeTransport:
+                @staticmethod
+                def peer_endpoint():
+                    return type("_Peer", (), {"host": "188.217.94.86", "port": 47740})()
+
+            class _FakeSession:
+                inbound = True
+                state = _FakeState()
+                transport = _FakeTransport()
+
+                async def send_message(self, message: MessageEnvelope) -> None:
+                    return None
+
+                async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+                    self.state.closed = True
+
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=False)
+
+            await runtime._on_handshake_complete(session)
+
+            peers = service.list_peers()
+            assert any(
+                peer.host == "188.217.94.86"
+                and peer.port == 18444
+                and peer.node_id == "tobia-node-id"
+                for peer in peers
+            )
+            assert any(
+                peer.host == "188.217.94.86"
+                and peer.port == 47740
+                and peer.node_id == "tobia-miner-id"
+                and peer.direction == "inbound"
+                for peer in peers
+            )
+            assert OutboundPeer("188.217.94.86", 47740) not in runtime._desired_outbound_peers()
 
     asyncio.run(scenario())
 
