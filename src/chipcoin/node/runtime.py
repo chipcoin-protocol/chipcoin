@@ -189,6 +189,7 @@ class NodeRuntime:
         self._tasks: set[asyncio.Task] = set()
         self._sessions: dict[PeerProtocol, SessionHandle] = {}
         self._sessions_by_node_id: dict[str, PeerProtocol] = {}
+        self._pending_outbound_peers: set[OutboundPeer] = set()
         self._outbound_targets: dict[tuple[str, int], OutboundPeer] = {
             (peer.host, peer.port): peer for peer in (outbound_peers or [])
         }
@@ -286,6 +287,7 @@ class NodeRuntime:
         self._tasks.clear()
         self._sessions.clear()
         self._sessions_by_node_id.clear()
+        self._pending_outbound_peers.clear()
         self._relayed_mempool_txids.clear()
         self.service.set_runtime_sync_status(None)
         self._stop_event.set()
@@ -346,10 +348,13 @@ class NodeRuntime:
                         )
                     continue
                 try:
+                    self._pending_outbound_peers.add(peer)
                     await self._connect_outbound(peer)
                 except Exception as exc:
                     self.logger.debug("outbound connect failed peer=%s:%s error=%s", peer.host, peer.port, exc)
                     self._register_peer_failure(peer, error=exc, penalty=20)
+                finally:
+                    self._pending_outbound_peers.discard(peer)
             await asyncio.sleep(self.connect_interval)
 
     async def _ping_loop(self) -> None:
@@ -1194,6 +1199,9 @@ class NodeRuntime:
     def _has_active_endpoint(self, peer: OutboundPeer) -> bool:
         """Return whether an active outbound session already targets the endpoint."""
 
+        for pending in self._pending_outbound_peers:
+            if pending == peer or self._peers_equivalent(pending, peer):
+                return True
         known = self._known_peer_info(peer.host, peer.port)
         known_node_id = None if known is None else known.node_id
         for protocol, handle in self._sessions.items():

@@ -1449,6 +1449,38 @@ def test_runtime_logs_applied_block_height(caplog) -> None:
         assert "block applied peer=127.0.0.1:18444/peer-a height=0" in caplog.text
 
 
+def test_connect_loop_does_not_overlap_outbound_dials() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="127.0.0.1",
+                listen_port=18445,
+                connect_interval=0.01,
+            )
+            peer = OutboundPeer("173.212.193.13", 18444)
+            runtime._running = True
+            attempts: list[str] = []
+
+            runtime._desired_outbound_peers = lambda: [peer]  # type: ignore[method-assign]
+            runtime._is_peer_currently_banned = lambda *_args, **_kwargs: False  # type: ignore[method-assign]
+            runtime._is_backoff_active = lambda *_args, **_kwargs: False  # type: ignore[method-assign]
+
+            async def slow_connect(_peer: OutboundPeer) -> None:
+                attempts.append(f"{_peer.host}:{_peer.port}")
+                await asyncio.sleep(0.05)
+                runtime._running = False
+
+            runtime._connect_outbound = slow_connect  # type: ignore[method-assign]
+
+            await runtime._connect_loop()
+
+            assert attempts == ["173.212.193.13:18444"]
+
+    asyncio.run(scenario())
+
+
 def test_runtime_rejects_invalid_headers_message(monkeypatch) -> None:
     class _FakeSessionState:
         closed = False
