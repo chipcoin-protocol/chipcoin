@@ -59,6 +59,10 @@ class TransportTimeoutError(TransportError):
     """Raised when a transport operation times out."""
 
 
+class ConnectionFailedError(TransportError):
+    """Raised when a TCP connection cannot be established."""
+
+
 def protocol_error_class(error: Exception | str | None) -> str | None:
     """Return a stable protocol error class from a typed exception or fallback string."""
 
@@ -82,6 +86,8 @@ def protocol_error_class(error: Exception | str | None) -> str | None:
         return "duplicate_connection"
     if isinstance(error, ConnectionClosedError):
         return "connection_closed"
+    if isinstance(error, ConnectionFailedError):
+        return "connection_failed"
     if isinstance(error, str):
         lowered = error.lower()
     else:
@@ -96,6 +102,8 @@ def protocol_error_class(error: Exception | str | None) -> str | None:
         return "handshake_failed"
     if "timed out" in lowered or "ping" in lowered or "pong" in lowered:
         return "timeout"
+    if "connect call failed" in lowered or "connection refused" in lowered or "[errno 111]" in lowered:
+        return "connection_failed"
     if "invalid block" in lowered:
         return "invalid_block"
     if "invalid tx" in lowered:

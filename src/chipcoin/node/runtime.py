@@ -1979,22 +1979,51 @@ class NodeRuntime:
         attempts, backoff_until = self._next_backoff_state(info)
         now = self.service.time_provider()
         error_text = str(error)
+        classification = classify_peer_error(error)
         applied_penalty = self._penalty_for_error(error) if penalty is None else penalty
         new_score = self._updated_peer_score(peer.host, peer.port, delta=-applied_penalty)
-        action = self._observe_peer_misbehavior(
-            host=peer.host,
-            port=peer.port,
-            event=classify_peer_error(error) or "connect_failure",
-            delta=applied_penalty,
-            direction="outbound",
-            handshake_complete=False,
-            reconnect_attempts=attempts,
-            backoff_until=backoff_until if backoff_until > now else now + 1,
-            disconnect_count=0 if info is None or info.disconnect_count is None else info.disconnect_count + 1,
-            last_error=error_text,
-            protocol_error_class_name=classify_peer_error(error),
-            score=new_score,
-        )
+        if self._should_penalize_as_misbehavior(error, handshake_complete=False):
+            action = self._observe_peer_misbehavior(
+                host=peer.host,
+                port=peer.port,
+                event=classification or "connect_failure",
+                delta=applied_penalty,
+                direction="outbound",
+                handshake_complete=False,
+                reconnect_attempts=attempts,
+                backoff_until=backoff_until if backoff_until > now else now + 1,
+                disconnect_count=0 if info is None or info.disconnect_count is None else info.disconnect_count + 1,
+                last_error=error_text,
+                protocol_error_class_name=classification,
+                score=new_score,
+            )
+        else:
+            action = "backoff"
+            self.service.record_peer_observation(
+                host=peer.host,
+                port=peer.port,
+                source=None if info is None else info.source,
+                direction="outbound",
+                handshake_complete=False,
+                last_failure=now,
+                failure_count=1 if info is None or info.failure_count is None else info.failure_count + 1,
+                last_known_height=None if info is None else info.last_known_height,
+                node_id=None if info is None else info.node_id,
+                score=new_score,
+                reconnect_attempts=attempts,
+                backoff_until=backoff_until if backoff_until > now else now + 1,
+                last_error=error_text,
+                last_error_at=now,
+                protocol_error_class=classification,
+                disconnect_count=0 if info is None or info.disconnect_count is None else info.disconnect_count + 1,
+                session_started_at=None if info is None else info.session_started_at,
+                misbehavior_score=None if info is None else info.misbehavior_score,
+                misbehavior_last_updated_at=None if info is None else info.misbehavior_last_updated_at,
+                ban_until=None if info is None else info.ban_until,
+                last_penalty_reason=None if info is None else info.last_penalty_reason,
+                last_penalty_at=None if info is None else info.last_penalty_at,
+            )
+            self._trim_peerbook_to_capacity()
         log = self.logger.info if self._should_log_peer_failure_info(info, attempts=attempts, score=new_score) else self.logger.debug
         log(
             "peer backoff applied peer=%s:%s reconnect_attempts=%s backoff_until=%s score=%s action=%s error=%s",
@@ -2020,6 +2049,16 @@ class NodeRuntime:
 
         return classify_peer_error(error) == "duplicate_connection"
 
+    def _should_penalize_as_misbehavior(self, error: Exception | str | None, *, handshake_complete: bool) -> bool:
+        """Return whether one peer failure should contribute to misbehavior score."""
+
+        classification = classify_peer_error(error)
+        if classification in {"wrong_network_magic", "checksum_error", "malformed_message", "invalid_block", "invalid_tx"}:
+            return True
+        if handshake_complete and classification in {"handshake_failed", "timeout"}:
+            return True
+        return False
+
     def _apply_session_penalty(self, session: PeerProtocol, *, error: Exception | str, penalty: int) -> None:
         """Penalize a peer session using the observed endpoint."""
 
@@ -2029,23 +2068,25 @@ class NodeRuntime:
             return
         info = self._known_peer_info(endpoint.host, endpoint.port)
         error_text = str(error)
-        self._observe_peer_misbehavior(
-            host=endpoint.host,
-            port=endpoint.port,
-            event=classify_peer_error(error) or "protocol_violation",
-            delta=penalty,
-            direction=None if handle is None else ("outbound" if handle.outbound else "inbound"),
-            handshake_complete=False if not session.state.handshake_complete else True,
-            last_known_height=None if session.state.remote_version is None else session.state.remote_version.start_height,
-            node_id=None if session.state.remote_version is None else session.state.remote_version.node_id,
-            reconnect_attempts=None if info is None else info.reconnect_attempts,
-            backoff_until=None if info is None else info.backoff_until,
-            disconnect_count=None if info is None else info.disconnect_count,
-            session_started_at=None if info is None else info.session_started_at,
-            last_error=error_text,
-            protocol_error_class_name=classify_peer_error(error),
-            score=self._updated_peer_score(endpoint.host, endpoint.port, delta=-penalty),
-        )
+        classification = classify_peer_error(error)
+        if self._should_penalize_as_misbehavior(error, handshake_complete=bool(session.state.handshake_complete)):
+            self._observe_peer_misbehavior(
+                host=endpoint.host,
+                port=endpoint.port,
+                event=classification or "protocol_violation",
+                delta=penalty,
+                direction=None if handle is None else ("outbound" if handle.outbound else "inbound"),
+                handshake_complete=False if not session.state.handshake_complete else True,
+                last_known_height=None if session.state.remote_version is None else session.state.remote_version.start_height,
+                node_id=None if session.state.remote_version is None else session.state.remote_version.node_id,
+                reconnect_attempts=None if info is None else info.reconnect_attempts,
+                backoff_until=None if info is None else info.backoff_until,
+                disconnect_count=None if info is None else info.disconnect_count,
+                session_started_at=None if info is None else info.session_started_at,
+                last_error=error_text,
+                protocol_error_class_name=classification,
+                score=self._updated_peer_score(endpoint.host, endpoint.port, delta=-penalty),
+            )
 
     def _is_duplicate_inventory(self, session: PeerProtocol, item: InventoryVector) -> bool:
         """Track repeated inventory announcements from one session."""
@@ -2081,8 +2122,10 @@ class NodeRuntime:
             return 10
         if classification == "duplicate_connection":
             return 1
-        if classification in {"invalid_tx", "connection_closed"}:
-            return 10 if classification == "invalid_tx" else 5
+        if classification == "invalid_tx":
+            return 10
+        if classification in {"connection_closed", "connection_failed"}:
+            return 5
         return 5
 
     def _local_identity(self) -> LocalPeerIdentity:

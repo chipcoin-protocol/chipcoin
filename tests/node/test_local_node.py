@@ -277,6 +277,22 @@ def test_runtime_accumulates_misbehavior_and_bans_peer_after_threshold() -> None
         assert OutboundPeer("node-a.example", 18444) not in runtime._desired_outbound_peers()
 
 
+def test_runtime_transport_failures_do_not_accumulate_misbehavior_bans() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+        peer = OutboundPeer("203.0.113.20", 18444)
+
+        for _ in range(5):
+            runtime._register_peer_failure(peer, error="[Errno 111] Connect call failed ('203.0.113.20', 18444)")
+
+        info = next(peer for peer in service.list_peers() if peer.host == "203.0.113.20" and peer.port == 18444)
+        assert info.protocol_error_class == "connection_failed"
+        assert info.misbehavior_score in (None, 0)
+        assert info.ban_until is None
+        assert runtime._is_peer_currently_banned("203.0.113.20", 18444) is False
+
+
 def test_runtime_decays_misbehavior_score_over_time() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_700_000_900)
