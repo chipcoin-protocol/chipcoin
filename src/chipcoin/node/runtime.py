@@ -705,7 +705,7 @@ class NodeRuntime:
                         served_txs += 1
                         await session.send_message(MessageEnvelope(command="tx", payload=TransactionMessage(transaction=transaction)))
             if block_requests or tx_requests:
-                self.logger.debug(
+                self.logger.info(
                     "served getdata peer=%s requested_blocks=%s served_blocks=%s requested_txs=%s served_txs=%s first_block=%s",
                     self._format_peer_for_logs(session),
                     len(block_requests),
@@ -718,7 +718,7 @@ class NodeRuntime:
 
         if message.command == "block":
             block_hash = message.payload.block.block_hash()
-            self.logger.debug(
+            self.logger.info(
                 "block received peer=%s block=%s inflight_before=%s",
                 self._format_peer_for_logs(session),
                 block_hash,
@@ -763,7 +763,7 @@ class NodeRuntime:
                 )
             else:
                 self._log_block_application(session, result, reorged=False)
-            self.logger.debug(
+            self.logger.info(
                 "block processed peer=%s block=%s accepted_blocks=%s parent_unknown=%s reorged=%s inflight_after=%s",
                 self._format_peer_for_logs(session),
                 result.block_hash,
@@ -962,7 +962,7 @@ class NodeRuntime:
                 handle.inflight_block_hashes.add(item.object_hash)
             for start in range(0, len(items), self.max_inventory_items):
                 batch = tuple(items[start : start + self.max_inventory_items])
-                self.logger.debug(
+                self.logger.info(
                     "requesting blocks peer=%s batch_count=%s first_block=%s last_block=%s",
                     self._format_peer_for_logs(session),
                     len(batch),
