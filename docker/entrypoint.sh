@@ -137,16 +137,16 @@ apply_initial_sync_defaults_if_needed() {
     return 0
   fi
 
-  if [[ -z "${BLOCK_MAX_INFLIGHT_PER_PEER+x}" ]]; then
+  if [[ -z "${BLOCK_MAX_INFLIGHT_PER_PEER+x}" || "${BLOCK_MAX_INFLIGHT_PER_PEER}" == "16" ]]; then
     BLOCK_MAX_INFLIGHT_PER_PEER=4
   fi
-  if [[ -z "${BLOCK_REQUEST_TIMEOUT_SECONDS+x}" ]]; then
+  if [[ -z "${BLOCK_REQUEST_TIMEOUT_SECONDS+x}" || "${BLOCK_REQUEST_TIMEOUT_SECONDS}" == "15" ]]; then
     BLOCK_REQUEST_TIMEOUT_SECONDS=60
   fi
-  if [[ -z "${HEADERS_SYNC_PARALLEL_PEERS+x}" ]]; then
+  if [[ -z "${HEADERS_SYNC_PARALLEL_PEERS+x}" || "${HEADERS_SYNC_PARALLEL_PEERS}" == "2" ]]; then
     HEADERS_SYNC_PARALLEL_PEERS=1
   fi
-  if [[ -z "${BLOCK_DOWNLOAD_WINDOW_SIZE+x}" ]]; then
+  if [[ -z "${BLOCK_DOWNLOAD_WINDOW_SIZE+x}" || "${BLOCK_DOWNLOAD_WINDOW_SIZE}" == "128" ]]; then
     BLOCK_DOWNLOAD_WINDOW_SIZE=32
   fi
 
