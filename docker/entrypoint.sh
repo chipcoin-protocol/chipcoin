@@ -149,8 +149,11 @@ apply_initial_sync_defaults_if_needed() {
   if [[ -z "${BLOCK_DOWNLOAD_WINDOW_SIZE+x}" || "${BLOCK_DOWNLOAD_WINDOW_SIZE}" == "128" ]]; then
     BLOCK_DOWNLOAD_WINDOW_SIZE=32
   fi
+  if [[ -z "${P2P_READ_TIMEOUT_SECONDS+x}" || "${P2P_READ_TIMEOUT_SECONDS}" == "15" || "${P2P_READ_TIMEOUT_SECONDS}" == "15.0" ]]; then
+    P2P_READ_TIMEOUT_SECONDS=60
+  fi
 
-  log "Applying conservative initial sync defaults role=${role_label} startup_peers=${startup_peer_count} block_max_inflight_per_peer=${BLOCK_MAX_INFLIGHT_PER_PEER} block_request_timeout_seconds=${BLOCK_REQUEST_TIMEOUT_SECONDS} headers_sync_parallel_peers=${HEADERS_SYNC_PARALLEL_PEERS} block_download_window_size=${BLOCK_DOWNLOAD_WINDOW_SIZE}"
+  log "Applying conservative initial sync defaults role=${role_label} startup_peers=${startup_peer_count} block_max_inflight_per_peer=${BLOCK_MAX_INFLIGHT_PER_PEER} block_request_timeout_seconds=${BLOCK_REQUEST_TIMEOUT_SECONDS} headers_sync_parallel_peers=${HEADERS_SYNC_PARALLEL_PEERS} block_download_window_size=${BLOCK_DOWNLOAD_WINDOW_SIZE} p2p_read_timeout_seconds=${P2P_READ_TIMEOUT_SECONDS}"
 }
 
 start_http_api() {
@@ -210,6 +213,10 @@ run_node() {
     run \
     --listen-host 0.0.0.0 \
     --listen-port "${NODE_P2P_BIND_PORT}" \
+    --ping-interval-seconds "${PING_INTERVAL_SECONDS:-2.0}" \
+    --read-timeout-seconds "${P2P_READ_TIMEOUT_SECONDS:-15.0}" \
+    --write-timeout-seconds "${P2P_WRITE_TIMEOUT_SECONDS:-15.0}" \
+    --handshake-timeout-seconds "${P2P_HANDSHAKE_TIMEOUT_SECONDS:-5.0}" \
     --peer-discovery-enabled "${PEER_DISCOVERY_ENABLED:-true}" \
     --peerbook-max-size "${PEERBOOK_MAX_SIZE:-1024}" \
     --peer-addr-max-per-message "${PEER_ADDR_MAX_PER_MESSAGE:-250}" \
@@ -279,6 +286,10 @@ run_miner() {
     mine \
     --listen-host 0.0.0.0 \
     --listen-port "${MINER_P2P_BIND_PORT}" \
+    --ping-interval-seconds "${PING_INTERVAL_SECONDS:-2.0}" \
+    --read-timeout-seconds "${P2P_READ_TIMEOUT_SECONDS:-15.0}" \
+    --write-timeout-seconds "${P2P_WRITE_TIMEOUT_SECONDS:-15.0}" \
+    --handshake-timeout-seconds "${P2P_HANDSHAKE_TIMEOUT_SECONDS:-5.0}" \
     --miner-address "${miner_address}" \
     --mining-min-interval-seconds "${MINING_MIN_INTERVAL_SECONDS}" \
     --peer-seed-url "${MINER_LOCAL_NODE_ENDPOINT:-http://node:8081}" \
