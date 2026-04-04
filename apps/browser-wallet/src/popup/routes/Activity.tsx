@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { HistoryEntry } from "../../api/types";
 import type { AppState } from "../../state/app_state";
+import { DEFAULT_EXPLORER_URL } from "../../shared/constants";
 import { formatChc, shortHash } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
 import { unixToIso } from "../../shared/time";
@@ -47,6 +48,10 @@ export function Activity({ state }: { state: AppState }): JSX.Element {
   }, [state.address, state.nodeApiBaseUrl]);
 
   function transactionUrl(txid: string): string {
+    const explorerBaseUrl = DEFAULT_EXPLORER_URL.trim().replace(/\/+$/, "");
+    if (explorerBaseUrl) {
+      return `${explorerBaseUrl}/#/tx/${encodeURIComponent(txid)}`;
+    }
     return `${state.nodeApiBaseUrl}/v1/tx/${txid}`;
   }
 

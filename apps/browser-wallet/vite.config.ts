@@ -12,6 +12,9 @@ export default defineConfig(({ mode }) => {
   const defaultNodeEndpoint = repoEnv.BROWSER_WALLET_DEFAULT_NODE_ENDPOINT
     || repoEnv.DEFAULT_NODE_ENDPOINT
     || "https://api.chipcoinprotocol.com";
+  const defaultExplorerUrl = repoEnv.BROWSER_WALLET_DEFAULT_EXPLORER_URL
+    || repoEnv.DEFAULT_EXPLORER_URL
+    || "https://explorer.chipcoinprotocol.com";
 
   return {
   plugins: [
@@ -30,6 +33,7 @@ export default defineConfig(({ mode }) => {
   ],
   define: {
     __CHIPCOIN_DEFAULT_NODE_ENDPOINT__: JSON.stringify(defaultNodeEndpoint),
+    __CHIPCOIN_DEFAULT_EXPLORER_URL__: JSON.stringify(defaultExplorerUrl),
   },
   build: {
     outDir: "dist",
