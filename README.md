@@ -8,10 +8,6 @@ This public repository is centered on three components:
 - `miner`
 - `browser-wallet`
 
-An explorer can be deployed against the node HTTP API as an additional read-only operator surface.
-
-Bootstrap remains optional and secondary. It is only a peer discovery helper and is not part of consensus.
-
 The current public release target is `devnet`, not mainnet.
 
 Public devnet fallback defaults included in `.env.example`:
@@ -44,7 +40,7 @@ What is intentionally limited today:
 - the node runtime does not use a wallet file yet
 - browser wallet recovery phrases are Chipcoin-specific and not BIP39-compatible yet
 - no multisig, no multiple accounts, no hardware wallet support
-- explorer and bootstrap service deployment are outside the primary public onboarding path for this repository
+  (Explore and bootstrap instructions have moved to the private `chipcoin-central` repo.)
 
 ## Repository Scope
 
@@ -57,9 +53,6 @@ Relevant public areas:
 - `docs/node.md`: node setup and API notes
 - `docs/miner.md`: miner setup and wallet requirements
 - `docs/browser-wallet.md`: extension build and install flow
-- `apps/explorer`: read-only explorer frontend
-- `apps/explorer/README.md`: explorer deployment notes
-- `docs/bootstrap-service.md`: optional bootstrap role
 
 Operator-only or internal material may still exist in the tree, but it is not part of the primary public onboarding path.
 
@@ -115,13 +108,7 @@ Standard runtime roles in the current public stack:
   - stores keys locally in extension storage
   - signs transactions locally
   - reads chain and address state from the node HTTP API
-- `explorer`
-  - read-only frontend over the node HTTP API
-  - does not sign, mine, validate, or participate in consensus
-- `bootstrap`
-  - optional peer discovery helper only
-  - not authoritative for consensus
-  - not required once nodes have a healthy persisted peerbook
+The explorer and bootstrap materials have moved to the private `chipcoin-central` repo and are not part of this public onboarding path.
 
 Local state vs network state:
 
