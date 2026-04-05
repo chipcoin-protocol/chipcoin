@@ -180,6 +180,71 @@ def _ask_optional_peer(prompt: str, default: str) -> str:
         print("Invalid peer format. Expected host:port.")
 
 
+def _should_offer_runtime_sudo(path: Path) -> bool:
+    return path.is_absolute() and Path("/var/lib") in path.parents
+
+
+def _ensure_runtime_parent(path: Path, label: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return
+    except PermissionError as exc:
+        if not _should_offer_runtime_sudo(path):
+            _die(
+                f"Cannot create {label.lower()} directory {path.parent}. "
+                f"Original error: {exc}"
+            )
+        _prepare_runtime_with_sudo(path.parent, label, exc)
+
+
+def _prepare_runtime_with_sudo(target_parent: Path, label: str, original_error: PermissionError) -> None:
+    runtime_root = RUNTIME_ROOT
+    print()
+    print(
+        f"{label} needs a writable runtime directory under {runtime_root}, "
+        f"but the current user cannot create {target_parent}."
+    )
+    answer = input("Prepare the runtime directory with sudo now? [Y/n]: ").strip().lower()
+    if answer in {"", "y", "yes"}:
+        user = getpass.getuser()
+        group = _primary_group_name()
+        mkdir_args = [
+            "sudo",
+            "mkdir",
+            "-p",
+            str(runtime_root / "data"),
+            str(runtime_root / "wallets"),
+            str(runtime_root / "logs"),
+        ]
+        chown_args = ["sudo", "chown", "-R", f"{user}:{group}", str(runtime_root)]
+        try:
+            subprocess.run(mkdir_args, check=True)
+            subprocess.run(chown_args, check=True)
+            target_parent.mkdir(parents=True, exist_ok=True)
+            return
+        except (OSError, subprocess.CalledProcessError) as exc:
+            _die(
+                f"Failed to prepare runtime directory with sudo. "
+                f"Tried: {' '.join(mkdir_args)} && {' '.join(chown_args)}. "
+                f"Original error: {original_error}. Sudo step error: {exc}"
+            )
+    _die(
+        f"Cannot continue without a writable runtime directory for {label.lower()}. "
+        f"Prepare it manually with "
+        f"'sudo mkdir -p {runtime_root}/data {runtime_root}/wallets {runtime_root}/logs "
+        f"&& sudo chown -R $USER:$USER {runtime_root}'. Original error: {original_error}"
+    )
+
+
+def _primary_group_name() -> str:
+    try:
+        import grp
+
+        return grp.getgrgid(os.getgid()).gr_name
+    except Exception:  # noqa: BLE001
+        return getpass.getuser()
+
+
 def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) -> None:
     miner_peer_default = PUBLIC_DEVNET_BOOTSTRAP_PEER if role == "miner" else "node:18444"
 
@@ -244,15 +309,7 @@ def _print_public_reachability_note() -> None:
 
 
 def _prepare_wallet_path(wallet_path: Path) -> None:
-    try:
-        wallet_path.parent.mkdir(parents=True, exist_ok=True)
-    except PermissionError as exc:
-        _die(
-            f"Cannot create wallet directory {wallet_path.parent}. "
-            "Prepare the runtime path first, for example with "
-            f"'sudo mkdir -p {wallet_path.parent} && sudo chown -R $USER:$USER {RUNTIME_ROOT}'. "
-            f"Original error: {exc}"
-        )
+    _ensure_runtime_parent(wallet_path, "Wallet")
     if wallet_path.exists():
         overwrite = input(f"Wallet file already exists at {wallet_path}. Overwrite it? [y/N]: ").strip().lower()
         if overwrite not in {"y", "yes"}:
@@ -286,15 +343,7 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str]:
 
 
 def _prepare_sqlite_file(path: Path, label: str) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    except PermissionError as exc:
-        _die(
-            f"Cannot create {label.lower()} directory {path.parent}. "
-            "Prepare the runtime path first, for example with "
-            f"'sudo mkdir -p {path.parent} && sudo chown -R $USER:$USER {RUNTIME_ROOT}'. "
-            f"Original error: {exc}"
-        )
+    _ensure_runtime_parent(path, label)
     if path.exists() and path.is_dir():
         _die(f"{label} path points to a directory, but a writable SQLite file is required: {path}")
     try:
@@ -302,9 +351,8 @@ def _prepare_sqlite_file(path: Path, label: str) -> None:
     except PermissionError as exc:
         _die(
             f"{label} file is not writable: {path}. "
-            "If you use the default runtime root, create it and hand ownership to your user with "
-            f"'sudo mkdir -p {RUNTIME_ROOT}/data {RUNTIME_ROOT}/wallets {RUNTIME_ROOT}/logs "
-            f"&& sudo chown -R $USER:$USER {RUNTIME_ROOT}'. Original error: {exc}"
+            "The runtime directory may need to be prepared or re-owned first. "
+            f"Original error: {exc}"
         )
     if not path.is_file():
         _die(f"{label} path is not a regular file: {path}")
