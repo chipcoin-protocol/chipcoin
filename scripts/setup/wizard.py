@@ -97,7 +97,7 @@ def main() -> int:
     env_values = dict(DEFAULTS)
     env_values["CHIPCOIN_NETWORK"] = network
     _apply_setup_mode(env_values, setup_mode, role)
-    _prepare_runtime_files(env_values)
+    _prepare_runtime_files(env_values, role=role)
 
     _write_env(env_values)
     _print_success(role, network, runtime_mode, wallet_path, wallet_address, wallet_private_key_hex, setup_mode, env_values)
@@ -357,8 +357,9 @@ def _prepare_sqlite_file(path: Path, label: str) -> None:
         _die(f"{label} file is not writable: {path}")
 
 
-def _prepare_runtime_files(env_values: dict[str, str]) -> None:
-    _prepare_sqlite_file(Path(env_values["NODE_DATA_PATH"]), "Node data")
+def _prepare_runtime_files(env_values: dict[str, str], *, role: str) -> None:
+    if role in {"node", "both"}:
+        _prepare_sqlite_file(Path(env_values["NODE_DATA_PATH"]), "Node data")
 
 
 def _write_env(values: dict[str, str]) -> None:

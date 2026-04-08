@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -56,3 +57,27 @@ def test_env_examples_expose_service_specific_discovery_defaults() -> None:
         assert "NODE_DIRECT_PEERS=" in content
         assert "NODE_BOOTSTRAP_URL=" in content
         assert "MINING_NODE_URLS=" in content
+
+
+def test_prepare_runtime_files_skips_node_db_for_miner_only() -> None:
+    wizard = load_wizard_module()
+    with TemporaryDirectory() as tempdir:
+        node_data_path = Path(tempdir) / "node-devnet.sqlite3"
+        env_values = dict(wizard.DEFAULTS)
+        env_values["NODE_DATA_PATH"] = str(node_data_path)
+
+        wizard._prepare_runtime_files(env_values, role="miner")
+
+        assert node_data_path.exists() is False
+
+
+def test_prepare_runtime_files_creates_node_db_for_node_role() -> None:
+    wizard = load_wizard_module()
+    with TemporaryDirectory() as tempdir:
+        node_data_path = Path(tempdir) / "node-devnet.sqlite3"
+        env_values = dict(wizard.DEFAULTS)
+        env_values["NODE_DATA_PATH"] = str(node_data_path)
+
+        wizard._prepare_runtime_files(env_values, role="node")
+
+        assert node_data_path.is_file()

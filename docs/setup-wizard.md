@@ -111,10 +111,15 @@ Wizard defaults by operator mode:
   - node uses the public devnet peer
   - miner uses `http://node:8081`
 - miner-only host
-  - miner uses the public devnet node API
+  - miner uses `https://api.chipcoinprotocol.com`
 - local/self-hosted node + miner
   - node starts isolated
   - miner uses `http://node:8081`
+
+Practical rule:
+
+- if the wizard is configuring both `node` and `miner` on the same host, `MINING_NODE_URLS` points at the local node service name
+- if the wizard is configuring `miner` only, `MINING_NODE_URLS` points at the remote authoritative node API
 
 After the wizard completes, the normal next step is:
 
