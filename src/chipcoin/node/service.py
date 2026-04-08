@@ -5,9 +5,10 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_DOWN
 from dataclasses import dataclass, replace
 from pathlib import Path
+import secrets
 
 from ..config import get_network_config
-from ..consensus.models import Block, OutPoint, Transaction
+from ..consensus.models import Block, OutPoint, Transaction, TxOutput
 from ..consensus.nodes import (
     InMemoryNodeRegistryView,
     active_node_records,
@@ -17,10 +18,10 @@ from ..consensus.nodes import (
 )
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import bits_to_target, calculate_next_work_required, header_work
-from ..consensus.serialization import deserialize_transaction
+from ..consensus.serialization import deserialize_block, deserialize_transaction, serialize_transaction
 from ..consensus.economics import miner_subsidy_chipbits, node_reward_pool_chipbits, total_subsidy_through_height
 from ..consensus.utxo import InMemoryUtxoView
-from ..consensus.validation import ValidationContext, block_weight_units, is_coinbase_transaction, validate_block
+from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block
 from ..storage.blocks import SQLiteBlockRepository
 from ..storage.chainstate import SQLiteChainStateRepository
 from ..storage.db import initialize_database
@@ -31,7 +32,7 @@ from ..storage.peers import SQLitePeerRepository
 from ..utils.time import unix_time
 from .mempool import AcceptedTransaction, MempoolManager, MempoolPolicy
 from .messages import GetBlocksMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector
-from .mining import BlockTemplate, MiningCoordinator
+from .mining import BlockTemplate, MiningCoordinator, build_coinbase_transaction, transaction_weight_units
 from .peers import PeerInfo, PeerManager
 from ..wallet.models import SpendCandidate
 
@@ -49,6 +50,27 @@ class ChainActivationResult:
     common_ancestor: str | None
     disconnected_blocks: int
     readded_transaction_count: int
+
+
+@dataclass(frozen=True)
+class MiningTemplateRecord:
+    """One node-issued mining template cached for later submission."""
+
+    template_id: str
+    created_at: int
+    expires_at: int
+    previous_block_hash: str
+    height: int
+    version: int
+    bits: int
+    target_hex: str
+    payout_address: str
+    miner_id: str
+    coinbase_outputs: tuple[TxOutput, ...]
+    non_coinbase_transactions: tuple[Transaction, ...]
+    coinbase_value_chipbits: int
+    miner_reward_chipbits: int
+    node_reward_total_chipbits: int
 
 
 def _peer_sort_key(peer: dict[str, object]) -> tuple[int, int, str, int]:
@@ -130,6 +152,10 @@ class NodeService:
         )
         self.mining = MiningCoordinator(params=params, time_provider=time_provider)
         self._runtime_sync_status: dict[str, object] | None = None
+        self._mining_template_ttl_seconds = 15
+        self._mining_templates: dict[str, MiningTemplateRecord] = {}
+        self._template_cache_tip_hash: str | None = None
+        self._node_source_id = secrets.token_hex(8)
 
     @classmethod
     def open_sqlite(
@@ -164,7 +190,18 @@ class NodeService:
     def receive_transaction(self, transaction: Transaction) -> AcceptedTransaction:
         """Validate and stage a transaction into the local mempool."""
 
-        return self.mempool.accept(transaction)
+        accepted = self.mempool.accept(transaction)
+        self.invalidate_mining_templates()
+        return accepted
+
+    def decode_raw_transaction(self, raw_hex: str) -> Transaction:
+        """Decode one raw serialized transaction encoded as hex."""
+
+        encoded = bytes.fromhex(raw_hex)
+        transaction, offset = deserialize_transaction(encoded)
+        if offset != len(encoded):
+            raise ValueError("Raw transaction contains trailing bytes.")
+        return transaction
 
     def build_candidate_block(self, miner_address: str) -> BlockTemplate:
         """Construct a local candidate block from current chain state and mempool."""
@@ -183,12 +220,208 @@ class NodeService:
             confirmed_transaction_ids=self._known_confirmed_transaction_ids(),
         )
 
+    def mining_status(self) -> dict[str, object]:
+        """Return one miner-facing status payload for remote template workers."""
+
+        tip = self.chain_tip()
+        best_height = -1 if tip is None else tip.height
+        best_tip_hash = "00" * 32 if tip is None else tip.block_hash
+        target_bits = self.expected_next_bits()
+        return {
+            "network": self.network,
+            "best_tip_hash": best_tip_hash,
+            "best_height": best_height,
+            "target_bits": target_bits,
+            "target_hex": self._format_target(target_bits),
+            "difficulty": self._difficulty_ratio(target_bits),
+            "current_time": self.time_provider(),
+            "template_ttl_seconds": self._mining_template_ttl_seconds,
+            "node_id": self._node_source_id,
+        }
+
+    def get_block_template(
+        self,
+        *,
+        payout_address: str,
+        miner_id: str,
+        template_mode: str = "full_block",
+    ) -> dict[str, object]:
+        """Build one miner-facing block template without requiring chain sync."""
+
+        if template_mode not in {"full_block", "header_and_coinbase_data"}:
+            raise ValueError("template_mode must be full_block or header_and_coinbase_data")
+        self._expire_stale_templates()
+        candidate = self.build_candidate_block(payout_address)
+        now = self.time_provider()
+        template_id = secrets.token_hex(16)
+        coinbase = candidate.block.transactions[0]
+        non_coinbase_transactions = candidate.block.transactions[1:]
+        record = MiningTemplateRecord(
+            template_id=template_id,
+            created_at=now,
+            expires_at=now + self._mining_template_ttl_seconds,
+            previous_block_hash=candidate.block.header.previous_block_hash,
+            height=candidate.height,
+            version=candidate.block.header.version,
+            bits=candidate.block.header.bits,
+            target_hex=self._format_target(candidate.block.header.bits),
+            payout_address=payout_address,
+            miner_id=miner_id,
+            coinbase_outputs=coinbase.outputs,
+            non_coinbase_transactions=non_coinbase_transactions,
+            coinbase_value_chipbits=int(coinbase.outputs[0].value) if coinbase.outputs else 0,
+            miner_reward_chipbits=int(coinbase.outputs[0].value) if coinbase.outputs else 0,
+            node_reward_total_chipbits=sum(int(output.value) for output in coinbase.outputs[1:]),
+        )
+        self._template_cache_tip_hash = candidate.block.header.previous_block_hash
+        self._mining_templates[template_id] = record
+        return {
+            "template_id": template_id,
+            "template_mode": template_mode,
+            "network": self.network,
+            "previous_block_hash": record.previous_block_hash,
+            "height": record.height,
+            "version": record.version,
+            "bits": record.bits,
+            "target": record.target_hex,
+            "curtime": now,
+            "mintime": now,
+            "template_expiry": record.expires_at,
+            "coinbase_value_chipbits": record.coinbase_value_chipbits,
+            "miner_reward_chipbits": record.miner_reward_chipbits,
+            "node_reward_total_chipbits": record.node_reward_total_chipbits,
+            "payout_address": payout_address,
+            "node_reward_outputs": [
+                {"recipient": output.recipient, "amount_chipbits": int(output.value)}
+                for output in record.coinbase_outputs[1:]
+            ],
+            "transactions": [
+                {
+                    "txid": transaction.txid(),
+                    "raw_hex": serialize_transaction(transaction).hex(),
+                    "weight_units": transaction_weight_units(transaction),
+                }
+                for transaction in non_coinbase_transactions
+            ],
+            "coinbase_tx": {
+                "version": coinbase.version,
+                "outputs": [
+                    {"recipient": output.recipient, "amount_chipbits": int(output.value)}
+                    for output in coinbase.outputs
+                ],
+                "metadata": {"coinbase": "true", "height": str(record.height)},
+            },
+            "block_weight_limit": self.params.max_block_weight,
+            "consensus": {
+                "network": self.network,
+                "rule_set": f"{self.network}-v1",
+                "coinbase_maturity": self.params.coinbase_maturity,
+                "max_block_weight": self.params.max_block_weight,
+            },
+            "node_id": self._node_source_id,
+        }
+
+    def submit_mined_block(
+        self,
+        *,
+        template_id: str,
+        serialized_block_hex: str,
+        miner_id: str,
+    ) -> dict[str, object]:
+        """Fallback submit path for non-runtime use."""
+
+        prepared = self.prepare_mined_block_submission(
+            template_id=template_id,
+            serialized_block_hex=serialized_block_hex,
+            miner_id=miner_id,
+        )
+        if prepared["accepted"] is False:
+            return prepared
+        block = prepared["block"]
+        try:
+            self.apply_block(block)
+        except ValidationError as exc:
+            self.discard_mining_template(template_id)
+            return {"accepted": False, "reason": f"validation_error:{exc}", "block_hash": None, "became_tip": False}
+        finally:
+            self._mining_templates.pop(template_id, None)
+        new_tip = self.chain_tip()
+        return {
+            "accepted": True,
+            "reason": "accepted",
+            "block_hash": block.block_hash(),
+            "became_tip": bool(new_tip is not None and new_tip.block_hash == block.block_hash()),
+        }
+
+    def prepare_mined_block_submission(
+        self,
+        *,
+        template_id: str,
+        serialized_block_hex: str,
+        miner_id: str,
+    ) -> dict[str, object]:
+        """Decode and template-validate one submitted mined block."""
+
+        self._expire_stale_templates()
+        record = self._mining_templates.get(template_id)
+        if record is None:
+            return {"accepted": False, "reason": "unknown_or_expired_template", "block_hash": None, "became_tip": False}
+        if record.miner_id != miner_id:
+            return {"accepted": False, "reason": "miner_id_mismatch", "block_hash": None, "became_tip": False}
+        tip = self.chain_tip()
+        current_previous_hash = "00" * 32 if tip is None else tip.block_hash
+        if current_previous_hash != record.previous_block_hash:
+            return {"accepted": False, "reason": "stale_template", "block_hash": None, "became_tip": False}
+        try:
+            payload = bytes.fromhex(serialized_block_hex)
+            block, offset = deserialize_block(payload)
+        except ValueError as exc:
+            return {"accepted": False, "reason": f"decode_error:{exc}", "block_hash": None, "became_tip": False}
+        if offset != len(payload):
+            return {"accepted": False, "reason": "decode_error:trailing_bytes", "block_hash": None, "became_tip": False}
+        if block.header.previous_block_hash != record.previous_block_hash:
+            return {"accepted": False, "reason": "stale_template", "block_hash": None, "became_tip": False}
+        if block.header.bits != record.bits:
+            return {"accepted": False, "reason": "bits_mismatch", "block_hash": None, "became_tip": False}
+        if not block.transactions:
+            return {"accepted": False, "reason": "missing_coinbase", "block_hash": None, "became_tip": False}
+        if block.transactions[0].outputs != record.coinbase_outputs:
+            return {"accepted": False, "reason": "coinbase_outputs_mismatch", "block_hash": None, "became_tip": False}
+        expected_txids = [transaction.txid() for transaction in record.non_coinbase_transactions]
+        actual_txids = [transaction.txid() for transaction in block.transactions[1:]]
+        if actual_txids != expected_txids:
+            return {"accepted": False, "reason": "transaction_set_mismatch", "block_hash": None, "became_tip": False}
+        return {"accepted": True, "block": block, "template_id": template_id}
+
+    def discard_mining_template(self, template_id: str) -> None:
+        """Remove one cached mining template."""
+
+        self._mining_templates.pop(template_id, None)
+
+    def invalidate_mining_templates(self) -> None:
+        """Remove all cached mining templates after any state mutation."""
+
+        self._mining_templates.clear()
+        self._template_cache_tip_hash = None
+
     def expected_next_bits(self) -> int:
         """Return the compact target required for the next candidate block."""
 
         tip = self.headers.get_tip()
         next_height = 0 if tip is None else tip.height + 1
         return self._expected_bits_for_height(next_height)
+
+    def _expire_stale_templates(self) -> None:
+        """Drop cached templates that no longer match the active tip or TTL."""
+
+        now = self.time_provider()
+        expired_ids = [
+            template_id
+            for template_id, record in self._mining_templates.items()
+            if record.expires_at <= now
+        ]
+        for template_id in expired_ids:
+            self._mining_templates.pop(template_id, None)
 
     def apply_block(self, block: Block) -> int:
         """Validate and persist a block into local chain state."""
@@ -225,6 +458,7 @@ class NodeService:
         self._apply_node_registry_block(block, height)
         self.headers.set_tip(block.block_hash(), height)
         self.mempool.reconcile()
+        self.invalidate_mining_templates()
         return total_fees
 
     def chain_tip(self) -> ChainTip | None:
@@ -335,10 +569,7 @@ class NodeService:
     def submit_raw_transaction(self, raw_hex: str) -> AcceptedTransaction:
         """Decode and submit a raw serialized transaction encoded as hex."""
 
-        transaction, offset = deserialize_transaction(bytes.fromhex(raw_hex))
-        if offset != len(bytes.fromhex(raw_hex)):
-            raise ValueError("Raw transaction contains trailing bytes.")
-        return self.receive_transaction(transaction)
+        return self.receive_transaction(self.decode_raw_transaction(raw_hex))
 
     def find_transaction(self, txid: str) -> dict | None:
         """Find a transaction in the mempool or active chain."""

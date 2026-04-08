@@ -1,13 +1,20 @@
 import asyncio
+import json
 import socket
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib import request
+
+import pytest
 
 from chipcoin.config import MAINNET_CONFIG
 from chipcoin.consensus.models import OutPoint
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
+from chipcoin.consensus.serialization import serialize_transaction
+from chipcoin.miner.config import MinerWorkerConfig
+from chipcoin.miner.worker import MinerWorker
 from chipcoin.node.messages import EmptyPayload, MessageEnvelope
 from chipcoin.node.p2p.codec import encode_message
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer
@@ -16,6 +23,17 @@ from tests.helpers import signed_payment, wallet_key
 
 
 TEST_PARAMS = replace(MAINNET_PARAMS, coinbase_maturity=0)
+
+
+def _http_json(method: str, url: str, body: dict[str, object] | None = None) -> dict[str, object]:
+    encoded = None if body is None else json.dumps(body, sort_keys=True).encode("utf-8")
+    headers = {"Accept": "application/json"}
+    if encoded is not None:
+        headers["Content-Type"] = "application/json"
+    req = request.Request(url, method=method, data=encoded, headers=headers)
+    with request.urlopen(req, timeout=10.0) as response:
+        raw = response.read()
+    return {} if not raw else json.loads(raw.decode("utf-8"))
 
 
 def test_two_runtimes_complete_handshake_and_sync_blockchain() -> None:
@@ -89,6 +107,63 @@ def test_runtime_relays_transaction_between_two_nodes() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_http_submit_tx_relays_between_two_nodes() -> None:
+    async def scenario() -> None:
+        _require_local_socket_support()
+        with TemporaryDirectory() as tempdir:
+            source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+            target_service = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+            http_port = _free_port()
+            source_runtime = NodeRuntime(
+                service=source_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                http_host="127.0.0.1",
+                http_port=http_port,
+                ping_interval=0.2,
+            )
+            await source_runtime.start()
+            funding_block = _mine_block(source_service.build_candidate_block(wallet_key(0).address).block)
+            source_service.apply_block(funding_block)
+
+            target_runtime = NodeRuntime(
+                service=target_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", source_runtime.bound_port)],
+                connect_interval=0.1,
+                ping_interval=0.2,
+            )
+            await target_runtime.start()
+            try:
+                await _wait_until(lambda: target_service.chain_tip() is not None and target_service.chain_tip().block_hash == funding_block.block_hash())
+
+                coinbase_txid = funding_block.transactions[0].txid()
+                transaction = signed_payment(
+                    OutPoint(txid=coinbase_txid, index=0),
+                    value=int(funding_block.transactions[0].outputs[0].value),
+                    sender=wallet_key(0),
+                    fee=10,
+                )
+
+                result = await asyncio.to_thread(
+                    _http_json,
+                    "POST",
+                    f"http://127.0.0.1:{source_runtime.http_bound_port}/v1/tx/submit",
+                    {"raw_hex": serialize_transaction(transaction).hex()},
+                )
+                assert result["accepted"] is True
+                await _wait_until(lambda: target_service.find_transaction(transaction.txid()) is not None)
+                propagated = target_service.find_transaction(transaction.txid())
+                assert propagated is not None
+                assert propagated["location"] == "mempool"
+            finally:
+                await target_runtime.stop()
+                await source_runtime.stop()
+
+    asyncio.run(scenario())
+
+
 def test_runtime_relays_new_block_between_two_connected_nodes() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
@@ -118,6 +193,118 @@ def test_runtime_relays_new_block_between_two_connected_nodes() -> None:
             finally:
                 await target_runtime.stop()
                 await source_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_accepts_http_mined_block_and_relays_it_to_connected_peers() -> None:
+    async def scenario() -> None:
+        _require_local_socket_support()
+        with TemporaryDirectory() as tempdir:
+            node_a_service = _make_service(Path(tempdir) / "node-a.sqlite3", start_time=1_700_000_000)
+            node_b_service = _make_service(Path(tempdir) / "node-b.sqlite3", start_time=1_700_001_000)
+            node_a_runtime = NodeRuntime(
+                service=node_a_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                http_host="127.0.0.1",
+                http_port=_free_port(),
+                ping_interval=0.2,
+            )
+            await node_a_runtime.start()
+            node_b_runtime = NodeRuntime(
+                service=node_b_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", node_a_runtime.bound_port)],
+                connect_interval=0.1,
+                ping_interval=0.2,
+            )
+            await node_b_runtime.start()
+            try:
+                await _wait_until(lambda: node_a_runtime.connected_peer_count() == 1 and node_b_runtime.connected_peer_count() == 1)
+                worker = MinerWorker(
+                    MinerWorkerConfig(
+                        network="mainnet",
+                        payout_address=wallet_key(1).address,
+                        node_urls=(f"http://127.0.0.1:{node_a_runtime.http_bound_port}",),
+                        miner_id="worker-a",
+                        nonce_batch_size=2_000_000,
+                        mining_min_interval_seconds=5.0,
+                        run_seconds=0.3,
+                    )
+                )
+
+                result = await asyncio.to_thread(worker.run)
+
+                assert result["accepted_blocks"] >= 1
+                await _wait_until(
+                    lambda: node_a_service.chain_tip() is not None
+                    and node_b_service.chain_tip() is not None
+                    and node_a_service.chain_tip().block_hash == node_b_service.chain_tip().block_hash,
+                    timeout=10.0,
+                )
+            finally:
+                await node_b_runtime.stop()
+                await node_a_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_http_miner_end_to_end_over_real_http_and_p2p() -> None:
+    async def scenario() -> None:
+        _require_local_socket_support()
+        with TemporaryDirectory() as tempdir:
+            node_a_service = _make_service(Path(tempdir) / "node-a.sqlite3", start_time=1_700_000_000)
+            node_b_service = _make_service(Path(tempdir) / "node-b.sqlite3", start_time=1_700_001_000)
+            http_port = _free_port()
+            node_a_runtime = NodeRuntime(
+                service=node_a_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                http_host="127.0.0.1",
+                http_port=http_port,
+                ping_interval=0.2,
+            )
+            await node_a_runtime.start()
+            node_b_runtime = NodeRuntime(
+                service=node_b_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", node_a_runtime.bound_port)],
+                connect_interval=0.1,
+                ping_interval=0.2,
+            )
+            await node_b_runtime.start()
+            try:
+                await _wait_until(lambda: node_a_runtime.connected_peer_count() == 1 and node_b_runtime.connected_peer_count() == 1)
+                worker = MinerWorker(
+                    MinerWorkerConfig(
+                        network="mainnet",
+                        payout_address=wallet_key(1).address,
+                        node_urls=(f"http://127.0.0.1:{node_a_runtime.http_bound_port}",),
+                        miner_id="worker-http",
+                        nonce_batch_size=2_000_000,
+                        mining_min_interval_seconds=5.0,
+                        run_seconds=0.3,
+                    )
+                )
+                result = await asyncio.to_thread(worker.run)
+                assert result["accepted_blocks"] >= 1
+                await _wait_until(
+                    lambda: node_a_service.chain_tip() is not None
+                    and node_b_service.chain_tip() is not None
+                    and node_a_service.chain_tip().block_hash == node_b_service.chain_tip().block_hash
+                )
+                status = await asyncio.to_thread(
+                    _http_json,
+                    "GET",
+                    f"http://127.0.0.1:{node_a_runtime.http_bound_port}/mining/status",
+                )
+                assert status["best_tip_hash"] == node_a_service.chain_tip().block_hash
+            finally:
+                await node_b_runtime.stop()
+                await node_a_runtime.stop()
 
     asyncio.run(scenario())
 
@@ -268,29 +455,6 @@ def test_runtime_sync_downloads_blocks_from_multiple_peers() -> None:
                 await target_runtime.stop()
                 await source_runtime_b.stop()
                 await source_runtime_a.stop()
-
-    asyncio.run(scenario())
-
-
-def test_runtime_miner_produces_blocks_end_to_end() -> None:
-    async def scenario() -> None:
-        with TemporaryDirectory() as tempdir:
-            service = _make_service(Path(tempdir) / "miner.sqlite3", start_time=1_700_000_000)
-            runtime = NodeRuntime(
-                service=service,
-                listen_host="127.0.0.1",
-                listen_port=0,
-                ping_interval=0.2,
-                miner_address="CHCminer-runtime",
-                mining_nonce_batch_size=25_000,
-            )
-            await runtime.start()
-            try:
-                await _wait_until(lambda: service.chain_tip() is not None)
-                assert service.chain_tip() is not None
-                assert service.chain_tip().height >= 0
-            finally:
-                await runtime.stop()
 
     asyncio.run(scenario())
 
@@ -466,108 +630,6 @@ def test_runtimes_on_different_network_magics_fail_fast() -> None:
     asyncio.run(scenario())
 
 
-def test_runtime_miner_refreshes_template_when_valid_mempool_tx_arrives() -> None:
-    async def scenario() -> None:
-        with TemporaryDirectory() as tempdir:
-            service = _make_service(Path(tempdir) / "miner.sqlite3", start_time=1_700_000_000)
-            initial_block = _mine_block(service.build_candidate_block(wallet_key(0).address).block)
-            service.apply_block(initial_block)
-            runtime = NodeRuntime(
-                service=service,
-                listen_host="127.0.0.1",
-                listen_port=0,
-                ping_interval=0.2,
-                miner_address=wallet_key(0).address,
-                mining_nonce_batch_size=25_000,
-            )
-            await runtime.start()
-            try:
-                funding_outpoint = OutPoint(txid=initial_block.transactions[0].txid(), index=0)
-                transaction = signed_payment(
-                    funding_outpoint,
-                    value=int(initial_block.transactions[0].outputs[0].value),
-                    sender=wallet_key(0),
-                    fee=10,
-                )
-                await runtime.submit_transaction(transaction)
-                await _wait_until(
-                    lambda: (service.find_transaction(transaction.txid()) or {}).get("location") == "chain"
-                )
-                result = service.find_transaction(transaction.txid())
-                assert result is not None
-                assert result["location"] == "chain"
-            finally:
-                await runtime.stop()
-
-    asyncio.run(scenario())
-
-
-def test_valid_transaction_propagates_between_two_nodes_and_gets_mined() -> None:
-    async def scenario() -> None:
-        with TemporaryDirectory() as tempdir:
-            source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
-            miner_service = _make_service(Path(tempdir) / "miner.sqlite3", start_time=1_700_001_000)
-
-            source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
-            await source_runtime.start()
-            funding_block = _mine_block(source_service.build_candidate_block(wallet_key(0).address).block)
-            source_service.apply_block(funding_block)
-
-            miner_runtime = NodeRuntime(
-                service=miner_service,
-                listen_host="127.0.0.1",
-                listen_port=0,
-                outbound_peers=[OutboundPeer("127.0.0.1", source_runtime.bound_port)],
-                connect_interval=0.1,
-                ping_interval=0.2,
-            )
-            await miner_runtime.start()
-            try:
-                await _wait_until(
-                    lambda: miner_service.chain_tip() is not None
-                    and miner_service.chain_tip().block_hash == funding_block.block_hash()
-                )
-                await miner_runtime.stop()
-
-                miner_runtime = NodeRuntime(
-                    service=miner_service,
-                    listen_host="127.0.0.1",
-                    listen_port=0,
-                    outbound_peers=[OutboundPeer("127.0.0.1", source_runtime.bound_port)],
-                    connect_interval=0.1,
-                    ping_interval=0.2,
-                    miner_address=wallet_key(1).address,
-                    mining_nonce_batch_size=25_000,
-                )
-                await miner_runtime.start()
-
-                transaction = signed_payment(
-                    OutPoint(txid=funding_block.transactions[0].txid(), index=0),
-                    value=int(funding_block.transactions[0].outputs[0].value),
-                    sender=wallet_key(0),
-                    fee=10,
-                )
-
-                await source_runtime.submit_transaction(transaction)
-                await _wait_until(
-                    lambda: (miner_service.find_transaction(transaction.txid()) or {}).get("location") in {"mempool", "chain"}
-                )
-                await _wait_until(lambda: (source_service.find_transaction(transaction.txid()) or {}).get("location") == "chain")
-                await _wait_until(lambda: (miner_service.find_transaction(transaction.txid()) or {}).get("location") == "chain")
-
-                source_result = source_service.find_transaction(transaction.txid())
-                miner_result = miner_service.find_transaction(transaction.txid())
-                assert source_result is not None
-                assert miner_result is not None
-                assert source_result["location"] == "chain"
-                assert miner_result["location"] == "chain"
-            finally:
-                await miner_runtime.stop()
-                await source_runtime.stop()
-
-    asyncio.run(scenario())
-
-
 def test_runtime_relays_transaction_inserted_via_shared_node_database() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
@@ -689,75 +751,94 @@ def test_node_restart_preserves_chain_and_miner_reconnects() -> None:
     asyncio.run(scenario())
 
 
-def test_miner_restart_reconnects_and_resumes_mining() -> None:
+def test_template_miner_restart_resumes_without_chain_sync() -> None:
     async def scenario() -> None:
+        _require_local_socket_support()
         with TemporaryDirectory() as tempdir:
-            source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
-            port = _free_port()
-            source_runtime = NodeRuntime(
-                service=source_service,
+            node_service = _make_service(Path(tempdir) / "node.sqlite3", start_time=1_700_000_000)
+            node_runtime = NodeRuntime(
+                service=node_service,
                 listen_host="127.0.0.1",
-                listen_port=port,
+                listen_port=0,
+                http_host="127.0.0.1",
+                http_port=_free_port(),
                 ping_interval=0.2,
-                read_timeout=1.0,
-                handshake_timeout=1.0,
             )
-            await source_runtime.start()
+            await node_runtime.start()
             try:
-                miner_db = Path(tempdir) / "miner.sqlite3"
-                miner_service = _make_service(miner_db, start_time=1_700_001_000)
-                miner_runtime = NodeRuntime(
-                    service=miner_service,
-                    listen_host="127.0.0.1",
-                    listen_port=0,
-                    outbound_peers=[OutboundPeer("127.0.0.1", port)],
-                    connect_interval=0.1,
-                    ping_interval=0.2,
-                    read_timeout=1.0,
-                    handshake_timeout=1.0,
-                    miner_address=wallet_key(1).address,
-                    mining_nonce_batch_size=25_000,
+                first_worker = MinerWorker(
+                    MinerWorkerConfig(
+                        network="mainnet",
+                        payout_address=wallet_key(1).address,
+                        node_urls=(f"http://127.0.0.1:{node_runtime.http_bound_port}",),
+                        miner_id="worker-a",
+                        nonce_batch_size=2_000_000,
+                        mining_min_interval_seconds=5.0,
+                        run_seconds=0.3,
+                    )
                 )
-                await miner_runtime.start()
-                try:
-                    await _wait_until(lambda: source_service.chain_tip() is not None, timeout=10.0)
-                    first_tip = source_service.chain_tip()
-                    assert first_tip is not None
-                finally:
-                    await miner_runtime.stop()
+                first_result = await asyncio.to_thread(first_worker.run)
+                assert first_result["accepted_blocks"] >= 1
+                first_tip = node_service.chain_tip()
+                assert first_tip is not None
 
-                restarted_miner_service = NodeService.open_sqlite(
-                    miner_db,
-                    params=TEST_PARAMS,
-                    time_provider=lambda: 1_700_002_000,
-                )
-                restarted_miner_runtime = NodeRuntime(
-                    service=restarted_miner_service,
-                    listen_host="127.0.0.1",
-                    listen_port=0,
-                    outbound_peers=[OutboundPeer("127.0.0.1", port)],
-                    connect_interval=0.1,
-                    ping_interval=0.2,
-                    read_timeout=1.0,
-                    handshake_timeout=1.0,
-                    miner_address=wallet_key(1).address,
-                    mining_nonce_batch_size=25_000,
-                )
-                await restarted_miner_runtime.start()
-                try:
-                    await _wait_until(
-                        lambda: source_service.chain_tip() is not None and source_service.chain_tip().height > first_tip.height,
-                        timeout=15.0,
+                restarted_worker = MinerWorker(
+                    MinerWorkerConfig(
+                        network="mainnet",
+                        payout_address=wallet_key(1).address,
+                        node_urls=(f"http://127.0.0.1:{node_runtime.http_bound_port}",),
+                        miner_id="worker-a",
+                        nonce_batch_size=2_000_000,
+                        mining_min_interval_seconds=5.0,
+                        run_seconds=0.3,
                     )
-                    await _wait_until(
-                        lambda: any(peer.handshake_complete for peer in source_service.list_peers())
-                        and any(peer.handshake_complete for peer in restarted_miner_service.list_peers()),
-                        timeout=10.0,
-                    )
-                finally:
-                    await restarted_miner_runtime.stop()
+                )
+                second_result = await asyncio.to_thread(restarted_worker.run)
+                assert second_result["accepted_blocks"] >= 1
+                assert node_service.chain_tip() is not None
+                assert node_service.chain_tip().height > first_tip.height
             finally:
-                await source_runtime.stop()
+                await node_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_template_miner_fails_over_to_secondary_node_runtime() -> None:
+    async def scenario() -> None:
+        _require_local_socket_support()
+        with TemporaryDirectory() as tempdir:
+            secondary_service = _make_service(Path(tempdir) / "node-b.sqlite3", start_time=1_700_001_000)
+            secondary_runtime = NodeRuntime(
+                service=secondary_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                http_host="127.0.0.1",
+                http_port=_free_port(),
+                ping_interval=0.2,
+            )
+            await secondary_runtime.start()
+            try:
+                worker = MinerWorker(
+                    MinerWorkerConfig(
+                        network="mainnet",
+                        payout_address=wallet_key(1).address,
+                        node_urls=(
+                            "http://127.0.0.1:1",
+                            f"http://127.0.0.1:{secondary_runtime.http_bound_port}",
+                        ),
+                        miner_id="worker-a",
+                        nonce_batch_size=2_000_000,
+                        mining_min_interval_seconds=5.0,
+                        run_seconds=0.3,
+                    )
+                )
+
+                result = await asyncio.to_thread(worker.run)
+
+                assert result["accepted_blocks"] >= 1
+                assert secondary_service.chain_tip() is not None
+            finally:
+                await secondary_runtime.stop()
 
     asyncio.run(scenario())
 
@@ -828,3 +909,10 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _require_local_socket_support() -> None:
+    try:
+        _free_port()
+    except OSError as exc:
+        pytest.skip(f"local TCP sockets unavailable in this environment: {exc}")

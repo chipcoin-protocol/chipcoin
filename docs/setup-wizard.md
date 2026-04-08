@@ -99,22 +99,22 @@ The wizard does not create:
 
 Bootstrap remains optional. If you later run with a healthy persisted peerbook or manually configured peers, bootstrap is no longer required for normal operation.
 
-For clean installs, prefer multiple known-good startup peers when you have them. The wizard now writes service-specific discovery defaults:
+For clean installs, prefer multiple known-good startup peers when you have them. The wizard now writes:
 
 - `NODE_DIRECT_PEERS` for the node
-- `MINER_DIRECT_PEERS` for the miner
+- `MINING_NODE_URLS` for the miner
 - legacy shared `DIRECT_PEERS` and `DIRECT_PEER` stay empty unless you choose to use one shared fallback
 
 Wizard defaults by operator mode:
 
 - `node` + `miner` on one host
   - node uses the public devnet peer
-  - miner uses `node:18444`
+  - miner uses `http://node:8081`
 - miner-only host
-  - miner uses the public devnet peer
+  - miner uses the public devnet node API
 - local/self-hosted node + miner
   - node starts isolated
-  - miner uses `node:18444`
+  - miner uses `http://node:8081`
 
 After the wizard completes, the normal next step is:
 

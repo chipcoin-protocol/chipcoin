@@ -15,7 +15,7 @@ pip install -e .[dev]
 Checks:
 
 - `chipcoin --help`
-- `chipcoin-http --help`
+- `chipcoin mine --help`
 
 ## Runtime Config
 
@@ -46,7 +46,9 @@ Checks:
 - `docker compose logs -f node`
 - `docker compose logs -f miner`
 - `curl http://127.0.0.1:8081/v1/status`
+- `curl http://127.0.0.1:8081/mining/status`
 - the node and miner containers are using runtime files outside the repository
+- the miner starts without creating a local chain database
 
 ## Browser Wallet
 

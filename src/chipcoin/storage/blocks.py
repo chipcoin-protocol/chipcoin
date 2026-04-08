@@ -49,6 +49,8 @@ class SQLiteBlockRepository(BlockRepository):
         ).fetchone()
         if row is None:
             return None
+        if row["raw_block"] is None:
+            return None
         block, offset = deserialize_block(row["raw_block"])
         if offset != len(row["raw_block"]):
             raise ValueError("Stored block payload contains trailing bytes.")

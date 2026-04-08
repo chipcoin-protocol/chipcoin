@@ -4,9 +4,9 @@
 
 The Chipcoin miner is a separate runtime component that:
 
-- builds candidate blocks
-- signs coinbase payouts to the configured miner wallet
-- submits blocks to the network through standard P2P behavior
+- requests ready-to-hash block templates from one or more nodes
+- mutates nonce, extra nonce, and timestamp within node-issued limits
+- submits solved blocks back to a node over HTTP
 
 ## Runtime Inputs
 
@@ -14,18 +14,15 @@ Relevant `.env` keys:
 
 - `CHIPCOIN_RUNTIME_DIR`
 - `CHIPCOIN_NETWORK`
-- `MINER_DATA_PATH`
 - `MINER_LOG_LEVEL`
 - `MINER_WALLET_FILE`
-- `MINER_P2P_BIND_PORT`
 - `MINING_MIN_INTERVAL_SECONDS`
-- `MINER_DIRECT_PEERS`
-- `MINER_DIRECT_PEER`
-- `MINER_BOOTSTRAP_URL`
-- `DIRECT_PEERS`
-- `DIRECT_PEER`
-- `BOOTSTRAP_URL`
-- `INITIAL_SYNC_CONSERVATIVE_DEFAULTS`
+- `MINING_NODE_URLS`
+- `MINING_MINER_ID`
+- `MINING_POLLING_INTERVAL_SECONDS`
+- `MINING_REQUEST_TIMEOUT_SECONDS`
+- `MINING_NONCE_BATCH_SIZE`
+- `MINING_TEMPLATE_REFRESH_SKEW_SECONDS`
 
 ## Wallet Requirement
 
@@ -71,9 +68,10 @@ docker compose logs -f miner
 - The miner wallet is operationally used in the current public release.
 - Rewards are paid to the address derived from `MINER_WALLET_FILE`.
 - Reward redistribution can be done later with standard wallet transactions.
-- `MINER_DATA_PATH` must be a writable SQLite file path, not a directory.
-- The miner prefers `MINER_DIRECT_PEERS`, `MINER_DIRECT_PEER`, and `MINER_BOOTSTRAP_URL`.
-- If miner-specific discovery vars are unset, it falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`.
-- In the default Docker Compose stack, the miner falls back to `node:18444` so same-host node+miner startup works without editing `.env`.
-- For a miner-only host, set `MINER_DIRECT_PEERS=chipcoinprotocol.com:18444` or `MINER_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`.
+- The miner no longer keeps a local chain database or performs historical sync.
+- In the default Docker Compose stack, the miner points at `http://node:8081`.
+- For a miner-only host, set `MINING_NODE_URLS=https://api.chipcoinprotocol.com`.
 - The recommended runtime directory is outside the repo, for example `/var/lib/chipcoin` on a stable Linux host.
+- Remote miners trust their selected node endpoints for template quality and freshness.
+
+See [Mining Architecture](/home/komarek/Documents/CODEX/Chipcoin-v2/docs/mining-architecture.md).

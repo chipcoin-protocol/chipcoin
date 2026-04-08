@@ -17,12 +17,17 @@ services:
         "--listen-host",
         "0.0.0.0",
         "--listen-port",
-        "18444"
+        "18444",
+        "--http-host",
+        "0.0.0.0",
+        "--http-port",
+        "8081"
       ]
     volumes:
       - node_a_data:/data
     ports:
       - "18444:18444"
+      - "8081:8081"
     restart: unless-stopped
 
   node-b:
@@ -44,6 +49,10 @@ services:
         "0.0.0.0",
         "--listen-port",
         "18445",
+        "--http-host",
+        "0.0.0.0",
+        "--http-port",
+        "8082",
         "--peer",
         "node-a:18444"
       ]
@@ -51,6 +60,7 @@ services:
       - node_b_data:/data
     ports:
       - "18445:18445"
+      - "8082:8082"
     depends_on:
       - node-a
     restart: unless-stopped
@@ -67,15 +77,9 @@ services:
         "devnet",
         "--log-level",
         "INFO",
-        "--data",
-        "/data/miner-devnet.sqlite3",
         "mine",
-        "--listen-host",
-        "0.0.0.0",
-        "--listen-port",
-        "18446",
-        "--peer",
-        "node-a:18444",
+        "--node-url",
+        "http://node-a:8081",
         "--miner-address",
         "CHCCXakSkRDA63xWXKo2wEmrKvr9JeDzdoic3",
         "--mining-min-interval-seconds",
@@ -83,8 +87,6 @@ services:
       ]
     volumes:
       - miner_data:/data
-    ports:
-      - "18446:18446"
     depends_on:
       - node-a
     restart: unless-stopped

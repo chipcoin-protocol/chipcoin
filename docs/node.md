@@ -14,6 +14,8 @@ The node is responsible for:
 - chain and mempool persistence
 - peer discovery and synchronization
 - HTTP API serving
+- mining template generation
+- solved block validation
 
 The node is not responsible for:
 
@@ -171,6 +173,9 @@ Useful endpoints:
 - `GET /v1/address/<address>/history`
 - `GET /v1/mempool`
 - `GET /v1/peers/summary`
+- `GET /mining/status`
+- `POST /mining/get-block-template`
+- `POST /mining/submit-block`
 
 ## Stable Client API Subset
 
@@ -492,29 +497,34 @@ Typical recovery:
 - wait for ban expiry when the peer really was unstable
 - if the ban came from stale local state, stop the node and clear peer ban fields in the local SQLite database before restart
 
-### Miner Waiting For Initial Sync
+### Miner Template Refresh
+
+The supported miner is now a template worker, not a second syncing node.
 
 Expected miner log lines:
 
-- `mining paused reason=awaiting_initial_peer_sync`
-- `mining paused reason=chain_not_synced`
-- `mining resumed ...`
-
-Interpretation:
-
-- `awaiting_initial_peer_sync`
-  - the miner has not completed its initial peer-based sync gate yet
-- `chain_not_synced`
-  - the miner sees a higher remote chain and will not mine ahead of it
-- `mining resumed`
-  - the local chain is caught up enough for mining to continue
+- `fetched block template ...`
+- `accepted block ...`
+- `template became stale ...`
+- `failing over to ...`
 
 Checks:
 
 ```bash
 docker compose logs --tail=100 miner
-docker compose logs --tail=100 node
+curl http://127.0.0.1:8081/mining/status
 ```
+
+Interpretation:
+
+- repeated template fetches with the same `best_tip_hash`
+  - the miner is polling normally and remains attached to the current tip
+- `accepted block ...`
+  - the node accepted the solved block through the runtime-owned path and should relay it over P2P
+- `template became stale ...`
+  - the node tip changed; the miner should refresh and continue immediately
+- `failing over to ...`
+  - the configured primary node endpoint was unavailable and the miner moved to a secondary node URL
 
 ### Stale Peerbook Or Stale Bans
 

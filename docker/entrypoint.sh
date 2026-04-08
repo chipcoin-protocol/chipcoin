@@ -212,15 +212,6 @@ apply_initial_sync_defaults_if_needed() {
   log "Applying conservative initial sync defaults role=${role_label} startup_peers=${startup_peer_count} block_max_inflight_per_peer=${BLOCK_MAX_INFLIGHT_PER_PEER} block_request_timeout_seconds=${BLOCK_REQUEST_TIMEOUT_SECONDS} headers_sync_parallel_peers=${HEADERS_SYNC_PARALLEL_PEERS} block_download_window_size=${BLOCK_DOWNLOAD_WINDOW_SIZE} p2p_read_timeout_seconds=${P2P_READ_TIMEOUT_SECONDS}"
 }
 
-start_http_api() {
-  chipcoin-http \
-    --data /runtime/node.sqlite3 \
-    --network "${CHIPCOIN_NETWORK}" \
-    --log-level "${NODE_LOG_LEVEL}" \
-    --host 0.0.0.0 \
-    --port "${NODE_HTTP_BIND_PORT}"
-}
-
 run_node() {
   : "${CHIPCOIN_NETWORK:?missing CHIPCOIN_NETWORK}"
   : "${NODE_LOG_LEVEL:?missing NODE_LOG_LEVEL}"
@@ -259,10 +250,6 @@ run_node() {
     warn "BLOCK_DOWNLOAD_WINDOW_SIZE=${BLOCK_DOWNLOAD_WINDOW_SIZE:-128} is below BLOCK_MAX_INFLIGHT_PER_PEER=${BLOCK_MAX_INFLIGHT_PER_PEER:-16}; effective throughput will be reduced."
   fi
 
-  start_http_api &
-  http_api_pid=$!
-  trap 'kill "${http_api_pid}" >/dev/null 2>&1 || true' EXIT
-
   exec chipcoin \
     --network "${CHIPCOIN_NETWORK}" \
     --log-level "${NODE_LOG_LEVEL}" \
@@ -270,6 +257,8 @@ run_node() {
     run \
     --listen-host 0.0.0.0 \
     --listen-port "${NODE_P2P_BIND_PORT}" \
+    --http-host 0.0.0.0 \
+    --http-port "${NODE_HTTP_BIND_PORT}" \
     --ping-interval-seconds "${PING_INTERVAL_SECONDS:-2.0}" \
     --read-timeout-seconds "${P2P_READ_TIMEOUT_SECONDS:-15.0}" \
     --write-timeout-seconds "${P2P_WRITE_TIMEOUT_SECONDS:-15.0}" \
@@ -302,78 +291,40 @@ run_node() {
 run_miner() {
   : "${CHIPCOIN_NETWORK:?missing CHIPCOIN_NETWORK}"
   : "${MINER_LOG_LEVEL:?missing MINER_LOG_LEVEL}"
-  : "${MINER_P2P_BIND_PORT:?missing MINER_P2P_BIND_PORT}"
   : "${MINING_MIN_INTERVAL_SECONDS:?missing MINING_MIN_INTERVAL_SECONDS}"
+  : "${MINING_NODE_URLS:?missing MINING_NODE_URLS}"
 
   [[ -f /runtime/miner-wallet.json ]] || die "Miner wallet file is missing at /runtime/miner-wallet.json."
-  ensure_sqlite_file /runtime/miner.sqlite3 "Miner SQLite"
-  configure_discovery_env_for_role miner
 
   local miner_address
   miner_address="$(wallet_address /runtime/miner-wallet.json)"
-  log "Starting miner network=${CHIPCOIN_NETWORK} p2p_port=${MINER_P2P_BIND_PORT} wallet_address=${miner_address}"
+  log "Starting miner network=${CHIPCOIN_NETWORK} node_urls=${MINING_NODE_URLS} wallet_address=${miner_address}"
 
-  local -a peer_args=()
-  local startup_peer_count=0
-  if peers="$(resolve_peers)"; then
-    while IFS= read -r peer; do
-      [[ -n "$peer" ]] || continue
-      peer_args+=(--peer "$peer")
-      startup_peer_count=$((startup_peer_count + 1))
-    done <<< "$peers"
-    peer_args+=(--peer-source "${DISCOVERY_SOURCE:-manual}")
-    log "Miner discovery target=${DISCOVERY_SOURCE:-manual}:${startup_peer_count}_peer(s)"
-  else
-    log "Miner discovery target=isolated"
-    warn "No startup peer was found. Miner will rely on its peerbook and local node seeding fallback if available."
-  fi
-
-  apply_initial_sync_defaults_if_needed /runtime/miner.sqlite3 "miner" "$startup_peer_count"
-
-  if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
-    warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."
-  fi
-  if awk 'BEGIN { exit !('"${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}"' < '"${BLOCK_MAX_INFLIGHT_PER_PEER:-16}"') }'; then
-    warn "BLOCK_DOWNLOAD_WINDOW_SIZE=${BLOCK_DOWNLOAD_WINDOW_SIZE:-128} is below BLOCK_MAX_INFLIGHT_PER_PEER=${BLOCK_MAX_INFLIGHT_PER_PEER:-16}; effective throughput will be reduced."
+  local -a node_args=()
+  local -a miner_id_args=()
+  local node_url
+  IFS=',' read -ra configured_node_urls <<< "${MINING_NODE_URLS}"
+  for node_url in "${configured_node_urls[@]}"; do
+    [[ -n "${node_url}" ]] || continue
+    node_args+=(--node-url "${node_url}")
+  done
+  [[ "${#node_args[@]}" -gt 0 ]] || die "MINING_NODE_URLS must contain at least one HTTP endpoint."
+  if [[ -n "${MINING_MINER_ID:-}" ]]; then
+    miner_id_args=(--miner-id "${MINING_MINER_ID}")
   fi
 
   exec chipcoin \
     --network "${CHIPCOIN_NETWORK}" \
     --log-level "${MINER_LOG_LEVEL}" \
-    --data /runtime/miner.sqlite3 \
     mine \
-    --listen-host 0.0.0.0 \
-    --listen-port "${MINER_P2P_BIND_PORT}" \
-    --ping-interval-seconds "${PING_INTERVAL_SECONDS:-2.0}" \
-    --read-timeout-seconds "${P2P_READ_TIMEOUT_SECONDS:-15.0}" \
-    --write-timeout-seconds "${P2P_WRITE_TIMEOUT_SECONDS:-15.0}" \
-    --handshake-timeout-seconds "${P2P_HANDSHAKE_TIMEOUT_SECONDS:-5.0}" \
     --miner-address "${miner_address}" \
+    "${node_args[@]}" \
+    --polling-interval-seconds "${MINING_POLLING_INTERVAL_SECONDS:-2.0}" \
+    --request-timeout-seconds "${MINING_REQUEST_TIMEOUT_SECONDS:-10.0}" \
+    --nonce-batch-size "${MINING_NONCE_BATCH_SIZE:-250000}" \
+    --template-refresh-skew-seconds "${MINING_TEMPLATE_REFRESH_SKEW_SECONDS:-1}" \
     --mining-min-interval-seconds "${MINING_MIN_INTERVAL_SECONDS}" \
-    --peer-seed-url "${MINER_LOCAL_NODE_ENDPOINT:-http://node:8081}" \
-    --peer-discovery-enabled "${PEER_DISCOVERY_ENABLED:-true}" \
-    --peerbook-max-size "${PEERBOOK_MAX_SIZE:-1024}" \
-    --peer-addr-max-per-message "${PEER_ADDR_MAX_PER_MESSAGE:-250}" \
-    --peer-addr-relay-limit-per-interval "${PEER_ADDR_RELAY_LIMIT_PER_INTERVAL:-250}" \
-    --peer-addr-relay-interval-seconds "${PEER_ADDR_RELAY_INTERVAL_SECONDS:-30}" \
-    --peer-stale-after-seconds "${PEER_STALE_AFTER_SECONDS:-604800}" \
-    --peer-retry-backoff-base-seconds "${PEER_RETRY_BACKOFF_BASE_SECONDS:-1}" \
-    --peer-retry-backoff-max-seconds "${PEER_RETRY_BACKOFF_MAX_SECONDS:-30}" \
-    --peer-discovery-startup-prefer-persisted "${PEER_DISCOVERY_STARTUP_PREFER_PERSISTED:-true}" \
-    --headers-sync-enabled "${HEADERS_SYNC_ENABLED:-true}" \
-    --headers-max-per-message "${HEADERS_MAX_PER_MESSAGE:-2000}" \
-    --block-download-window-size "${BLOCK_DOWNLOAD_WINDOW_SIZE:-128}" \
-    --block-max-inflight-per-peer "${BLOCK_MAX_INFLIGHT_PER_PEER:-16}" \
-    --block-request-timeout-seconds "${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}" \
-    --headers-sync-parallel-peers "${HEADERS_SYNC_PARALLEL_PEERS:-2}" \
-    --headers-sync-start-height-gap-threshold "${HEADERS_SYNC_START_HEIGHT_GAP_THRESHOLD:-1}" \
-    --misbehavior-warning-threshold "${PEER_MISBEHAVIOR_WARNING_THRESHOLD:-25}" \
-    --misbehavior-disconnect-threshold "${PEER_MISBEHAVIOR_DISCONNECT_THRESHOLD:-50}" \
-    --misbehavior-ban-threshold "${PEER_MISBEHAVIOR_BAN_THRESHOLD:-100}" \
-    --misbehavior-ban-duration-seconds "${PEER_MISBEHAVIOR_BAN_DURATION_SECONDS:-1800}" \
-    --misbehavior-decay-interval-seconds "${PEER_MISBEHAVIOR_DECAY_INTERVAL_SECONDS:-300}" \
-    --misbehavior-decay-step "${PEER_MISBEHAVIOR_DECAY_STEP:-5}" \
-    "${peer_args[@]}"
+    "${miner_id_args[@]}"
 }
 
 case "$ROLE" in

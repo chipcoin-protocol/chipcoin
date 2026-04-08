@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from socketserver import ThreadingMixIn
+import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -40,10 +41,20 @@ class HttpApiApp:
 
     API_VERSION = "v1"
 
-    def __init__(self, service: NodeService, *, allowed_origins: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        service: NodeService,
+        *,
+        allowed_origins: set[str] | None = None,
+        mining_submit_handler=None,
+        tx_submit_handler=None,
+    ) -> None:
         self.service = service
         self.allowed_origins = set() if allowed_origins is None else {origin for origin in allowed_origins if origin}
         self.logger = logging.getLogger("chipcoin.http_api")
+        self._request_lock = threading.RLock()
+        self.mining_submit_handler = mining_submit_handler
+        self.tx_submit_handler = tx_submit_handler
 
     def __call__(self, environ, start_response):
         method = environ["REQUEST_METHOD"].upper()
@@ -61,9 +72,10 @@ class HttpApiApp:
             return start_response(status, headers, exc_info)
 
         try:
-            if method == "OPTIONS" and path.startswith("/v1/"):
+            if method == "OPTIONS" and (path.startswith("/v1/") or path.startswith("/mining/")):
                 return self._options_response(start_response_with_status, origin)
-            payload = self._dispatch(method=method, path=path, environ=environ)
+            with self._request_lock:
+                payload = self._dispatch(method=method, path=path, environ=environ)
             return self._json_response(start_response_with_status, 200, payload, origin=origin)
         except ApiError as exc:
             return self._json_response(
@@ -90,6 +102,15 @@ class HttpApiApp:
 
         if method == "GET" and path == "/v1/status":
             return {"api_version": self.API_VERSION, **self.service.status()}
+
+        if method == "GET" and path == "/mining/status":
+            return self.service.mining_status()
+
+        if method == "POST" and path == "/mining/get-block-template":
+            return self._handle_get_block_template(environ)
+
+        if method == "POST" and path == "/mining/submit-block":
+            return self._handle_submit_block(environ)
 
         if method == "GET" and path == "/v1/tip":
             return format_tip(self.service.chain_tip())
@@ -168,12 +189,57 @@ class HttpApiApp:
         if not isinstance(raw_hex, str) or not raw_hex.strip():
             raise ApiError(400, "invalid_request", "raw_hex is required")
         try:
-            accepted = self.service.submit_raw_transaction(raw_hex)
+            if self.tx_submit_handler is not None:
+                return self.tx_submit_handler(raw_hex=raw_hex.strip())
+            accepted = self.service.submit_raw_transaction(raw_hex.strip())
         except ValidationError as exc:
             raise ApiError(400, "validation_error", str(exc)) from exc
         except ValueError as exc:
             raise ApiError(400, "invalid_request", str(exc)) from exc
         return {"accepted": True, "txid": accepted.transaction.txid(), "fee": accepted.fee}
+
+    def _handle_get_block_template(self, environ) -> dict[str, object]:
+        payload = self._read_json(environ)
+        payout_address = payload.get("payout_address")
+        miner_id = payload.get("miner_id")
+        template_mode = payload.get("template_mode", "full_block")
+        if not isinstance(payout_address, str) or not payout_address.strip():
+            raise ApiError(400, "invalid_request", "payout_address is required")
+        if not is_valid_address(payout_address):
+            raise ApiError(400, "invalid_request", "invalid payout_address")
+        if not isinstance(miner_id, str) or not miner_id.strip():
+            raise ApiError(400, "invalid_request", "miner_id is required")
+        try:
+            return self.service.get_block_template(
+                payout_address=payout_address.strip(),
+                miner_id=miner_id.strip(),
+                template_mode=template_mode,
+            )
+        except ValueError as exc:
+            raise ApiError(400, "invalid_request", str(exc)) from exc
+
+    def _handle_submit_block(self, environ) -> dict[str, object]:
+        payload = self._read_json(environ)
+        template_id = payload.get("template_id")
+        serialized_block = payload.get("serialized_block")
+        miner_id = payload.get("miner_id")
+        if not isinstance(template_id, str) or not template_id.strip():
+            raise ApiError(400, "invalid_request", "template_id is required")
+        if not isinstance(serialized_block, str) or not serialized_block.strip():
+            raise ApiError(400, "invalid_request", "serialized_block is required")
+        if not isinstance(miner_id, str) or not miner_id.strip():
+            raise ApiError(400, "invalid_request", "miner_id is required")
+        if self.mining_submit_handler is not None:
+            return self.mining_submit_handler(
+                template_id=template_id.strip(),
+                serialized_block_hex=serialized_block.strip(),
+                miner_id=miner_id.strip(),
+            )
+        return self.service.submit_mined_block(
+            template_id=template_id.strip(),
+            serialized_block_hex=serialized_block.strip(),
+            miner_id=miner_id.strip(),
+        )
 
     def _handle_address(self, *, method: str, path: str, environ) -> object:
         if method != "GET":

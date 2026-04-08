@@ -1,10 +1,14 @@
+import asyncio
 import json
 import logging
+import socket
 from contextlib import redirect_stdout
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+import pytest
 
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
@@ -14,6 +18,7 @@ from chipcoin.consensus.serialization import serialize_transaction
 from chipcoin.crypto.keys import serialize_private_key_hex
 from chipcoin.interfaces import cli as cli_module
 from chipcoin.interfaces.cli import main
+from chipcoin.node.runtime import NodeRuntime
 from chipcoin.node.service import NodeService
 from tests.helpers import put_wallet_utxo, signed_payment, wallet_key
 
@@ -47,6 +52,33 @@ def _run_cli_with_stderr(argv: list[str]) -> tuple[int, str, str]:
     with redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         code = main(argv)
     return code, stdout.getvalue().strip(), stderr.getvalue().strip()
+
+
+async def _start_runtime_with_http(service: NodeService) -> NodeRuntime:
+    runtime = NodeRuntime(
+        service=service,
+        listen_host="127.0.0.1",
+        listen_port=0,
+        http_host="127.0.0.1",
+        http_port=_free_port(),
+        ping_interval=0.2,
+    )
+    await runtime.start()
+    return runtime
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _require_local_socket_support() -> None:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+    except PermissionError as exc:
+        raise pytest.skip(f"local TCP binds are unavailable in this environment: {exc}") from exc
 
 
 def test_cli_start_returns_status_snapshot() -> None:
@@ -137,23 +169,32 @@ def test_cli_block_lookup_by_height_and_hash() -> None:
 
 
 def test_cli_tx_lookup_and_submit_raw_tx() -> None:
-    with TemporaryDirectory() as tempdir:
-        db_path = Path(tempdir) / "chipcoin.sqlite3"
-        service = _make_service(db_path)
-        funding_outpoint = OutPoint(txid="11" * 32, index=0)
-        put_wallet_utxo(service, funding_outpoint, value=100, owner=wallet_key(0))
-        transaction = signed_payment(funding_outpoint, value=100, sender=wallet_key(0), fee=10)
-        raw_hex = serialize_transaction(transaction).hex()
+    async def scenario() -> None:
+        _require_local_socket_support()
+        with TemporaryDirectory() as tempdir:
+            db_path = Path(tempdir) / "chipcoin.sqlite3"
+            service = _make_service(db_path)
+            funding_outpoint = OutPoint(txid="11" * 32, index=0)
+            put_wallet_utxo(service, funding_outpoint, value=100, owner=wallet_key(0))
+            transaction = signed_payment(funding_outpoint, value=100, sender=wallet_key(0), fee=10)
+            raw_hex = serialize_transaction(transaction).hex()
+            runtime = await _start_runtime_with_http(service)
+            try:
+                submit_code, submit_payload = await asyncio.to_thread(
+                    _run_cli,
+                    ["submit-raw-tx", "--node-url", f"http://127.0.0.1:{runtime.http_bound_port}", raw_hex],
+                )
+                tx_code, tx_payload = await asyncio.to_thread(_run_cli, ["--data", str(db_path), "tx", transaction.txid()])
+                assert submit_code == 0
+                assert submit_payload["accepted"] is True
+                assert submit_payload["txid"] == transaction.txid()
+                assert tx_code == 0
+                assert tx_payload["location"] == "mempool"
+                assert tx_payload["transaction"]["txid"] == transaction.txid()
+            finally:
+                await runtime.stop()
 
-        submit_code, submit_payload = _run_cli(["--data", str(db_path), "submit-raw-tx", raw_hex])
-        tx_code, tx_payload = _run_cli(["--data", str(db_path), "tx", transaction.txid()])
-
-        assert submit_code == 0
-        assert submit_payload["accepted"] is True
-        assert submit_payload["txid"] == transaction.txid()
-        assert tx_code == 0
-        assert tx_payload["location"] == "mempool"
-        assert tx_payload["transaction"]["txid"] == transaction.txid()
+    asyncio.run(scenario())
 
 
 def test_cli_add_peer_and_list_peers() -> None:
@@ -346,7 +387,7 @@ def test_cli_run_emits_warning_for_empty_peerbook_and_no_peers(caplog) -> None:
         )
 
         with caplog.at_level(logging.WARNING, logger="chipcoin.runtime.config"):
-            cli_module._emit_runtime_warnings(service, args, [], miner_address=None)
+            cli_module._emit_runtime_warnings(service, args, [])
 
         assert "empty peerbook" in caplog.text
 
@@ -368,7 +409,7 @@ def test_cli_run_emits_warning_for_suspicious_block_timeout(caplog) -> None:
         )
 
         with caplog.at_level(logging.WARNING, logger="chipcoin.runtime.config"):
-            cli_module._emit_runtime_warnings(service, args, [], miner_address=None)
+            cli_module._emit_runtime_warnings(service, args, [])
 
         assert "unusually low" in caplog.text
 
@@ -1115,14 +1156,24 @@ def test_cli_retarget_info_reports_boundary_change() -> None:
 
 
 def test_cli_returns_readable_error_for_invalid_raw_tx() -> None:
-    with TemporaryDirectory() as tempdir:
-        db_path = Path(tempdir) / "chipcoin.sqlite3"
+    async def scenario() -> None:
+        _require_local_socket_support()
+        with TemporaryDirectory() as tempdir:
+            db_path = Path(tempdir) / "chipcoin.sqlite3"
+            service = _make_service(db_path)
+            runtime = await _start_runtime_with_http(service)
+            try:
+                code, stdout, stderr = await asyncio.to_thread(
+                    _run_cli_with_stderr,
+                    ["submit-raw-tx", "--node-url", f"http://127.0.0.1:{runtime.http_bound_port}", "zz"],
+                )
+                assert code == 1
+                assert stdout == ""
+                assert "non-hexadecimal" in stderr
+            finally:
+                await runtime.stop()
 
-        code, stdout, stderr = _run_cli_with_stderr(["--data", str(db_path), "submit-raw-tx", "zz"])
-
-        assert code == 1
-        assert stdout == ""
-        assert json.loads(stderr)["error"]
+    asyncio.run(scenario())
 
 
 def test_cli_wallet_generate_address_build_and_send_local() -> None:
@@ -1241,32 +1292,23 @@ def test_cli_wallet_send_can_submit_over_p2p_boundary() -> None:
 
 def test_cli_mine_command_runs_and_produces_a_block() -> None:
     with TemporaryDirectory() as tempdir:
-        db_path = Path(tempdir) / "chipcoin.sqlite3"
-        original_runtime = cli_module.NodeRuntime
+        original_worker = cli_module.MinerWorker
         captured = {}
 
-        class FakeMiningRuntime:
-            def __init__(self, *, service, **kwargs):
-                self.service = service
-                captured.update(kwargs)
+        class FakeMinerWorker:
+            def __init__(self, config):
+                captured["config"] = config
 
-            async def start(self):
-                template = self.service.build_candidate_block("CHCminer-cli")
-                self.service.apply_block(_mine_block(template.block))
+            def run(self):
+                return {"mining": True, "accepted_blocks": 1, "rejected_blocks": 0, "miner_id": "miner-cli"}
 
-            async def stop(self):
-                return None
-
-            async def run_forever(self):
-                return None
-
-        cli_module.NodeRuntime = FakeMiningRuntime
+        cli_module.MinerWorker = FakeMinerWorker
         try:
             code, payload = _run_cli(
                 [
-                    "--data",
-                    str(db_path),
                     "mine",
+                    "--node-url",
+                    "http://127.0.0.1:8081",
                     "--miner-address",
                     "CHCminer-cli",
                     "--mining-min-interval-seconds",
@@ -1276,10 +1318,10 @@ def test_cli_mine_command_runs_and_produces_a_block() -> None:
                 ]
             )
 
-            service = _make_service(db_path)
             assert code == 0
             assert payload["mining"] is True
-            assert service.chain_tip() is not None
-            assert captured["mining_min_interval_seconds"] == 0.2
+            assert payload["accepted_blocks"] == 1
+            assert captured["config"].node_urls == ("http://127.0.0.1:8081",)
+            assert captured["config"].mining_min_interval_seconds == 0.2
         finally:
-            cli_module.NodeRuntime = original_runtime
+            cli_module.MinerWorker = original_worker

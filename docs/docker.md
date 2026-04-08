@@ -22,7 +22,6 @@ The recommended runtime layout keeps mutable state outside the repository.
 Example:
 
 - `/var/lib/chipcoin/data/node-devnet.sqlite3`
-- `/var/lib/chipcoin/data/miner-devnet.sqlite3`
 - `/var/lib/chipcoin/wallets/chipcoin-wallet.json`
 - `/var/lib/chipcoin/logs/node/`
 - `/var/lib/chipcoin/logs/miner/`
@@ -31,8 +30,8 @@ Relevant `.env` keys:
 
 - `CHIPCOIN_RUNTIME_DIR`
 - `NODE_DATA_PATH`
-- `MINER_DATA_PATH`
 - `MINER_WALLET_FILE`
+- `MINING_NODE_URLS`
 
 ## Start
 
@@ -78,5 +77,6 @@ docker compose logs -f miner
 
 - The node runtime currently does not use a wallet file.
 - The miner runtime does use `MINER_WALLET_FILE`.
+- The miner no longer keeps a local chain database.
 - The default node HTTP API is typically exposed on `http://127.0.0.1:8081`.
 - Local override files are for ports, extra bind mounts, and machine-specific behavior only. Keep secrets and runtime state out of the repository.

@@ -7,9 +7,10 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, OutPoint
 from chipcoin.consensus.pow import verify_proof_of_work
-from chipcoin.consensus.serialization import serialize_transaction
+from chipcoin.consensus.serialization import deserialize_transaction, serialize_block, serialize_transaction
 from chipcoin.interfaces.cli import main as cli_main
 from chipcoin.interfaces.http_api import HttpApiApp
 from chipcoin.node.service import NodeService
@@ -51,6 +52,37 @@ def _call_wsgi(app, *, method: str, path: str, query: str = "", body: object | N
     return captured["status"], captured["headers"], payload
 
 
+def _block_from_template(template: dict[str, object]) -> Block:
+    from chipcoin.consensus.models import BlockHeader, Transaction, TxOutput
+
+    coinbase = Transaction(
+        version=1,
+        inputs=(),
+        outputs=tuple(
+            TxOutput(value=int(output["amount_chipbits"]), recipient=str(output["recipient"]))
+            for output in template["coinbase_tx"]["outputs"]
+        ),
+        metadata={"coinbase": "true", "height": str(template["height"]), "extra_nonce": "1"},
+    )
+    transactions = [coinbase]
+    for row in template["transactions"]:
+        transaction, offset = deserialize_transaction(bytes.fromhex(row["raw_hex"]))
+        assert offset == len(bytes.fromhex(row["raw_hex"]))
+        transactions.append(transaction)
+    block = Block(
+        header=BlockHeader(
+            version=int(template["version"]),
+            previous_block_hash=str(template["previous_block_hash"]),
+            merkle_root=merkle_root([transaction.txid() for transaction in transactions]),
+            timestamp=int(template["curtime"]),
+            bits=int(template["bits"]),
+            nonce=0,
+        ),
+        transactions=tuple(transactions),
+    )
+    return _mine_block(block)
+
+
 def _run_cli(argv: list[str]) -> tuple[int, object]:
     stdout = StringIO()
     with redirect_stdout(stdout):
@@ -81,6 +113,80 @@ def test_http_api_health_status_and_tip() -> None:
         }
         assert tip_status == "200 OK"
         assert tip_body == {"height": None, "block_hash": None}
+
+
+def test_http_api_exposes_mining_status_and_template() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+
+        status_code, _, status_body = _call_wsgi(app, method="GET", path="/mining/status")
+        template_code, _, template_body = _call_wsgi(
+            app,
+            method="POST",
+            path="/mining/get-block-template",
+            body={"payout_address": wallet_key(0).address, "miner_id": "miner-a"},
+        )
+
+        assert status_code == "200 OK"
+        assert status_body["network"] == "mainnet"
+        assert status_body["best_height"] == -1
+        assert template_code == "200 OK"
+        assert template_body["template_id"]
+        assert template_body["height"] == 0
+        assert template_body["previous_block_hash"] == "00" * 32
+        assert template_body["payout_address"] == wallet_key(0).address
+
+
+def test_http_api_submit_block_accepts_solved_template_and_rejects_stale() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+
+        _, _, template_body = _call_wsgi(
+            app,
+            method="POST",
+            path="/mining/get-block-template",
+            body={"payout_address": wallet_key(0).address, "miner_id": "miner-a"},
+        )
+        solved_block = _block_from_template(template_body)
+        submit_status, _, submit_body = _call_wsgi(
+            app,
+            method="POST",
+            path="/mining/submit-block",
+            body={
+                "template_id": template_body["template_id"],
+                "serialized_block": serialize_block(solved_block).hex(),
+                "miner_id": "miner-a",
+            },
+        )
+
+        assert submit_status == "200 OK"
+        assert submit_body["accepted"] is True
+        assert submit_body["became_tip"] is True
+
+        _, _, stale_template_body = _call_wsgi(
+            app,
+            method="POST",
+            path="/mining/get-block-template",
+            body={"payout_address": wallet_key(0).address, "miner_id": "miner-a"},
+        )
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        stale_block = _block_from_template(stale_template_body)
+        stale_status, _, stale_body = _call_wsgi(
+            app,
+            method="POST",
+            path="/mining/submit-block",
+            body={
+                "template_id": stale_template_body["template_id"],
+                "serialized_block": serialize_block(stale_block).hex(),
+                "miner_id": "miner-a",
+            },
+        )
+
+        assert stale_status == "200 OK"
+        assert stale_body["accepted"] is False
+        assert stale_body["reason"] == "unknown_or_expired_template"
 
 
 def test_http_api_blocks_and_block_lookup_by_height_and_hash() -> None:

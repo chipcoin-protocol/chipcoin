@@ -9,10 +9,14 @@ import logging
 import secrets
 import sys
 from pathlib import Path
+from urllib import error, request
+from urllib.parse import urlparse
 
 from ..config import DEFAULT_NETWORK, NETWORK_CONFIGS, get_network_config, resolve_data_path
 from ..consensus.serialization import serialize_transaction
 from ..crypto.keys import parse_private_key_hex, serialize_private_key_hex, serialize_public_key_hex
+from ..miner.config import MinerWorkerConfig
+from ..miner.worker import MinerWorker
 from ..node.messages import MessageEnvelope, TransactionMessage
 from ..node.p2p.protocol import LocalPeerIdentity, PeerProtocol
 from ..node.service import NodeService
@@ -35,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
 
             configure_logging(args.log_level)
         data_path = resolve_data_path(args.data, args.network)
-        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address"} else NodeService.open_sqlite(data_path, network=args.network)
+        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx"} else NodeService.open_sqlite(data_path, network=args.network)
 
         if args.command == "start":
             assert service is not None
@@ -49,9 +53,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "mine":
-            assert service is not None
-            asyncio.run(_run_runtime(service, args, miner_address=args.miner_address))
-            _print_json({"mining": True, "tip": format_tip(service.chain_tip())})
+            payload = _run_miner_worker(args)
+            _print_json(payload)
             return 0
 
         if args.command == "status":
@@ -75,9 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "submit-raw-tx":
-            assert service is not None
-            accepted = service.submit_raw_transaction(args.raw_hex)
-            _print_json({"accepted": True, "txid": accepted.transaction.txid(), "fee": accepted.fee})
+            _print_json(_submit_raw_transaction_via_http(args))
             return 0
 
         if args.command == "add-peer":
@@ -485,11 +486,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--listen-host", default="127.0.0.1")
     run_parser.add_argument("--listen-port", type=int, default=None)
+    run_parser.add_argument("--http-host", default=None)
+    run_parser.add_argument("--http-port", type=int, default=None)
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
     run_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
-    run_parser.add_argument("--peer-seed-url", default=None, help="Optional local HTTP API endpoint used to seed peers.")
     run_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
-    run_parser.add_argument("--miner-address", default=None, help="Enable local mining to the supplied payout address.")
     run_parser.add_argument("--ping-interval-seconds", type=float, default=2.0)
     run_parser.add_argument("--read-timeout-seconds", type=float, default=15.0)
     run_parser.add_argument("--write-timeout-seconds", type=float, default=15.0)
@@ -516,46 +517,20 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--misbehavior-ban-duration-seconds", type=int, default=1800)
     run_parser.add_argument("--misbehavior-decay-interval-seconds", type=int, default=300)
     run_parser.add_argument("--misbehavior-decay-step", type=int, default=5)
-    run_parser.add_argument(
-        "--mining-min-interval-seconds",
-        type=float,
-        default=0.0,
-        help="Optional local throttle between mined blocks. Does not change consensus.",
-    )
     mine_parser = subparsers.add_parser("mine")
-    mine_parser.add_argument("--listen-host", default="127.0.0.1")
-    mine_parser.add_argument("--listen-port", type=int, default=None)
-    mine_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
-    mine_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
-    mine_parser.add_argument("--peer-seed-url", default=None, help="Optional local HTTP API endpoint used to seed peers.")
+    mine_parser.add_argument(
+        "--node-url",
+        action="append",
+        default=[],
+        help="Mining node HTTP endpoint. Repeat the flag to configure failover nodes.",
+    )
     mine_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
     mine_parser.add_argument("--miner-address", required=True, help="Mining reward payout address.")
-    mine_parser.add_argument("--ping-interval-seconds", type=float, default=2.0)
-    mine_parser.add_argument("--read-timeout-seconds", type=float, default=15.0)
-    mine_parser.add_argument("--write-timeout-seconds", type=float, default=15.0)
-    mine_parser.add_argument("--handshake-timeout-seconds", type=float, default=5.0)
-    mine_parser.add_argument("--peer-discovery-enabled", type=_parse_bool, default=True)
-    mine_parser.add_argument("--peerbook-max-size", type=int, default=1024)
-    mine_parser.add_argument("--peer-addr-max-per-message", type=int, default=250)
-    mine_parser.add_argument("--peer-addr-relay-limit-per-interval", type=int, default=250)
-    mine_parser.add_argument("--peer-addr-relay-interval-seconds", type=int, default=30)
-    mine_parser.add_argument("--peer-stale-after-seconds", type=int, default=604800)
-    mine_parser.add_argument("--peer-retry-backoff-base-seconds", type=float, default=1.0)
-    mine_parser.add_argument("--peer-retry-backoff-max-seconds", type=float, default=30.0)
-    mine_parser.add_argument("--peer-discovery-startup-prefer-persisted", type=_parse_bool, default=True)
-    mine_parser.add_argument("--headers-sync-enabled", type=_parse_bool, default=True)
-    mine_parser.add_argument("--headers-max-per-message", type=int, default=2000)
-    mine_parser.add_argument("--block-download-window-size", type=int, default=128)
-    mine_parser.add_argument("--block-max-inflight-per-peer", type=int, default=16)
-    mine_parser.add_argument("--block-request-timeout-seconds", type=float, default=15.0)
-    mine_parser.add_argument("--headers-sync-parallel-peers", type=int, default=2)
-    mine_parser.add_argument("--headers-sync-start-height-gap-threshold", type=int, default=1)
-    mine_parser.add_argument("--misbehavior-warning-threshold", type=int, default=25)
-    mine_parser.add_argument("--misbehavior-disconnect-threshold", type=int, default=50)
-    mine_parser.add_argument("--misbehavior-ban-threshold", type=int, default=100)
-    mine_parser.add_argument("--misbehavior-ban-duration-seconds", type=int, default=1800)
-    mine_parser.add_argument("--misbehavior-decay-interval-seconds", type=int, default=300)
-    mine_parser.add_argument("--misbehavior-decay-step", type=int, default=5)
+    mine_parser.add_argument("--miner-id", default=None, help="Stable miner identifier used in template requests.")
+    mine_parser.add_argument("--polling-interval-seconds", type=float, default=2.0)
+    mine_parser.add_argument("--request-timeout-seconds", type=float, default=10.0)
+    mine_parser.add_argument("--nonce-batch-size", type=int, default=250000)
+    mine_parser.add_argument("--template-refresh-skew-seconds", type=int, default=1)
     mine_parser.add_argument(
         "--mining-min-interval-seconds",
         type=float,
@@ -574,6 +549,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tx_parser.add_argument("txid")
 
     submit_parser = subparsers.add_parser("submit-raw-tx")
+    submit_parser.add_argument("--node-url", required=True, help="Node HTTP endpoint, for example http://127.0.0.1:8081")
     submit_parser.add_argument("raw_hex")
 
     add_peer_parser = subparsers.add_parser("add-peer")
@@ -696,11 +672,66 @@ def _parse_bool(raw: str) -> bool:
     raise argparse.ArgumentTypeError(f"invalid boolean value: {raw}")
 
 
-async def _run_runtime(service: NodeService, args, miner_address: str | None = None) -> None:
+def _normalize_node_url(raw: str) -> str:
+    """Validate one mining node URL."""
+
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"invalid node URL: {raw}")
+    return raw.rstrip("/")
+
+
+def _run_miner_worker(args) -> dict[str, object]:
+    """Run the lightweight template-based miner worker."""
+
+    if not args.node_url:
+        raise ValueError("mine requires at least one --node-url endpoint")
+    config = MinerWorkerConfig(
+        network=args.network,
+        payout_address=args.miner_address,
+        node_urls=tuple(_normalize_node_url(url) for url in args.node_url),
+        miner_id=args.miner_id or f"miner-{secrets.token_hex(6)}",
+        polling_interval_seconds=float(args.polling_interval_seconds),
+        request_timeout_seconds=float(args.request_timeout_seconds),
+        nonce_batch_size=int(args.nonce_batch_size),
+        template_refresh_skew_seconds=int(args.template_refresh_skew_seconds),
+        mining_min_interval_seconds=float(args.mining_min_interval_seconds),
+        run_seconds=args.run_seconds,
+    )
+    worker = MinerWorker(config)
+    return worker.run()
+
+
+def _submit_raw_transaction_via_http(args) -> dict[str, object]:
+    """Submit one raw transaction through the runtime-owned HTTP API."""
+
+    node_url = _normalize_node_url(args.node_url)
+    encoded = json.dumps({"raw_hex": args.raw_hex}, sort_keys=True).encode("utf-8")
+    req = request.Request(
+        f"{node_url}/v1/tx/submit",
+        method="POST",
+        data=encoded,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+    )
+    try:
+        with request.urlopen(req, timeout=10.0) as response:
+            payload = response.read()
+    except error.HTTPError as exc:
+        try:
+            message = json.loads(exc.read().decode("utf-8")).get("error", {}).get("message")
+        except Exception:
+            message = None
+        raise ValueError(message or f"transaction submit failed with HTTP {exc.code}") from exc
+    except error.URLError as exc:
+        raise ValueError(f"unable to reach node API at {node_url}: {exc.reason}") from exc
+    return {} if not payload else json.loads(payload.decode("utf-8"))
+
+
+async def _run_runtime(service: NodeService, args) -> None:
     """Run the persistent node runtime."""
 
     peers = [_parse_peer(peer) for peer in args.peer]
-    _emit_runtime_warnings(service, args, peers, miner_address=miner_address)
+    _emit_runtime_warnings(service, args, peers)
     network_config = get_network_config(service.network)
     runtime = NodeRuntime(
         service=service,
@@ -727,15 +758,14 @@ async def _run_runtime(service: NodeService, args, miner_address: str | None = N
         block_request_timeout_seconds=getattr(args, "block_request_timeout_seconds", 15.0),
         headers_sync_parallel_peers=getattr(args, "headers_sync_parallel_peers", 2),
         headers_sync_start_height_gap_threshold=getattr(args, "headers_sync_start_height_gap_threshold", 1),
-        miner_address=miner_address if miner_address is not None else getattr(args, "miner_address", None),
-        mining_min_interval_seconds=getattr(args, "mining_min_interval_seconds", 0.0),
         misbehavior_warning_threshold=getattr(args, "misbehavior_warning_threshold", 25),
         misbehavior_disconnect_threshold=getattr(args, "misbehavior_disconnect_threshold", 50),
         misbehavior_ban_threshold=getattr(args, "misbehavior_ban_threshold", 100),
         misbehavior_ban_duration_seconds=getattr(args, "misbehavior_ban_duration_seconds", 1800),
         misbehavior_decay_interval_seconds=getattr(args, "misbehavior_decay_interval_seconds", 300),
         misbehavior_decay_step=getattr(args, "misbehavior_decay_step", 5),
-        local_peer_seed_url=getattr(args, "peer_seed_url", None),
+        http_host=getattr(args, "http_host", None),
+        http_port=getattr(args, "http_port", None),
         logger=None,
     )
     configured_peer_source = getattr(args, "peer_source", "manual")
@@ -752,18 +782,15 @@ async def _run_runtime(service: NodeService, args, miner_address: str | None = N
         await runtime.stop()
 
 
-def _emit_runtime_warnings(service: NodeService, args, peers: list[OutboundPeer], *, miner_address: str | None) -> None:
+def _emit_runtime_warnings(service: NodeService, args, peers: list[OutboundPeer]) -> None:
     """Emit conservative startup warnings for isolated or suspicious runtime configs."""
 
     logger = logging.getLogger("chipcoin.runtime.config")
     peer_discovery_enabled = bool(getattr(args, "peer_discovery_enabled", True))
     persisted_peers = service.list_peers()
-    peer_seed_url = getattr(args, "peer_seed_url", None)
-    has_local_seed_fallback = miner_address is not None and bool(peer_seed_url)
-
-    if not peer_discovery_enabled and not peers and not persisted_peers and not has_local_seed_fallback:
+    if not peer_discovery_enabled and not peers and not persisted_peers:
         logger.warning("startup warning: peer discovery is disabled and no peers are configured; runtime will stay isolated")
-    elif not peers and not persisted_peers and not has_local_seed_fallback:
+    elif not peers and not persisted_peers:
         logger.warning(
             "startup warning: no configured peers and empty peerbook; runtime will wait for inbound peers or later discovery"
         )

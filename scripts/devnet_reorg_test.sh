@@ -160,21 +160,21 @@ else
   fail wait_sync
 fi
 
-step isolate_node_b
-show_cmd "docker compose stop node-b"
-docker compose stop node-b >/dev/null
-pass isolate_node_b
+step isolate_node_a
+show_cmd "docker compose stop node-a"
+docker compose stop node-a >/dev/null
+pass isolate_node_a
 
 step mine_isolated_branch
-show_cmd "docker compose run --rm --no-deps -T node-b chipcoin --network devnet --log-level INFO --data /data/node-b-devnet.sqlite3 mine --listen-host 0.0.0.0 --listen-port 18445 --miner-address $MINER_ADDRESS --run-seconds 3 --mining-min-interval-seconds 1.0"
-docker compose run --rm --no-deps -T node-b chipcoin --network devnet --log-level INFO --data /data/node-b-devnet.sqlite3 mine --listen-host 0.0.0.0 --listen-port 18445 --miner-address "$MINER_ADDRESS" --run-seconds 3 --mining-min-interval-seconds 1.0 | tee "$REORG_TEMP_LOG"
+show_cmd "docker compose run --rm --no-deps -T miner chipcoin --network devnet --log-level INFO mine --node-url http://node-b:8082 --miner-address $MINER_ADDRESS --run-seconds 3 --mining-min-interval-seconds 1.0"
+docker compose run --rm --no-deps -T miner chipcoin --network devnet --log-level INFO mine --node-url "http://node-b:8082" --miner-address "$MINER_ADDRESS" --run-seconds 3 --mining-min-interval-seconds 1.0 | tee "$REORG_TEMP_LOG"
 show_cmd "sleep 8"
 sleep 8
 pass mine_isolated_branch
 
 step detect_divergence
-isolated_node_b_status=$(run_json "docker compose run --rm --no-deps -T node-b chipcoin --network devnet --data /data/node-b-devnet.sqlite3 status")
-node_a_diverged_status=$(run_json "docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 status")
+isolated_node_b_status=$(run_json "docker compose exec -T node-b chipcoin --network devnet --data /data/node-b-devnet.sqlite3 status")
+node_a_diverged_status="$node_a_status"
 info "isolated node-b $(printf '%s' "$isolated_node_b_status" | json_extract '{"height": data["height"], "tip_hash": data["tip_hash"]}')"
 info "node-a live $(printf '%s' "$node_a_diverged_status" | json_extract '{"height": data["height"], "tip_hash": data["tip_hash"]}')"
 if printf '%s' "$isolated_node_b_status" | json_eval 'data["tip_hash"] != "'"$(printf '%s' "$node_a_diverged_status" | json_extract 'data["tip_hash"]')"'"'; then
@@ -183,10 +183,10 @@ else
   fail detect_divergence
 fi
 
-step reconnect_node_b
-show_cmd "docker compose up -d node-b"
-docker compose up -d node-b >/dev/null
-pass reconnect_node_b
+step reconnect_node_a
+show_cmd "docker compose up -d node-a"
+docker compose up -d node-a >/dev/null
+pass reconnect_node_a
 
 step wait_reorg
 if converged_statuses=$(wait_tip_convergence 120 1); then
@@ -200,8 +200,8 @@ else
 fi
 
 step reorg_logs
-show_cmd "docker compose logs --tail=200 node-b"
-reorg_logs=$(docker compose logs --tail=200 node-b || true)
+show_cmd "docker compose logs --tail=200 node-a"
+reorg_logs=$(docker compose logs --tail=200 node-a || true)
 mine_reorg_logs=""
 if [[ -f "$REORG_TEMP_LOG" ]]; then
   mine_reorg_logs=$(cat "$REORG_TEMP_LOG")

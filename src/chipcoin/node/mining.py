@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from functools import cmp_to_key
 from dataclasses import dataclass, replace
+from functools import cmp_to_key
 
 from ..consensus.economics import subsidy_split_chipbits
 from ..consensus.merkle import merkle_root
 from ..consensus.models import Block, BlockHeader, Transaction, TxOutput
-from ..consensus.nodes import NodeRegistryView, select_rewarded_nodes
+from ..consensus.nodes import NodeRegistryView, RewardedNode, select_rewarded_nodes
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
@@ -40,6 +40,33 @@ class TransactionSelection:
         return self.entry.transaction
 
 
+def build_coinbase_transaction(
+    *,
+    height: int,
+    miner_address: str,
+    miner_amount_chipbits: int,
+    rewarded_nodes: tuple[RewardedNode, ...],
+    extra_metadata: dict[str, str] | None = None,
+) -> Transaction:
+    """Build one deterministic coinbase transaction for a candidate block."""
+
+    metadata = {"coinbase": "true", "height": str(height)}
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    return Transaction(
+        version=1,
+        inputs=(),
+        outputs=(
+            TxOutput(value=miner_amount_chipbits, recipient=miner_address),
+            *tuple(
+                TxOutput(value=rewarded_node.reward_chipbits, recipient=rewarded_node.payout_address)
+                for rewarded_node in rewarded_nodes
+            ),
+        ),
+        metadata=metadata,
+    )
+
+
 class MiningCoordinator:
     """Prepare candidate blocks and manage future mining workflows."""
 
@@ -62,6 +89,7 @@ class MiningCoordinator:
         mempool_entries: list[MempoolEntry],
         node_registry_view: NodeRegistryView,
         confirmed_transaction_ids: set[str] | None = None,
+        extra_coinbase_metadata: dict[str, str] | None = None,
     ) -> BlockTemplate:
         """Construct a block template from chainstate and mempool."""
 
@@ -73,17 +101,11 @@ class MiningCoordinator:
             node_reward_pool_chipbits=node_pool_chipbits,
             params=self.params,
         )
-        provisional_coinbase = Transaction(
-            version=1,
-            inputs=(),
-            outputs=(
-                TxOutput(value=0, recipient=miner_address),
-                *tuple(
-                    TxOutput(value=rewarded_node.reward_chipbits, recipient=rewarded_node.payout_address)
-                    for rewarded_node in rewarded_nodes
-                ),
-            ),
-            metadata={"coinbase": "true", "height": str(height)},
+        provisional_coinbase = build_coinbase_transaction(
+            height=height,
+            miner_address=miner_address,
+            miner_amount_chipbits=0,
+            rewarded_nodes=rewarded_nodes,
         )
         coinbase_weight_units = transaction_weight_units(provisional_coinbase)
         max_transaction_weight_units = max(0, self.params.max_block_weight - coinbase_weight_units)
@@ -99,20 +121,12 @@ class MiningCoordinator:
             + total_fees_chipbits
             + (node_pool_chipbits - distributed_node_reward_chipbits)
         )
-        coinbase = Transaction(
-            version=1,
-            inputs=(),
-            outputs=(
-                TxOutput(
-                    value=miner_amount_chipbits,
-                    recipient=miner_address,
-                ),
-                *tuple(
-                    TxOutput(value=rewarded_node.reward_chipbits, recipient=rewarded_node.payout_address)
-                    for rewarded_node in rewarded_nodes
-                ),
-            ),
-            metadata={"coinbase": "true", "height": str(height)},
+        coinbase = build_coinbase_transaction(
+            height=height,
+            miner_address=miner_address,
+            miner_amount_chipbits=miner_amount_chipbits,
+            rewarded_nodes=rewarded_nodes,
+            extra_metadata=extra_coinbase_metadata,
         )
         transactions = (coinbase, *(entry.transaction for entry in selected_entries))
         header = BlockHeader(

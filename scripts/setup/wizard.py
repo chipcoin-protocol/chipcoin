@@ -25,7 +25,6 @@ ENV_PATH = REPO_ROOT / ".env"
 ENV_EXAMPLE_PATH = REPO_ROOT / "config" / "env" / ".env.example"
 RUNTIME_ROOT = Path("/var/lib/chipcoin")
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
-MINER_DATA_PATH = str(RUNTIME_ROOT / "data" / "miner-devnet.sqlite3")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
 PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
 PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
@@ -42,19 +41,19 @@ DEFAULTS = {
     "NODE_P2P_BIND_PORT": "18444",
     "NODE_HTTP_BIND_PORT": "8081",
     "CHIPCOIN_HTTP_ALLOWED_ORIGINS": "",
-    "MINER_DATA_PATH": MINER_DATA_PATH,
     "MINER_LOG_LEVEL": "INFO",
     "MINER_WALLET_FILE": WALLET_PATH,
-    "MINER_P2P_BIND_PORT": "18445",
     "MINING_MIN_INTERVAL_SECONDS": "1.0",
+    "MINING_NODE_URLS": "http://node:8081",
+    "MINING_MINER_ID": "",
+    "MINING_POLLING_INTERVAL_SECONDS": "2.0",
+    "MINING_REQUEST_TIMEOUT_SECONDS": "10.0",
+    "MINING_NONCE_BATCH_SIZE": "250000",
+    "MINING_TEMPLATE_REFRESH_SKEW_SECONDS": "1",
     "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
     "NODE_DIRECT_PEERS": "",
     "NODE_DIRECT_PEER": "",
     "NODE_BOOTSTRAP_URL": "",
-    "MINER_DIRECT_PEERS": "node:18444",
-    "MINER_DIRECT_PEER": "",
-    "MINER_BOOTSTRAP_URL": "",
-    "MINER_DEFAULT_DIRECT_PEERS": "node:18444",
     "DIRECT_PEERS": "",
     "DIRECT_PEER": "",
     "BOOTSTRAP_URL": "",
@@ -246,7 +245,7 @@ def _primary_group_name() -> str:
 
 
 def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) -> None:
-    miner_peer_default = PUBLIC_DEVNET_BOOTSTRAP_PEER if role == "miner" else "node:18444"
+    miner_node_default = PUBLIC_DEVNET_NODE_ENDPOINT if role == "miner" else "http://node:8081"
 
     if setup_mode == "quick":
         env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
@@ -256,9 +255,7 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
         env_values["NODE_DIRECT_PEERS"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["NODE_DIRECT_PEER"] = ""
         env_values["NODE_BOOTSTRAP_URL"] = ""
-        env_values["MINER_DIRECT_PEERS"] = miner_peer_default
-        env_values["MINER_DIRECT_PEER"] = ""
-        env_values["MINER_BOOTSTRAP_URL"] = ""
+        env_values["MINING_NODE_URLS"] = miner_node_default
         env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
         env_values["BOOTSTRAP_URL"] = ""
@@ -268,6 +265,10 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
         node_endpoint = _ask_http_url("Enter node endpoint", PUBLIC_DEVNET_NODE_ENDPOINT)
         bootstrap_peer = _ask_direct_peers("Enter startup peer(s)", PUBLIC_DEVNET_BOOTSTRAP_PEER)
         explorer_url = _ask_http_url("Enter explorer URL", PUBLIC_DEVNET_EXPLORER_URL)
+        mining_node_urls = _ask_http_url(
+            "Enter miner node endpoint",
+            node_endpoint if role == "miner" else "http://node:8081",
+        )
         env_values["DEFAULT_NODE_ENDPOINT"] = node_endpoint
         env_values["DEFAULT_BOOTSTRAP_PEER"] = bootstrap_peer.split(",", 1)[0]
         env_values["DEFAULT_EXPLORER_URL"] = explorer_url
@@ -275,9 +276,7 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
         env_values["NODE_DIRECT_PEERS"] = bootstrap_peer
         env_values["NODE_DIRECT_PEER"] = ""
         env_values["NODE_BOOTSTRAP_URL"] = ""
-        env_values["MINER_DIRECT_PEERS"] = bootstrap_peer if role == "miner" else "node:18444"
-        env_values["MINER_DIRECT_PEER"] = ""
-        env_values["MINER_BOOTSTRAP_URL"] = ""
+        env_values["MINING_NODE_URLS"] = mining_node_urls
         env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
         env_values["BOOTSTRAP_URL"] = ""
@@ -290,9 +289,7 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
     env_values["NODE_DIRECT_PEERS"] = ""
     env_values["NODE_DIRECT_PEER"] = ""
     env_values["NODE_BOOTSTRAP_URL"] = ""
-    env_values["MINER_DIRECT_PEERS"] = "" if role == "miner" else "node:18444"
-    env_values["MINER_DIRECT_PEER"] = ""
-    env_values["MINER_BOOTSTRAP_URL"] = ""
+    env_values["MINING_NODE_URLS"] = "http://127.0.0.1:8081" if role == "miner" else "http://node:8081"
     env_values["DIRECT_PEERS"] = ""
     env_values["DIRECT_PEER"] = ""
     env_values["BOOTSTRAP_URL"] = ""
@@ -362,7 +359,6 @@ def _prepare_sqlite_file(path: Path, label: str) -> None:
 
 def _prepare_runtime_files(env_values: dict[str, str]) -> None:
     _prepare_sqlite_file(Path(env_values["NODE_DATA_PATH"]), "Node data")
-    _prepare_sqlite_file(Path(env_values["MINER_DATA_PATH"]), "Miner data")
 
 
 def _write_env(values: dict[str, str]) -> None:
@@ -408,6 +404,8 @@ def _print_success(
     print(f"Runtime directory: {env_values['CHIPCOIN_RUNTIME_DIR']}")
     print(f"Setup mode: {setup_mode}")
     print(f"Default node endpoint: {env_values['DEFAULT_NODE_ENDPOINT']}")
+    if role in {"miner", "both"}:
+        print(f"Miner node endpoint(s): {env_values['MINING_NODE_URLS']}")
     if env_values["DEFAULT_BOOTSTRAP_PEER"]:
         print(f"Default bootstrap peer: {env_values['DEFAULT_BOOTSTRAP_PEER']}")
     else:

@@ -144,10 +144,10 @@ At minimum, set real values for:
 
 - `CHIPCOIN_RUNTIME_DIR`
 - `NODE_DATA_PATH`
-- `MINER_DATA_PATH`
 - `MINER_WALLET_FILE`
+- `MINING_NODE_URLS`
 
-`NODE_DATA_PATH` and `MINER_DATA_PATH` must be writable SQLite file paths. Do not point them at directories.
+`NODE_DATA_PATH` must be a writable SQLite file path. Do not point it at a directory.
 
 For the shortest first run, you can either keep the public devnet defaults from `.env.example` or replace them with your own values.
 
@@ -159,12 +159,10 @@ If you want a fully local first run, set:
 - `NODE_DIRECT_PEERS=`
 - `NODE_DIRECT_PEER=`
 - `NODE_BOOTSTRAP_URL=`
-- `MINER_DIRECT_PEERS=node:18444`
-- `MINER_DIRECT_PEER=`
-- `MINER_BOOTSTRAP_URL=`
+- `MINING_NODE_URLS=http://node:8081`
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
 
-This starts an isolated local node/miner pair and avoids any external bootstrap dependency in the first-user path.
+This starts an isolated local node with a miner that immediately pulls templates from the local node HTTP API.
 
 If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=18444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it.
 
@@ -231,17 +229,15 @@ Service-specific discovery precedence:
 
 - `node` uses `NODE_DIRECT_PEERS`, `NODE_DIRECT_PEER`, and `NODE_BOOTSTRAP_URL` first
 - if those are unset, `node` falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`
-- `miner` uses `MINER_DIRECT_PEERS`, `MINER_DIRECT_PEER`, and `MINER_BOOTSTRAP_URL` first
-- if those are unset, `miner` falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`
-- if neither service-specific nor shared miner discovery is set, Docker Compose defaults `miner` to `node:18444`
+- `miner` uses `MINING_NODE_URLS` for node failover and does not participate in P2P discovery
 
 Recommended operator modes:
 
 - `node` + `miner` on the same host/compose
   - leave `NODE_DIRECT_PEERS=chipcoinprotocol.com:18444`
-  - leave `MINER_DIRECT_PEERS=node:18444`
+  - leave `MINING_NODE_URLS=http://node:8081`
 - miner-only host
-  - set `MINER_DIRECT_PEERS=chipcoinprotocol.com:18444` or `MINER_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
+  - set `MINING_NODE_URLS=https://api.chipcoinprotocol.com`
 - node-only follower host
   - set `NODE_DIRECT_PEERS=chipcoinprotocol.com:18444` or `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
   - leave miner-specific vars unused
@@ -414,7 +410,7 @@ Useful examples:
 
 ```bash
 chipcoin --network devnet --data /var/lib/chipcoin/data/node-devnet.sqlite3 tip
-chipcoin --network devnet --data /var/lib/chipcoin/data/miner-devnet.sqlite3 tip
+chipcoin --network devnet mine --node-url http://127.0.0.1:8081 --miner-address CHC...
 ```
 
 For practical operator diagnostics and recovery steps, use:

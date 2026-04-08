@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
 import logging
 import secrets
 import socket
+import threading
 from dataclasses import dataclass, field
-from urllib.error import URLError
-from urllib.request import Request, urlopen
+from wsgiref.simple_server import make_server
 
 from ..config import get_network_config
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
+from ..interfaces.http_api import HttpApiApp, ThreadingWSGIServer, load_allowed_origins_from_env
 from ..utils.logging import configure_logging
 from .p2p.errors import (
     BlockRequestStalledError,
@@ -81,8 +81,6 @@ class NodeRuntime:
     _SYNC_PROGRESS_LOG_INTERVAL = 100
     _SYNC_SCHEDULER_INTERVAL = 0.25
     _INITIAL_SYNC_STALL_GRACE_MULTIPLIER = 2.0
-    _LOCAL_PEER_SEED_RETRY_INTERVAL = 30.0
-    _MAX_LOCAL_PEER_SEED_IMPORTS = 8
     _SEVERE_MISBEHAVIOR_DELTA = 100
     _BLOCK_STALL_DISCONNECT_THRESHOLD = 2
 
@@ -98,10 +96,6 @@ class NodeRuntime:
         read_timeout: float = 15.0,
         write_timeout: float = 15.0,
         handshake_timeout: float = 5.0,
-        miner_address: str | None = None,
-        mining_nonce_batch_size: int = 50_000,
-        mining_idle_interval: float = 0.05,
-        mining_min_interval_seconds: float = 0.0,
         mempool_relay_interval: float = 0.25,
         max_connect_backoff_seconds: float = 30.0,
         max_consecutive_ping_failures: int = 3,
@@ -130,7 +124,8 @@ class NodeRuntime:
         misbehavior_ban_duration_seconds: int = 1800,
         misbehavior_decay_interval_seconds: int = 300,
         misbehavior_decay_step: int = 5,
-        local_peer_seed_url: str | None = None,
+        http_host: str | None = None,
+        http_port: int | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.service = service
@@ -141,10 +136,6 @@ class NodeRuntime:
         self.write_timeout = write_timeout
         self.handshake_timeout = handshake_timeout
         self.ping_interval = ping_interval if ping_interval < read_timeout else max(0.5, read_timeout / 2)
-        self.miner_address = miner_address
-        self.mining_nonce_batch_size = mining_nonce_batch_size
-        self.mining_idle_interval = mining_idle_interval
-        self.mining_min_interval_seconds = max(0.0, mining_min_interval_seconds)
         self.mempool_relay_interval = max(0.05, mempool_relay_interval)
         self.max_connect_backoff_seconds = max(1.0, max_connect_backoff_seconds)
         self.max_consecutive_ping_failures = max(1, max_consecutive_ping_failures)
@@ -179,13 +170,17 @@ class NodeRuntime:
         self.misbehavior_ban_duration_seconds = max(1, misbehavior_ban_duration_seconds)
         self.misbehavior_decay_interval_seconds = max(1, misbehavior_decay_interval_seconds)
         self.misbehavior_decay_step = max(1, misbehavior_decay_step)
-        self.local_peer_seed_url = None if local_peer_seed_url is None else local_peer_seed_url.rstrip("/")
+        self.http_host = http_host
+        self.http_port = http_port
         self.logger = logger or logging.getLogger("chipcoin.node.runtime")
         self.sync_manager = SyncManager(node=service)
         self.sync_manager.max_headers = max_headers_per_message
         self.node_id = secrets.token_hex(16)
 
         self._server: asyncio.AbstractServer | None = None
+        self._http_server = None
+        self._http_thread: threading.Thread | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._stop_event = asyncio.Event()
         self._tasks: set[asyncio.Task] = set()
@@ -198,14 +193,7 @@ class NodeRuntime:
         self._outbound_target_sources: dict[tuple[str, int], str] = {
             (peer.host, peer.port): "manual" for peer in (outbound_peers or [])
         }
-        self._mining_template_key: tuple[str | None, tuple[str, ...]] | None = None
-        self._mining_nonce_cursor = 0
-        self._mining_template = None
-        self._last_mined_monotonic: float | None = None
-        self._mining_wait_logged = False
-        self._initial_sync_required = False
         self._relayed_mempool_txids: set[str] = set()
-        self._last_local_peer_seed_attempt_at: float | None = None
 
     @property
     def bound_port(self) -> int:
@@ -215,20 +203,29 @@ class NodeRuntime:
             return self.listen_port
         return int(self._server.sockets[0].getsockname()[1])
 
+    @property
+    def http_bound_port(self) -> int | None:
+        """Return the active HTTP API port once started."""
+
+        if self._http_server is None:
+            return self.http_port
+        return int(self._http_server.server_port)
+
     async def start(self) -> None:
         """Start the runtime listener and background loops."""
 
         if self._running:
             return
         configure_logging()
+        self._event_loop = asyncio.get_running_loop()
         self._server = await asyncio.start_server(self._handle_inbound_connection, self.listen_host, self.listen_port)
+        self._start_http_api_server()
         self._running = True
         self.logger.info(
-            "runtime started network=%s listen=%s:%s miner=%s outbound_targets=%s ping_interval=%s read_timeout=%s",
+            "runtime started network=%s listen=%s:%s outbound_targets=%s ping_interval=%s read_timeout=%s",
             self.service.network,
             self.listen_host,
             self.bound_port,
-            self.miner_address,
             len(self._outbound_targets),
             self.ping_interval,
             self.read_timeout,
@@ -239,8 +236,6 @@ class NodeRuntime:
         self._purge_stale_persisted_peers()
         self._trim_peerbook_to_capacity()
         self._purge_persisted_startup_duplicate_aliases()
-        await self._seed_outbound_peers_from_local_node_if_needed()
-        self._initial_sync_required = self.miner_address is not None and bool(self._desired_outbound_peers())
         self._update_sync_status()
         self._stop_event.clear()
         self._spawn_task(self._connect_loop(), "connect-loop")
@@ -248,8 +243,6 @@ class NodeRuntime:
         self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop")
         if self.headers_sync_enabled:
             self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop")
-        if self.miner_address is not None:
-            self._spawn_task(self._mining_loop(), "mining-loop")
 
     async def stop(self) -> None:
         """Stop listener, background tasks, and active sessions."""
@@ -273,6 +266,13 @@ class NodeRuntime:
             except TimeoutError:
                 self.logger.warning("runtime stop timed out waiting for listener shutdown")
             self._server = None
+        if self._http_server is not None:
+            self._http_server.shutdown()
+            self._http_server.server_close()
+            if self._http_thread is not None:
+                self._http_thread.join(timeout=max(1.0, self.read_timeout))
+            self._http_server = None
+            self._http_thread = None
         sessions = list(self._sessions.keys())
         self.logger.info("runtime stopping close_sessions count=%s", len(sessions))
         for session in sessions:
@@ -292,6 +292,7 @@ class NodeRuntime:
         self._pending_outbound_peers.clear()
         self._relayed_mempool_txids.clear()
         self.service.set_runtime_sync_status(None)
+        self._event_loop = None
         self._stop_event.set()
         self.logger.info("runtime stopped network=%s", self.service.network)
 
@@ -310,7 +311,6 @@ class NodeRuntime:
 
         accepted = self.service.receive_transaction(transaction)
         self.logger.info("local tx accepted txid=%s fee_chipbits=%s", accepted.transaction.txid(), accepted.fee)
-        self._invalidate_mining_template()
         self._relayed_mempool_txids.add(accepted.transaction.txid())
         await self._broadcast_inventory(InventoryVector(object_type="tx", object_hash=accepted.transaction.txid()))
 
@@ -319,8 +319,90 @@ class NodeRuntime:
 
         self.service.apply_block(block)
         self.logger.info("local block applied height=%s hash=%s", self.service.chain_tip().height, block.block_hash())
-        self._invalidate_mining_template()
         await self._broadcast_inventory(InventoryVector(object_type="block", object_hash=block.block_hash()))
+
+    def _start_http_api_server(self) -> None:
+        """Start the runtime-owned HTTP API so submit paths share one authority."""
+
+        if self.http_host is None or self.http_port is None:
+            return
+        app = HttpApiApp(
+            self.service,
+            allowed_origins=load_allowed_origins_from_env(),
+            mining_submit_handler=self.submit_mined_block_from_http,
+            tx_submit_handler=self.submit_raw_transaction_from_http,
+        )
+        self._http_server = make_server(self.http_host, self.http_port, app, server_class=ThreadingWSGIServer)
+        self._http_thread = threading.Thread(target=self._http_server.serve_forever, daemon=True)
+        self._http_thread.start()
+        self.logger.info("http api started host=%s port=%s", self.http_host, self.http_bound_port)
+
+    def submit_mined_block_from_http(
+        self,
+        *,
+        template_id: str,
+        serialized_block_hex: str,
+        miner_id: str,
+    ) -> dict[str, object]:
+        """Route one mined block submit through the runtime acceptance path."""
+
+        if self._event_loop is None:
+            return {"accepted": False, "reason": "runtime_not_running", "block_hash": None, "became_tip": False}
+        future = asyncio.run_coroutine_threadsafe(
+            self._submit_mined_block_from_http(
+                template_id=template_id,
+                serialized_block_hex=serialized_block_hex,
+                miner_id=miner_id,
+            ),
+            self._event_loop,
+        )
+        return future.result(timeout=max(5.0, self.read_timeout))
+
+    def submit_raw_transaction_from_http(self, *, raw_hex: str) -> dict[str, object]:
+        """Route one raw transaction submit through the runtime acceptance path."""
+
+        if self._event_loop is None:
+            return {"accepted": False, "reason": "runtime_not_running", "txid": None, "fee": None}
+        future = asyncio.run_coroutine_threadsafe(
+            self._submit_raw_transaction_from_http(raw_hex=raw_hex),
+            self._event_loop,
+        )
+        return future.result(timeout=max(5.0, self.read_timeout))
+
+    async def _submit_mined_block_from_http(
+        self,
+        *,
+        template_id: str,
+        serialized_block_hex: str,
+        miner_id: str,
+    ) -> dict[str, object]:
+        """Validate one template submission and accept it through announce_block."""
+
+        prepared = self.service.prepare_mined_block_submission(
+            template_id=template_id,
+            serialized_block_hex=serialized_block_hex,
+            miner_id=miner_id,
+        )
+        if prepared.get("accepted") is False:
+            return prepared
+        block = prepared["block"]
+        try:
+            await self.announce_block(block)
+        except ValidationError as exc:
+            self.service.discard_mining_template(template_id)
+            return {"accepted": False, "reason": f"validation_error:{exc}", "block_hash": None, "became_tip": False}
+        self.service.discard_mining_template(template_id)
+        return {"accepted": True, "reason": "accepted", "block_hash": block.block_hash(), "became_tip": True}
+
+    async def _submit_raw_transaction_from_http(self, *, raw_hex: str) -> dict[str, object]:
+        """Decode and accept one raw transaction through the runtime relay path."""
+
+        transaction = self.service.decode_raw_transaction(raw_hex)
+        accepted = self.service.receive_transaction(transaction)
+        self.logger.info("local tx accepted txid=%s fee_chipbits=%s", accepted.transaction.txid(), accepted.fee)
+        self._relayed_mempool_txids.add(accepted.transaction.txid())
+        await self._broadcast_inventory(InventoryVector(object_type="tx", object_hash=accepted.transaction.txid()))
+        return {"accepted": True, "txid": accepted.transaction.txid(), "fee": accepted.fee}
 
     def connected_peer_count(self) -> int:
         """Return the number of active handshaken peer sessions."""
@@ -331,7 +413,6 @@ class NodeRuntime:
         """Keep outbound peer connections alive."""
 
         while self._running:
-            await self._seed_outbound_peers_from_local_node_if_needed()
             for peer in list(self._desired_outbound_peers()):
                 if self._has_active_endpoint(peer):
                     continue
@@ -775,7 +856,6 @@ class NodeRuntime:
                 result.reorged,
                 len(self._sessions.get(session).inflight_block_hashes) if self._sessions.get(session) is not None else 0,
             )
-            self._invalidate_mining_template()
             await self._broadcast_inventory(
                 InventoryVector(object_type="block", object_hash=result.block_hash),
                 exclude=session,
@@ -794,7 +874,6 @@ class NodeRuntime:
                 accepted.transaction.txid(),
                 accepted.fee,
             )
-            self._invalidate_mining_template()
             self._relayed_mempool_txids.add(accepted.transaction.txid())
             await self._broadcast_inventory(
                 InventoryVector(object_type="tx", object_hash=accepted.transaction.txid()),
@@ -1399,101 +1478,6 @@ class NodeRuntime:
             # Hostnames remain eligible; explicit configured peers are handled separately.
             return True
         return address.is_global
-
-    def _is_viable_outbound_candidate(self, peer: OutboundPeer) -> bool:
-        """Return whether one outbound peer is worth trying before local-node seeding fallback."""
-
-        info = self._known_peer_info(peer.host, peer.port)
-        if info is None:
-            return True
-        if self._is_peer_currently_banned(peer.host, peer.port):
-            return False
-        if info.score is not None and info.score <= -100:
-            return False
-        if info.backoff_until is not None and info.backoff_until > self.service.time_provider():
-            return False
-        return True
-
-    def _has_viable_outbound_candidates(self) -> bool:
-        """Return whether the current peerbook already offers viable outbound peers."""
-
-        return any(self._is_viable_outbound_candidate(peer) for peer in self._desired_outbound_peers())
-
-    async def _seed_outbound_peers_from_local_node_if_needed(self) -> None:
-        """Import reusable public peers from the local node when the miner peerbook is stale."""
-
-        if self.miner_address is None or not self.local_peer_seed_url:
-            return
-        if self._has_viable_outbound_candidates():
-            return
-        now = asyncio.get_running_loop().time()
-        if (
-            self._last_local_peer_seed_attempt_at is not None
-            and (now - self._last_local_peer_seed_attempt_at) < self._LOCAL_PEER_SEED_RETRY_INTERVAL
-        ):
-            return
-        self._last_local_peer_seed_attempt_at = now
-        self.logger.info("miner local peer seeding fallback triggered source=%s", self.local_peer_seed_url)
-        try:
-            candidates = await asyncio.to_thread(self._fetch_local_node_peer_candidates)
-        except Exception as exc:  # noqa: BLE001
-            self.logger.info("miner local peer seeding failed source=%s error=%s", self.local_peer_seed_url, exc)
-            return
-        imported = self._import_local_node_peer_candidates(candidates)
-        if imported == 0:
-            self.logger.info("miner local peer seeding yielded no reusable peers source=%s", self.local_peer_seed_url)
-
-    def _import_local_node_peer_candidates(self, candidates: list[OutboundPeer]) -> int:
-        """Persist one filtered batch of peer candidates learned from the local node."""
-
-        imported = 0
-        for candidate in candidates:
-            if self._is_local_listener_alias(candidate):
-                continue
-            if not self._is_announced_peer_dialable(candidate):
-                continue
-            if self._is_known_peer_alias(candidate):
-                continue
-            self.service.add_peer(candidate.host, candidate.port, source="seed")
-            imported += 1
-            self.logger.info("miner seeded peer imported peer=%s:%s source=%s", candidate.host, candidate.port, self.local_peer_seed_url)
-        return imported
-
-    def _fetch_local_node_peer_candidates(self) -> list[OutboundPeer]:
-        """Fetch reusable public peer candidates from the local node HTTP API."""
-
-        request = Request(f"{self.local_peer_seed_url}/v1/peers", headers={"Accept": "application/json"})
-        with urlopen(request, timeout=max(1.0, self.read_timeout)) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, list):
-            return []
-        candidates: list[OutboundPeer] = []
-        now = self.service.time_provider()
-        for row in payload:
-            if not isinstance(row, dict):
-                continue
-            host = row.get("host")
-            port = row.get("port")
-            direction = row.get("direction")
-            score = row.get("score")
-            backoff_until = row.get("backoff_until")
-            banned = row.get("banned")
-            if not isinstance(host, str) or not host:
-                continue
-            if not isinstance(port, int) or port <= 0:
-                continue
-            if direction == "inbound":
-                continue
-            if banned is True:
-                continue
-            if isinstance(score, int) and score <= -100:
-                continue
-            if isinstance(backoff_until, int) and backoff_until > now:
-                continue
-            candidates.append(OutboundPeer(host, port))
-            if len(candidates) >= self._MAX_LOCAL_PEER_SEED_IMPORTS:
-                break
-        return candidates
 
     def _canonicalize_reusable_inbound_endpoint(
         self,
@@ -2279,114 +2263,6 @@ class NodeRuntime:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task
-
-    async def _mining_loop(self) -> None:
-        """Continuously mine blocks on the latest local template."""
-
-        assert self.miner_address is not None
-        while self._running:
-            if not self._mining_ready_for_work():
-                await asyncio.sleep(self.mining_idle_interval)
-                continue
-            await self._wait_for_next_mining_slot()
-            template = self._refresh_mining_template()
-            if template is None:
-                await asyncio.sleep(self.mining_idle_interval)
-                continue
-            mined_block = self.service.mining.mine_block(
-                template,
-                start_nonce=self._mining_nonce_cursor,
-                max_nonce_attempts=self.mining_nonce_batch_size,
-            )
-            self._mining_nonce_cursor += self.mining_nonce_batch_size
-            if mined_block is not None:
-                self.logger.info(
-                    "mined block height=%s hash=%s txs=%s",
-                    template.height,
-                    mined_block.block_hash(),
-                    len(mined_block.transactions),
-                )
-                await self.announce_block(mined_block)
-                self._last_mined_monotonic = asyncio.get_running_loop().time()
-                self._invalidate_mining_template()
-            await asyncio.sleep(0)
-
-    def _refresh_mining_template(self):
-        """Rebuild the mining template when chain tip or mempool contents changed."""
-
-        if self.miner_address is None:
-            return None
-        tip = self.service.chain_tip()
-        mempool_txids = tuple(transaction.txid() for transaction in self.service.list_mempool_transactions())
-        template_key = (None if tip is None else tip.block_hash, mempool_txids)
-        if self._mining_template is None or template_key != self._mining_template_key:
-            self._mining_template = self.service.build_candidate_block(self.miner_address)
-            self._mining_template_key = template_key
-            self._mining_nonce_cursor = 0
-        return self._mining_template
-
-    def _mining_ready_for_work(self) -> bool:
-        """Return whether the miner should start or resume local mining."""
-
-        if self.miner_address is None:
-            return False
-
-        local_tip = self.service.chain_tip()
-        local_height = -1 if local_tip is None else local_tip.height
-        active_remote_heights = [
-            remote.start_height
-            for protocol in self._sessions
-            if protocol.state.handshake_complete and not protocol.state.closed
-            for remote in [protocol.state.remote_version]
-            if remote is not None
-        ]
-
-        if self._initial_sync_required and not active_remote_heights:
-            if not self._mining_wait_logged:
-                self.logger.info("mining paused reason=awaiting_initial_peer_sync local_height=%s", local_height)
-                self._mining_wait_logged = True
-            return False
-
-        max_remote_height = max(active_remote_heights, default=local_height)
-        sync_snapshot = self.sync_manager.sync_status()
-        if (
-            local_tip is None
-            and max_remote_height == 0
-            and int(sync_snapshot.get("missing_block_count", 0)) == 0
-            and sync_snapshot.get("best_header_hash") is None
-        ):
-            max_remote_height = local_height
-        if max_remote_height > local_height:
-            if not self._mining_wait_logged:
-                self.logger.info(
-                    "mining paused reason=chain_not_synced local_height=%s remote_height=%s",
-                    local_height,
-                    max_remote_height,
-                )
-                self._mining_wait_logged = True
-            return False
-
-        if self._mining_wait_logged:
-            self.logger.info("mining resumed local_height=%s remote_height=%s", local_height, max_remote_height)
-            self._mining_wait_logged = False
-        return True
-
-    def _invalidate_mining_template(self) -> None:
-        """Drop the current mining template so the next loop rebuilds it."""
-
-        self._mining_template = None
-        self._mining_template_key = None
-        self._mining_nonce_cursor = 0
-
-    async def _wait_for_next_mining_slot(self) -> None:
-        """Optionally pace local mining for demo or test environments."""
-
-        if self.mining_min_interval_seconds <= 0 or self._last_mined_monotonic is None:
-            return
-        elapsed = asyncio.get_running_loop().time() - self._last_mined_monotonic
-        remaining = self.mining_min_interval_seconds - elapsed
-        if remaining > 0:
-            await asyncio.sleep(remaining)
 
     def _session_endpoint(self, session: PeerProtocol, handle: SessionHandle | None = None) -> PeerEndpoint | None:
         """Return the best-known remote endpoint for a session."""

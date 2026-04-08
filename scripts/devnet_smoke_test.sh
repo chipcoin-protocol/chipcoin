@@ -164,10 +164,10 @@ fi
 
 step mining_progress
 if miner_status_json=$(wait_json \
-  "docker compose exec -T miner chipcoin --network devnet --data /data/miner-devnet.sqlite3 status" \
+  "docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 status" \
   'isinstance(data["height"], int) and data["height"] >= 12' \
   120 1); then
-  show_json_info "status miner" "$miner_status_json" '{"height": data["height"], "peers": data["peer_count"], "handshaken_peers": data["handshaken_peer_count"], "mempool_size": data["mempool_size"], "tip_hash": data["tip_hash"]}'
+  show_json_info "status node-a after miner work" "$miner_status_json" '{"height": data["height"], "peers": data["peer_count"], "handshaken_peers": data["handshaken_peer_count"], "mempool_size": data["mempool_size"], "tip_hash": data["tip_hash"]}'
   pass mining_progress
 else
   fail mining_progress
@@ -176,6 +176,8 @@ fi
 step miner_wallet_import
 show_cmd "docker compose exec -T miner chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex <redacted>"
 miner_import_json=$(docker compose exec -T miner chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex "$MINER_PRIVATE_KEY_HEX") || fail miner_wallet_import
+show_cmd "docker compose exec -T node-a chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex <redacted>"
+docker compose exec -T node-a chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex "$MINER_PRIVATE_KEY_HEX" >/dev/null || fail miner_wallet_import
 info "wallet miner address=$MINER_ADDRESS"
 if printf '%s' "$miner_import_json" | json_eval 'data["address"] == "'"$MINER_ADDRESS"'"'; then
   pass miner_wallet_import
@@ -184,7 +186,7 @@ else
 fi
 
 step miner_spendable_balance
-miner_balance_cmd="docker compose exec -T miner chipcoin --network devnet --data /data/miner-devnet.sqlite3 wallet-balance --wallet-file /data/miner-wallet.json"
+miner_balance_cmd="docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 wallet-balance --wallet-file /data/miner-wallet.json"
 if miner_balance_json=$(wait_json \
   "$miner_balance_cmd" \
   'data["address"] == "'"$MINER_ADDRESS"'" and data["spendable_balance_chipbits"] >= '"$((TX_AMOUNT_CHIPBITS + TX_FEE_CHIPBITS))" \
@@ -218,17 +220,14 @@ else
 fi
 
 step tx_submit
-show_cmd "docker compose stop miner"
-docker compose stop miner >/dev/null
-
-show_cmd "docker compose run --rm --no-deps -T miner chipcoin --network devnet --data /data/miner-devnet.sqlite3 wallet-build --wallet-file /data/miner-wallet.json --to $RECIPIENT_ADDRESS --amount $TX_AMOUNT_CHIPBITS --fee $TX_FEE_CHIPBITS"
-tx_build_json=$(docker compose run --rm --no-deps -T miner chipcoin --network devnet --data /data/miner-devnet.sqlite3 wallet-build --wallet-file /data/miner-wallet.json --to "$RECIPIENT_ADDRESS" --amount "$TX_AMOUNT_CHIPBITS" --fee "$TX_FEE_CHIPBITS") || fail tx_submit
+show_cmd "docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 wallet-build --wallet-file /data/miner-wallet.json --to $RECIPIENT_ADDRESS --amount $TX_AMOUNT_CHIPBITS --fee $TX_FEE_CHIPBITS"
+tx_build_json=$(docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 wallet-build --wallet-file /data/miner-wallet.json --to "$RECIPIENT_ADDRESS" --amount "$TX_AMOUNT_CHIPBITS" --fee "$TX_FEE_CHIPBITS") || fail tx_submit
 TXID=$(printf '%s' "$tx_build_json" | json_extract 'data["txid"]')
 RAW_TX_HEX=$(printf '%s' "$tx_build_json" | json_extract 'data["raw_hex"]')
-show_cmd "python3 <send_raw_tx_p2p> 127.0.0.1 18444 <raw_hex>"
-send_raw_tx_p2p "127.0.0.1" "18444" "$RAW_TX_HEX" "devnet" || fail tx_submit
+show_cmd "docker compose exec -T node-a chipcoin submit-raw-tx --node-url http://127.0.0.1:8081 <raw_hex>"
+docker compose exec -T node-a chipcoin submit-raw-tx --node-url "http://127.0.0.1:8081" "$RAW_TX_HEX" >/dev/null || fail tx_submit
 info "tx txid=$TXID fee_chipbits=$(printf '%s' "$tx_build_json" | json_extract 'data["fee_chipbits"]') change_chipbits=$(printf '%s' "$tx_build_json" | json_extract 'data["change_chipbits"]')"
-info "tx submit sent=True mode=p2p_raw"
+info "tx submit sent=True mode=http_runtime"
 if printf '%s' "$tx_build_json" | json_eval 'len(data["raw_hex"]) > 0 and data["txid"] == "'"$TXID"'"'; then
   pass tx_submit
 else
@@ -266,21 +265,6 @@ else
 fi
 
 step tx_confirmed
-show_cmd "docker compose start miner"
-docker compose start miner >/dev/null
-
-if ! wait_json \
-  "docker compose exec -T miner chipcoin --network devnet --data /data/miner-devnet.sqlite3 list-peers" \
-  'len(data) >= 1 and any(peer["handshake_complete"] is True for peer in data)' \
-  30 1 >/dev/null; then
-  fail tx_confirmed
-fi
-
-show_cmd "python3 <send_raw_tx_p2p> 127.0.0.1 18446 <raw_hex>"
-if ! send_raw_tx_p2p "127.0.0.1" "18446" "$RAW_TX_HEX" "devnet"; then
-  fail tx_confirmed
-fi
-
 if wait_json \
   "docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 tx $TXID" \
   'data["location"] == "chain"' \
@@ -290,8 +274,8 @@ if wait_json \
   'data["confirmed_balance_chipbits"] == '"$TX_AMOUNT_CHIPBITS"' and data["spendable_balance_chipbits"] == '"$TX_AMOUNT_CHIPBITS"'' \
   60 1); then
   info "balance destinatario confirmed_chipbits=$(printf '%s' "$recipient_balance_json" | json_extract 'data["confirmed_balance_chipbits"]') spendable_chipbits=$(printf '%s' "$recipient_balance_json" | json_extract 'data["spendable_balance_chipbits"]')"
-  show_cmd "docker compose exec -T miner chipcoin --network devnet --data /data/miner-devnet.sqlite3 wallet-balance --wallet-file /data/miner-wallet.json"
-  miner_post_tx_balance_json=$(docker compose exec -T miner chipcoin --network devnet --data /data/miner-devnet.sqlite3 wallet-balance --wallet-file /data/miner-wallet.json) || fail tx_confirmed
+  show_cmd "docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 wallet-balance --wallet-file /data/miner-wallet.json"
+  miner_post_tx_balance_json=$(docker compose exec -T node-a chipcoin --network devnet --data /data/node-a-devnet.sqlite3 wallet-balance --wallet-file /data/miner-wallet.json) || fail tx_confirmed
   info "balance miner post-tx confirmed_chipbits=$(printf '%s' "$miner_post_tx_balance_json" | json_extract 'data["confirmed_balance_chipbits"]') spendable_chipbits=$(printf '%s' "$miner_post_tx_balance_json" | json_extract 'data["spendable_balance_chipbits"]')"
   pass tx_confirmed
 else
