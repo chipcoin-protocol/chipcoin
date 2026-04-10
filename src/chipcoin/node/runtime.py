@@ -1215,7 +1215,7 @@ class NodeRuntime:
         peers: list[dict[str, object]] = []
         for handle in self._sessions.values():
             protocol = handle.protocol
-            if not protocol.handshake_complete:
+            if protocol.state.closed or not protocol.state.handshake_complete:
                 continue
             if not handle.headers_sync_active and not handle.inflight_block_hashes and handle.sync_target_height is None:
                 continue
