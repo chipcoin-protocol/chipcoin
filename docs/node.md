@@ -80,7 +80,24 @@ Relevant `.env` keys:
 - `PEER_MISBEHAVIOR_DECAY_INTERVAL_SECONDS`
 - `PEER_MISBEHAVIOR_DECAY_STEP`
 
-Snapshot bootstrap is CLI-driven, not environment-driven.
+Snapshot bootstrap is installation-time and CLI-driven, not runtime environment-driven.
+
+Snapshot-related wizard `.env` keys are kept for:
+
+- wizard input
+- audit/debug visibility
+
+They are not consumed by the running node container.
+
+At runtime, the node relies only on:
+
+- the SQLite database mounted from `NODE_DATA_PATH`
+- normal node networking/runtime environment
+
+Re-bootstrap is therefore an installation or maintenance action, not a startup behavior:
+
+- rerun the setup wizard
+- or replace the node DB manually before starting the container
 
 Supported node bootstrap modes:
 
