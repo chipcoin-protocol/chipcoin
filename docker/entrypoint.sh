@@ -169,10 +169,14 @@ import os
 import time
 from importlib import metadata
 
+from chipcoin import __version__
 from chipcoin.interfaces.seed_client import SeedClient
 
 client = SeedClient(os.environ["BOOTSTRAP_URL_VALUE"])
-version = metadata.version("chipcoin")
+try:
+    version = metadata.version("chipcoin")
+except metadata.PackageNotFoundError:
+    version = __version__
 client.announce(
     host=os.environ["NODE_PUBLIC_HOST_VALUE"],
     port=int(os.environ["NODE_PUBLIC_P2P_PORT_VALUE"]),
