@@ -221,7 +221,6 @@ run_node() {
   ensure_sqlite_file /runtime/node.sqlite3 "Node SQLite"
   configure_discovery_env_for_role node
   log "Starting node network=${CHIPCOIN_NETWORK} p2p_port=${NODE_P2P_BIND_PORT} http_port=${NODE_HTTP_BIND_PORT} node_wallet_runtime=not_used_in_phase_1"
-  log "Node discovery inputs direct_peers=${DIRECT_PEERS:-} direct_peer=${DIRECT_PEER:-} bootstrap_url=${BOOTSTRAP_URL:-} peer_discovery_enabled=${PEER_DISCOVERY_ENABLED:-true}"
 
   local -a peer_args=()
   local startup_peer_count=0
@@ -229,7 +228,6 @@ run_node() {
   RESOLVED_PEERS=""
   if resolve_peers; then
     peers="$RESOLVED_PEERS"
-    log "Node discovery resolved source=${DISCOVERY_SOURCE:-manual} peers=$(printf '%s' "$peers" | tr '\n' ',' | sed 's/,$//')"
     while IFS= read -r peer; do
       [[ -n "$peer" ]] || continue
       peer_args+=(--peer "$peer")
