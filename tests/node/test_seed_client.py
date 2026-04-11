@@ -32,11 +32,13 @@ def test_seed_client_lists_peers_and_announces() -> None:
                     "peers": [
                         {
                             "host": "127.0.0.1",
-                            "port": 8333,
+                            "p2p_port": 8333,
                             "network": "mainnet",
-                            "node_id": "node-1",
-                            "version": "0.1.0",
+                            "first_seen": 90,
                             "last_seen": 100,
+                            "source": "announce",
+                            "software_version": "0.1.0",
+                            "node_id": "node-1",
                         }
                     ],
                 }
@@ -46,10 +48,12 @@ def test_seed_client_lists_peers_and_announces() -> None:
                 "accepted": True,
                 "peer": {
                     "host": "127.0.0.1",
-                    "port": 8333,
+                    "p2p_port": 8333,
                     "network": "mainnet",
+                    "first_seen": 90,
+                    "source": "announce",
+                    "software_version": "0.1.0",
                     "node_id": "node-1",
-                    "version": "0.1.0",
                     "last_seen": 101,
                 },
             }
@@ -63,16 +67,17 @@ def test_seed_client_lists_peers_and_announces() -> None:
         peers = client.list_peers("mainnet")
         announced = client.announce(
             host="127.0.0.1",
-            port=8333,
+            p2p_port=8333,
             network="mainnet",
             node_id="node-1",
-            version="0.1.0",
+            software_version="0.1.0",
             last_seen=101,
         )
     finally:
         seed_client_module.urlopen = original_urlopen
 
     assert peers[0].node_id == "node-1"
+    assert peers[0].port == 8333
     assert announced.last_seen == 101
     assert requests[0][0] == "GET"
     assert requests[1][0] == "GET"
