@@ -15,7 +15,6 @@ from ..config import get_network_config
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..interfaces.http_api import HttpApiApp, ThreadingWSGIServer, load_allowed_origins_from_env
 from ..utils.logging import configure_logging
-from .discovery import BootstrapDiscoveryConfig, DiscoveryService
 from .p2p.errors import (
     BlockRequestStalledError,
     DuplicateConnectionError,
@@ -109,12 +108,6 @@ class NodeRuntime:
         block_request_timeout_seconds: float = 10.0,
         headers_sync_parallel_peers: int = 2,
         headers_sync_start_height_gap_threshold: int = 1,
-        bootstrap_urls: tuple[str, ...] = (),
-        bootstrap_refresh_interval_seconds: float = 300.0,
-        bootstrap_peer_limit: int = 4,
-        bootstrap_announce_enabled: bool = True,
-        bootstrap_public_host: str | None = None,
-        bootstrap_public_p2p_port: int | None = None,
         duplicate_inventory_limit: int = 20,
         peer_discovery_enabled: bool = True,
         peerbook_max_size: int = 1024,
@@ -155,12 +148,6 @@ class NodeRuntime:
         self.block_request_timeout_seconds = max(1.0, block_request_timeout_seconds)
         self.headers_sync_parallel_peers = max(1, headers_sync_parallel_peers)
         self.headers_sync_start_height_gap_threshold = max(0, headers_sync_start_height_gap_threshold)
-        self.bootstrap_urls = tuple(bootstrap_urls)
-        self.bootstrap_refresh_interval_seconds = max(30.0, bootstrap_refresh_interval_seconds)
-        self.bootstrap_peer_limit = max(1, bootstrap_peer_limit)
-        self.bootstrap_announce_enabled = bootstrap_announce_enabled
-        self.bootstrap_public_host = None if bootstrap_public_host in {None, ""} else bootstrap_public_host
-        self.bootstrap_public_p2p_port = listen_port if bootstrap_public_p2p_port is None else int(bootstrap_public_p2p_port)
         self.duplicate_inventory_limit = duplicate_inventory_limit
         self.peer_discovery_enabled = peer_discovery_enabled
         self.peerbook_max_size = max(16, peerbook_max_size)
@@ -208,22 +195,6 @@ class NodeRuntime:
         }
         self._relayed_mempool_txids: set[str] = set()
         self._last_logged_sync_phase: str | None = None
-        self._bootstrap_discovery = (
-            None
-            if not self.bootstrap_urls
-            else DiscoveryService(
-                BootstrapDiscoveryConfig(
-                    urls=self.bootstrap_urls,
-                    network=self.service.network,
-                    peer_limit=self.bootstrap_peer_limit,
-                    refresh_interval_seconds=self.bootstrap_refresh_interval_seconds,
-                    announce_enabled=self.bootstrap_announce_enabled and self.bootstrap_public_host is not None,
-                    public_host=self.bootstrap_public_host,
-                    public_p2p_port=self.bootstrap_public_p2p_port,
-                ),
-                logger=logging.getLogger("chipcoin.node.bootstrap"),
-            )
-        )
 
     @property
     def bound_port(self) -> int:
@@ -274,8 +245,6 @@ class NodeRuntime:
         self._spawn_task(self._connect_loop(), "connect-loop")
         self._spawn_task(self._ping_loop(), "ping-loop")
         self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop")
-        if self._bootstrap_discovery is not None:
-            self._spawn_task(self._bootstrap_discovery_loop(), "bootstrap-discovery-loop")
         if self.headers_sync_enabled:
             self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop")
 
@@ -510,64 +479,6 @@ class NodeRuntime:
                     await session.close(reason=str(exc), error=exc)
                     await self._drop_session(session)
             await asyncio.sleep(self.ping_interval)
-
-    async def _bootstrap_discovery_loop(self) -> None:
-        """Refresh optional bootstrap seeds without blocking startup."""
-
-        while self._running:
-            try:
-                await asyncio.to_thread(self._bootstrap_discovery_cycle)
-            except Exception as exc:
-                self.logger.warning("bootstrap discovery cycle failed error=%s", exc)
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.bootstrap_refresh_interval_seconds)
-                return
-            except asyncio.TimeoutError:
-                continue
-
-    def _bootstrap_discovery_cycle(self) -> None:
-        """Fetch peer hints and announce this node when configured."""
-
-        if self._bootstrap_discovery is None:
-            return
-        discovered = self._bootstrap_discovery.discover()
-        accepted = 0
-        for peer in discovered:
-            if self._add_bootstrap_peer(peer):
-                accepted += 1
-        if discovered:
-            self.logger.info(
-                "bootstrap discovery refreshed urls=%s returned=%s accepted=%s",
-                len(self.bootstrap_urls),
-                len(discovered),
-                accepted,
-            )
-        if self.bootstrap_public_host is None:
-            return
-        tip = self.service.chain_tip()
-        self._bootstrap_discovery.announce(
-            host=self.bootstrap_public_host,
-            p2p_port=self.bootstrap_public_p2p_port,
-            node_id=self.node_id,
-            height=None if tip is None else tip.height,
-            now=self.service.time_provider(),
-        )
-
-    def _add_bootstrap_peer(self, peer) -> bool:
-        """Validate and persist one peer candidate returned by bootstrap seeds."""
-
-        candidate = self._canonicalize_announced_peer_endpoint(OutboundPeer(peer.host, peer.p2p_port))
-        if candidate is None:
-            return False
-        if self._is_local_listener_alias(candidate) or self._is_configured_public_self(candidate):
-            return False
-        if self._is_known_peer_alias(candidate):
-            return False
-        self._outbound_targets.setdefault((candidate.host, candidate.port), candidate)
-        self._outbound_target_sources[(candidate.host, candidate.port)] = "seed"
-        self.service.add_peer(candidate.host, candidate.port, source="seed")
-        self._trim_peerbook_to_capacity()
-        return True
 
     async def _handle_inbound_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Accept and start an inbound peer session."""
@@ -2156,16 +2067,6 @@ class NodeRuntime:
         except OSError:
             return False
         return bool(peer_ips & self._local_listener_ips())
-
-    def _is_configured_public_self(self, peer: OutboundPeer) -> bool:
-        """Return whether one endpoint matches the configured public listener address."""
-
-        if self.bootstrap_public_host is None:
-            return False
-        return self._peers_equivalent(
-            OutboundPeer(self.bootstrap_public_host, self.bootstrap_public_p2p_port),
-            peer,
-        )
 
     def _local_listener_ips(self) -> set[str]:
         """Return routable IPs that identify this process as a local listener."""

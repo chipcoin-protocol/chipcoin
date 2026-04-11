@@ -18,7 +18,6 @@ from ..crypto.keys import parse_private_key_hex, serialize_private_key_hex, seri
 from ..miner.config import MinerWorkerConfig
 from ..miner.worker import MinerWorker
 from ..node.messages import MessageEnvelope, TransactionMessage
-from ..node.discovery import parse_bootstrap_urls
 from ..node.p2p.protocol import LocalPeerIdentity, PeerProtocol
 from ..node.service import NodeService
 from ..node.runtime import NodeRuntime, OutboundPeer
@@ -554,12 +553,6 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--snapshot-trusted-keys-file", action="append", default=[], help="Path to a text or JSON file containing trusted Ed25519 signer public keys.")
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
     run_parser.add_argument("--peer-source", choices=("manual", "seed"), default="manual")
-    run_parser.add_argument("--bootstrap-url", action="append", default=[], help="Bootstrap discovery base URL. Repeat the flag to configure fallback sources.")
-    run_parser.add_argument("--bootstrap-refresh-interval-seconds", type=float, default=300.0)
-    run_parser.add_argument("--bootstrap-peer-limit", type=int, default=4)
-    run_parser.add_argument("--bootstrap-announce-enabled", type=_parse_bool, default=True)
-    run_parser.add_argument("--public-host", default=None, help="Publicly reachable host name or IP to announce to bootstrap discovery services.")
-    run_parser.add_argument("--public-p2p-port", type=int, default=None, help="Public P2P port announced to bootstrap discovery services.")
     run_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
     run_parser.add_argument("--ping-interval-seconds", type=float, default=2.0)
     run_parser.add_argument("--read-timeout-seconds", type=float, default=15.0)
@@ -873,7 +866,6 @@ async def _run_runtime(service: NodeService, args) -> None:
     """Run the persistent node runtime."""
 
     peers = [_parse_peer(peer) for peer in args.peer]
-    bootstrap_urls = parse_bootstrap_urls(getattr(args, "bootstrap_url", []))
     _emit_runtime_warnings(service, args, peers)
     network_config = get_network_config(service.network)
     runtime = NodeRuntime(
@@ -901,12 +893,6 @@ async def _run_runtime(service: NodeService, args) -> None:
         block_request_timeout_seconds=getattr(args, "block_request_timeout_seconds", 15.0),
         headers_sync_parallel_peers=getattr(args, "headers_sync_parallel_peers", 2),
         headers_sync_start_height_gap_threshold=getattr(args, "headers_sync_start_height_gap_threshold", 1),
-        bootstrap_urls=bootstrap_urls,
-        bootstrap_refresh_interval_seconds=float(getattr(args, "bootstrap_refresh_interval_seconds", 300.0)),
-        bootstrap_peer_limit=int(getattr(args, "bootstrap_peer_limit", 4)),
-        bootstrap_announce_enabled=bool(getattr(args, "bootstrap_announce_enabled", True)),
-        bootstrap_public_host=getattr(args, "public_host", None),
-        bootstrap_public_p2p_port=getattr(args, "public_p2p_port", None),
         misbehavior_warning_threshold=getattr(args, "misbehavior_warning_threshold", 25),
         misbehavior_disconnect_threshold=getattr(args, "misbehavior_disconnect_threshold", 50),
         misbehavior_ban_threshold=getattr(args, "misbehavior_ban_threshold", 100),
@@ -936,17 +922,12 @@ def _emit_runtime_warnings(service: NodeService, args, peers: list[OutboundPeer]
 
     logger = logging.getLogger("chipcoin.runtime.config")
     peer_discovery_enabled = bool(getattr(args, "peer_discovery_enabled", True))
-    bootstrap_urls = parse_bootstrap_urls(getattr(args, "bootstrap_url", []))
     persisted_peers = service.list_peers()
     if not peer_discovery_enabled and not peers and not persisted_peers:
         logger.warning("startup warning: peer discovery is disabled and no peers are configured; runtime will stay isolated")
-    elif not peers and not persisted_peers and not bootstrap_urls:
+    elif not peers and not persisted_peers:
         logger.warning(
             "startup warning: no configured peers and empty peerbook; runtime will wait for inbound peers or later discovery"
-        )
-    if bootstrap_urls and getattr(args, "public_host", None) in {None, ""}:
-        logger.warning(
-            "startup warning: bootstrap discovery is configured without --public-host; this node will fetch peers but will not announce itself"
         )
 
     block_request_timeout_seconds = float(getattr(args, "block_request_timeout_seconds", 15.0))

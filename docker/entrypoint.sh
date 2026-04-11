@@ -98,8 +98,6 @@ configure_discovery_env_for_role() {
       DIRECT_PEERS="$(role_discovery_value NODE_DIRECT_PEERS DIRECT_PEERS)"
       export DIRECT_PEER
       DIRECT_PEER="$(role_discovery_value NODE_DIRECT_PEER DIRECT_PEER)"
-      export BOOTSTRAP_URLS
-      BOOTSTRAP_URLS="$(role_discovery_value NODE_BOOTSTRAP_URLS BOOTSTRAP_URLS)"
       export BOOTSTRAP_URL
       BOOTSTRAP_URL="$(role_discovery_value NODE_BOOTSTRAP_URL BOOTSTRAP_URL)"
       ;;
@@ -127,6 +125,30 @@ resolve_peers() {
     fi
   else
     return 1
+  fi
+
+  if [[ -n "${BOOTSTRAP_URL:-}" ]]; then
+    if peers=$(BOOTSTRAP_URL="$BOOTSTRAP_URL" CHIPCOIN_NETWORK="$CHIPCOIN_NETWORK" BOOTSTRAP_PEER_LIMIT="${BOOTSTRAP_PEER_LIMIT:-4}" python3 - <<'PY'
+import os
+
+from chipcoin.interfaces.seed_client import SeedClient
+
+base_url = os.environ["BOOTSTRAP_URL"]
+network = os.environ["CHIPCOIN_NETWORK"]
+peer_limit = max(1, int(os.environ.get("BOOTSTRAP_PEER_LIMIT", "4")))
+client = SeedClient(base_url)
+peers = client.list_peers(network)
+if not peers:
+    raise SystemExit(1)
+for peer in peers[:peer_limit]:
+    print(f"{peer.host}:{peer.port}")
+PY
+); then
+      DISCOVERY_SOURCE="seed"
+      printf '%s\n' "$peers"
+      return 0
+    fi
+    warn "Bootstrap discovery failed or returned no peers. Starting isolated."
   fi
 
   return 1
@@ -211,12 +233,7 @@ run_node() {
     peer_args+=(--peer-source "${DISCOVERY_SOURCE:-manual}")
     log "Node discovery target=${DISCOVERY_SOURCE:-manual}:${startup_peer_count}_peer(s)"
   else
-    local bootstrap_urls="${BOOTSTRAP_URLS:-${BOOTSTRAP_URL:-}}"
-    if [[ -n "$bootstrap_urls" ]]; then
-      log "Node discovery target=bootstrap:configured"
-    else
-      log "Node discovery target=isolated"
-    fi
+    log "Node discovery target=isolated"
     if [[ "${PEER_DISCOVERY_ENABLED:-true}" != "true" && "${PEER_DISCOVERY_ENABLED:-true}" != "1" ]]; then
       warn "Peer discovery is disabled and no startup peer was found. Node will remain isolated until you add peers manually."
     else
@@ -233,20 +250,6 @@ run_node() {
     warn "BLOCK_DOWNLOAD_WINDOW_SIZE=${BLOCK_DOWNLOAD_WINDOW_SIZE:-128} is below BLOCK_MAX_INFLIGHT_PER_PEER=${BLOCK_MAX_INFLIGHT_PER_PEER:-16}; effective throughput will be reduced."
   fi
 
-  local -a bootstrap_args=()
-  if [[ -n "${BOOTSTRAP_URLS:-}" ]]; then
-    bootstrap_args+=(--bootstrap-url "${BOOTSTRAP_URLS}")
-  fi
-  if [[ -n "${BOOTSTRAP_URL:-}" ]]; then
-    bootstrap_args+=(--bootstrap-url "${BOOTSTRAP_URL}")
-  fi
-  if [[ -n "${NODE_PUBLIC_HOST:-}" ]]; then
-    bootstrap_args+=(--public-host "${NODE_PUBLIC_HOST}")
-  fi
-  if [[ -n "${NODE_PUBLIC_P2P_PORT:-}" ]]; then
-    bootstrap_args+=(--public-p2p-port "${NODE_PUBLIC_P2P_PORT}")
-  fi
-
   exec chipcoin \
     --network "${CHIPCOIN_NETWORK}" \
     --log-level "${NODE_LOG_LEVEL}" \
@@ -260,10 +263,6 @@ run_node() {
     --read-timeout-seconds "${P2P_READ_TIMEOUT_SECONDS:-15.0}" \
     --write-timeout-seconds "${P2P_WRITE_TIMEOUT_SECONDS:-15.0}" \
     --handshake-timeout-seconds "${P2P_HANDSHAKE_TIMEOUT_SECONDS:-5.0}" \
-    "${bootstrap_args[@]}" \
-    --bootstrap-refresh-interval-seconds "${BOOTSTRAP_REFRESH_INTERVAL_SECONDS:-300}" \
-    --bootstrap-peer-limit "${BOOTSTRAP_PEER_LIMIT:-4}" \
-    --bootstrap-announce-enabled "${BOOTSTRAP_ANNOUNCE_ENABLED:-true}" \
     --peer-discovery-enabled "${PEER_DISCOVERY_ENABLED:-true}" \
     --peerbook-max-size "${PEERBOOK_MAX_SIZE:-1024}" \
     --peer-addr-max-per-message "${PEER_ADDR_MAX_PER_MESSAGE:-250}" \

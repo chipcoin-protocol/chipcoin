@@ -155,11 +155,9 @@ If you want a fully local first run, set:
 
 - `DIRECT_PEERS=`
 - `DIRECT_PEER=`
-- `BOOTSTRAP_URLS=`
 - `BOOTSTRAP_URL=`
 - `NODE_DIRECT_PEERS=`
 - `NODE_DIRECT_PEER=`
-- `NODE_BOOTSTRAP_URLS=`
 - `NODE_BOOTSTRAP_URL=`
 - `MINING_NODE_URLS=http://node:8081`
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
@@ -279,22 +277,9 @@ For clean installs, prefer `DIRECT_PEERS` with two or more known-good `host:port
 
 Service-specific discovery precedence:
 
-- `node` uses `NODE_DIRECT_PEERS`, `NODE_DIRECT_PEER`, `NODE_BOOTSTRAP_URLS`, and `NODE_BOOTSTRAP_URL` first
-- if those are unset, `node` falls back to `DIRECT_PEERS`, `DIRECT_PEER`, `BOOTSTRAP_URLS`, and `BOOTSTRAP_URL`
+- `node` uses `NODE_DIRECT_PEERS`, `NODE_DIRECT_PEER`, and `NODE_BOOTSTRAP_URL` first
+- if those are unset, `node` falls back to `DIRECT_PEERS`, `DIRECT_PEER`, and `BOOTSTRAP_URL`
 - `miner` uses `MINING_NODE_URLS` for node failover and does not participate in P2P discovery
-
-Bootstrap URL precedence is exact:
-
-- `NODE_BOOTSTRAP_URLS` is preferred for new node installs
-- if `NODE_BOOTSTRAP_URL` is also set, it is tried after all URLs from `NODE_BOOTSTRAP_URLS`
-- shared `BOOTSTRAP_URLS` and `BOOTSTRAP_URL` are used only when the corresponding `NODE_*` values are unset
-- legacy single-URL vars remain supported intentionally for compatibility, not as the preferred configuration shape
-
-Bootstrap remains optional and non-blocking:
-
-- if bootstrap discovery is down, the node still starts
-- if bootstrap fetch fails, the node continues with manual peers, persisted peers, or inbound peers
-- if bootstrap announce fails, the node only logs a warning
 
 Recommended operator modes:
 
@@ -304,7 +289,7 @@ Recommended operator modes:
 - miner-only host
   - set `MINING_NODE_URLS=https://api.chipcoinprotocol.com`
 - node-only follower host
-  - set `NODE_DIRECT_PEERS=chipcoinprotocol.com:18444` or `NODE_BOOTSTRAP_URLS=https://bootstrap.chipcoinprotocol.com`
+  - set `NODE_DIRECT_PEERS=chipcoinprotocol.com:18444` or `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
   - leave miner-specific vars unused
 
 Headers-first sync defaults in `.env.example`:

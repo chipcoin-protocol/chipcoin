@@ -31,20 +31,10 @@ apps/explorer/dist/
 apps/explorer/
 
 services/bootstrap-seed/
-!services/bootstrap-seed/
-!services/bootstrap-seed/Dockerfile
-!services/bootstrap-seed/README.md
-!services/bootstrap-seed/pyproject.toml
-!services/bootstrap-seed/src/
-!services/bootstrap-seed/src/bootstrap_seed/
-!services/bootstrap-seed/src/bootstrap_seed/*.py
 
 docs/bootstrap-service.md
-!docs/bootstrap-service.md
 docs/remote-devnet.md
 
 scripts/remote-devnet/
 
 tests/bootstrap_seed/
-!tests/bootstrap_seed/
-!tests/bootstrap_seed/*.py
