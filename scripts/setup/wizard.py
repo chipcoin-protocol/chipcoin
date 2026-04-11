@@ -284,21 +284,11 @@ def _looks_public_host(host: str) -> bool:
 
 
 def _default_public_host(env_values: dict[str, str]) -> str:
-    """Return the best public host default already implied by current config."""
+    """Return only an explicitly known public host for this local install."""
 
     configured = env_values.get("NODE_PUBLIC_HOST", "").strip()
     if configured and _looks_public_host(configured):
         return configured
-    bootstrap_peer = env_values.get("DEFAULT_BOOTSTRAP_PEER", "").strip()
-    if bootstrap_peer:
-        host, sep, _port = bootstrap_peer.rpartition(":")
-        if sep and host and _looks_public_host(host):
-            return host
-    node_endpoint = env_values.get("DEFAULT_NODE_ENDPOINT", "").strip()
-    if node_endpoint.startswith(("http://", "https://")):
-        candidate = node_endpoint.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
-        if candidate and _looks_public_host(candidate):
-            return candidate
     return ""
 
 
