@@ -248,6 +248,28 @@ class SyncManager:
             path_hashes = path_hashes[snapshot_anchor.height + 1 :]
         return tuple(block_hash for block_hash in path_hashes if self.node.get_block_by_hash(block_hash) is None)
 
+    def best_ready_tip(self) -> str | None:
+        """Return the strongest contiguous header tip whose blocks are locally available."""
+
+        best_tip = self.node.headers.find_best_tip()
+        if best_tip is None:
+            return None
+        path_hashes = self.node.headers.path_to_root(best_tip.block_hash)
+        snapshot_anchor = None
+        if hasattr(self.node, "snapshot_anchor"):
+            snapshot_anchor = self.node.snapshot_anchor()
+        if snapshot_anchor is not None:
+            if snapshot_anchor.height >= len(path_hashes) or path_hashes[snapshot_anchor.height] != snapshot_anchor.block_hash:
+                raise ValueError("snapshot anchor mismatch")
+            path_hashes = path_hashes[snapshot_anchor.height + 1 :]
+
+        ready_tip = snapshot_anchor.block_hash if snapshot_anchor is not None else None
+        for block_hash in path_hashes:
+            if self.node.get_block_by_hash(block_hash) is None:
+                break
+            ready_tip = block_hash
+        return ready_tip
+
     def reserve_block_downloads(
         self,
         *,
@@ -344,7 +366,7 @@ class SyncManager:
         self._inflight_blocks.pop(block_hash, None)
 
     def activate_best_chain_if_ready(self) -> SyncResult:
-        """Activate the best-known chain when all blocks for it are available."""
+        """Activate the strongest contiguous chain segment whose blocks are available."""
 
         best_tip = self.node.headers.find_best_tip()
         current_tip = self.node.chain_tip()
@@ -362,8 +384,17 @@ class SyncManager:
                 reorged=False,
             )
 
-        missing_blocks = self.missing_blocks_for_tip(best_tip.block_hash)
-        if missing_blocks:
+        ready_tip_hash = self.best_ready_tip()
+        if ready_tip_hash is None:
+            return SyncResult(
+                headers_received=0,
+                blocks_fetched=0,
+                activated_tip=current_tip.block_hash if current_tip is not None else None,
+                parent_unknown=None,
+                reorged=False,
+            )
+        ready_tip = self.node.headers.get_record(ready_tip_hash)
+        if ready_tip is None or ready_tip.cumulative_work is None or ready_tip.cumulative_work <= current_work:
             return SyncResult(
                 headers_received=0,
                 blocks_fetched=0,
@@ -374,13 +405,13 @@ class SyncManager:
 
         previous_tip_hash = current_tip.block_hash if current_tip is not None else None
         reorged = False
-        if previous_tip_hash is not None and best_tip.block_hash != previous_tip_hash:
-            reorged = previous_tip_hash not in self.node.headers.path_to_root(best_tip.block_hash)
-        activation = self.node.activate_chain(best_tip.block_hash)
+        if previous_tip_hash is not None and ready_tip.block_hash != previous_tip_hash:
+            reorged = previous_tip_hash not in self.node.headers.path_to_root(ready_tip.block_hash)
+        activation = self.node.activate_chain(ready_tip.block_hash)
         return SyncResult(
             headers_received=0,
             blocks_fetched=0,
-            activated_tip=best_tip.block_hash,
+            activated_tip=ready_tip.block_hash,
             reorged=reorged,
             reorg_depth=activation.reorg_depth,
             old_tip=activation.old_tip,

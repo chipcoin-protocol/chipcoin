@@ -227,6 +227,23 @@ def test_sync_manager_reassigns_expired_block_requests() -> None:
         assert [assignment.peer_id for assignment in reassigned] == ["peer-b", "peer-b"]
 
 
+def test_sync_manager_activates_best_contiguous_prefix_before_full_tip_is_available() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 5, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+
+        first = manager.receive_block(blocks[0])
+        second = manager.receive_block(blocks[1])
+
+        assert first.activated_tip == blocks[0].block_hash()
+        assert second.activated_tip == blocks[1].block_hash()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == blocks[1].block_hash()
+
+
 def test_service_retargets_difficulty_every_thousand_blocks() -> None:
     with TemporaryDirectory() as tempdir:
         timestamps = iter(range(1_700_000_000, 1_700_010_500))

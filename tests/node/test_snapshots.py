@@ -118,6 +118,28 @@ def test_sync_manager_downloads_only_delta_after_snapshot_import() -> None:
         assert target.snapshot_anchor().block_hash == initial_blocks[-1].block_hash()
 
 
+def test_sync_manager_activates_post_snapshot_delta_incrementally() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        initial_blocks = _mine_chain(source, 4, "CHCminer-source")
+        snapshot_path = Path(tempdir) / "snapshot.json"
+        source.export_snapshot_file(snapshot_path)
+
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        target.import_snapshot_file(snapshot_path)
+        additional_blocks = _mine_chain(source, 2, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in additional_blocks), peer_id="peer-a")
+
+        first = manager.receive_block(additional_blocks[0])
+
+        assert first.activated_tip == additional_blocks[0].block_hash()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == additional_blocks[0].block_hash()
+        assert target.snapshot_anchor() is not None
+        assert target.snapshot_anchor().block_hash == initial_blocks[-1].block_hash()
+
+
 def test_snapshot_anchor_mismatch_is_rejected_before_delta_sync() -> None:
     with TemporaryDirectory() as tempdir:
         trusted = _make_service(Path(tempdir) / "trusted.sqlite3", start_time=1_700_000_000)
