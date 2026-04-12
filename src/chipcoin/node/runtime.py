@@ -1151,7 +1151,13 @@ class NodeRuntime:
         remote = session.state.remote_version
         if remote is None:
             return False
-        return remote.start_height >= best_header_height or remote.start_height >= max(0, best_header_height - 1)
+        advertised_height = max(remote.start_height, self._sync_target_height(session))
+        required_height = self.sync_manager.block_download_window_end_height(
+            max_window_size=self.block_download_window_size
+        )
+        if required_height is None:
+            required_height = best_header_height
+        return advertised_height >= required_height or advertised_height >= max(0, required_height - 1)
 
     def _sync_session_rank_key(self, session: PeerProtocol) -> tuple[int, int, int, str]:
         """Prefer healthier peers for header and block sync work."""

@@ -337,6 +337,18 @@ class SyncManager:
             )
         return tuple(assignments)
 
+    def block_download_window_end_height(self, *, max_window_size: int) -> int | None:
+        """Return the highest header height inside the current block download window."""
+
+        missing_blocks = self.missing_blocks_for_best_tip()
+        if not missing_blocks:
+            return None
+        window_hashes = missing_blocks[: max(1, max_window_size)]
+        if not window_hashes:
+            return None
+        last_record = self.node.headers.get_record(window_hashes[-1])
+        return None if last_record is None else int(last_record.height)
+
     def expire_block_requests(self, *, now: float) -> tuple[BlockRequestState, ...]:
         """Expire overdue block requests so they can be reassigned."""
 

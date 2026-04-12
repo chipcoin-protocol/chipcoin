@@ -1463,6 +1463,35 @@ def test_runtime_reassigns_stalled_block_requests_and_disconnects_repeat_offende
     asyncio.run(scenario())
 
 
+def test_runtime_allows_block_download_from_peer_covering_current_window(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, block_download_window_size=32)
+        session = type(
+            "_FakeSession",
+            (),
+            {
+                "state": type(
+                    "_FakeState",
+                    (),
+                    {
+                        "closed": False,
+                        "handshake_complete": True,
+                        "remote_version": type("_Remote", (), {"node_id": "peer-a", "start_height": 5748})(),
+                    },
+                )(),
+            },
+        )()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            sync_target_height=5788,
+        )
+        monkeypatch.setattr(runtime.sync_manager, "block_download_window_end_height", lambda **_kwargs: 5788)
+
+        assert runtime._session_can_download_blocks(session, best_header_height=5813) is True
+
+
 def test_runtime_does_not_classify_block_request_stall_as_misbehavior() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
