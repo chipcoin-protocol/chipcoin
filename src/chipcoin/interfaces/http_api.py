@@ -103,6 +103,49 @@ class HttpApiApp:
         if method == "GET" and path == "/v1/status":
             return {"api_version": self.API_VERSION, **self.service.status()}
 
+        if method == "GET" and path == "/v1/supply":
+            return {"api_version": self.API_VERSION, **self.service.supply_snapshot()}
+
+        if method == "GET" and path == "/v1/rewards/epoch":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            epoch_index = self._parse_optional_int(query, "epoch_index")
+            node_id = self._parse_optional_text(query, "node_id")
+            return {"api_version": self.API_VERSION, **self.service.native_reward_epoch_state(epoch_index=epoch_index, node_id=node_id)}
+
+        if method == "GET" and path == "/v1/rewards/assignments":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            epoch_index = self._parse_optional_int(query, "epoch_index")
+            node_id = self._parse_optional_text(query, "node_id")
+            return {
+                "api_version": self.API_VERSION,
+                "epoch_index": epoch_index,
+                "node_id": node_id,
+                "assignments": self.service.native_reward_assignments(epoch_index=epoch_index, node_id=node_id),
+            }
+
+        if method == "GET" and path == "/v1/rewards/attestations":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            epoch_index = self._parse_optional_int(query, "epoch_index")
+            return {
+                "api_version": self.API_VERSION,
+                "epoch_index": epoch_index,
+                "attestations": self.service.native_reward_attestation_diagnostics(epoch_index=epoch_index),
+            }
+
+        if method == "GET" and path == "/v1/rewards/settlements":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            epoch_index = self._parse_optional_int(query, "epoch_index")
+            return {
+                "api_version": self.API_VERSION,
+                "epoch_index": epoch_index,
+                "settlements": self.service.native_reward_settlement_diagnostics(epoch_index=epoch_index),
+            }
+
+        if method == "GET" and path == "/v1/rewards/settlement-report":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            epoch_index = self._parse_optional_int(query, "epoch_index")
+            return {"api_version": self.API_VERSION, **self.service.native_reward_settlement_report(epoch_index=epoch_index)}
+
         if method == "GET" and path == "/mining/status":
             return self.service.mining_status()
 
@@ -166,6 +209,13 @@ class HttpApiApp:
         rows = self.service.chain_window(start_height, from_height)
         rows.reverse()
         return rows
+
+    def _parse_optional_text(self, query: dict[str, list[str]], name: str) -> str | None:
+        values = query.get(name, [])
+        if not values:
+            return None
+        value = values[-1].strip()
+        return None if not value else value
 
     def _handle_block(self, environ) -> dict[str, object]:
         query = parse_qs(environ.get("QUERY_STRING", ""))

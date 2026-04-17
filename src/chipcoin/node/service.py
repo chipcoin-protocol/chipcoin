@@ -4,12 +4,26 @@ from __future__ import annotations
 
 from decimal import Decimal, ROUND_DOWN
 from dataclasses import dataclass, replace
+import hashlib
 import json
 from pathlib import Path
 import secrets
 
 from ..config import get_network_config
 from ..consensus.models import Block, OutPoint, Transaction, TxOutput
+from ..consensus.epoch_settlement import (
+    REWARD_ATTESTATION_BUNDLE_KIND,
+    REWARD_SETTLE_EPOCH_KIND,
+    analyze_reward_settlement,
+    build_reward_settlement,
+    build_reward_settlement_transaction,
+    candidate_check_windows,
+    epoch_close_height,
+    epoch_seed,
+    parse_reward_attestation_bundle_metadata,
+    parse_reward_settlement_metadata,
+    verifier_committee,
+)
 from ..consensus.nodes import (
     InMemoryNodeRegistryView,
     active_node_records,
@@ -20,7 +34,13 @@ from ..consensus.nodes import (
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import bits_to_target, calculate_next_work_required, header_work
 from ..consensus.serialization import deserialize_block, deserialize_transaction, serialize_transaction
-from ..consensus.economics import miner_subsidy_chipbits, node_reward_pool_chipbits, total_subsidy_through_height
+from ..consensus.economics import (
+    is_epoch_reward_height,
+    miner_subsidy_chipbits,
+    node_reward_pool_chipbits,
+    subsidy_split_chipbits,
+    total_subsidy_through_height,
+)
 from ..consensus.utxo import InMemoryUtxoView
 from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block
 from ..storage.blocks import SQLiteBlockRepository
@@ -28,6 +48,12 @@ from ..storage.chainstate import SQLiteChainStateRepository
 from ..storage.db import initialize_database
 from ..storage.headers import ChainTip, SQLiteHeaderRepository
 from ..storage.mempool import SQLiteMempoolRepository
+from ..storage.native_rewards import (
+    SQLiteEpochSettlementRepository,
+    SQLiteRewardAttestationRepository,
+    StoredEpochSettlement,
+    StoredRewardAttestationBundle,
+)
 from ..storage.node_registry import SQLiteNodeRegistryRepository
 from ..storage.peers import SQLitePeerRepository
 from ..utils.time import unix_time
@@ -99,6 +125,13 @@ def _disconnect_sort_key(peer: dict[str, object]) -> tuple[int, int, str, int]:
     return (disconnects, -score, str(peer["host"]), int(peer["port"]))
 
 
+def _stable_digest(payload: object) -> str:
+    """Return one deterministic digest for cross-node reward comparisons."""
+
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _misbehavior_sort_key(peer: dict[str, object]) -> tuple[int, str, int]:
     """Order peers by misbehavior score and endpoint."""
 
@@ -138,6 +171,8 @@ class NodeService:
         blocks,
         chainstate,
         node_registry,
+        reward_attestations,
+        reward_settlements,
         mempool_repository,
         peer_repository=None,
         peerbook: PeerManager | None = None,
@@ -150,6 +185,8 @@ class NodeService:
         self.blocks = blocks
         self.chainstate = chainstate
         self.node_registry = node_registry
+        self.reward_attestations = reward_attestations
+        self.reward_settlements = reward_settlements
         self.peer_repository = peer_repository
         self.peerbook = peerbook or PeerManager()
         self.time_provider = time_provider
@@ -189,6 +226,8 @@ class NodeService:
             blocks=SQLiteBlockRepository(connection),
             chainstate=SQLiteChainStateRepository(connection),
             node_registry=SQLiteNodeRegistryRepository(connection),
+            reward_attestations=SQLiteRewardAttestationRepository(connection),
+            reward_settlements=SQLiteEpochSettlementRepository(connection),
             mempool_repository=SQLiteMempoolRepository(connection),
             peer_repository=SQLitePeerRepository(connection),
             time_provider=time_provider,
@@ -228,6 +267,8 @@ class NodeService:
             headers=tuple(headers),
             utxos=tuple(self.chainstate.list_utxos()),
             node_registry_records=tuple(self.node_registry.list_records()),
+            reward_attestation_bundles=tuple(self.reward_attestations.list_bundles()),
+            epoch_settlements=tuple(self.reward_settlements.list_settlements()),
             format_version=format_version,
         )
 
@@ -278,6 +319,10 @@ class NodeService:
             self.connection.execute("DELETE FROM headers")
             self.connection.execute("DELETE FROM utxos")
             self.connection.execute("DELETE FROM node_registry")
+            self.connection.execute("DELETE FROM reward_attestation_entries")
+            self.connection.execute("DELETE FROM reward_attestation_bundles")
+            self.connection.execute("DELETE FROM epoch_settlement_entries")
+            self.connection.execute("DELETE FROM epoch_settlements")
             self.connection.execute(
                 "DELETE FROM chain_meta WHERE key LIKE 'snapshot_%' OR key = 'chain_tip_hash'"
             )
@@ -291,6 +336,8 @@ class NodeService:
         self.headers.set_tip(snapshot.anchor.block_hash, snapshot.anchor.height)
         self.chainstate.replace_all(list(snapshot.utxos))
         self.node_registry.replace_all(list(snapshot.node_registry_records))
+        self.reward_attestations.replace_all(list(snapshot.reward_attestation_bundles))
+        self.reward_settlements.replace_all(list(snapshot.epoch_settlements))
         self._set_chain_meta("snapshot_height", str(snapshot.anchor.height))
         self._set_chain_meta("snapshot_block_hash", snapshot.anchor.block_hash)
         self._set_chain_meta("snapshot_checksum_sha256", str(snapshot.metadata["checksum_sha256"]))
@@ -335,14 +382,23 @@ class NodeService:
         height = 0 if tip is None else tip.height + 1
         previous_block_hash = "00" * 32 if tip is None else tip.block_hash
         expected_bits = self._expected_bits_for_height(height)
+        mempool_entries = self.mempool.list_transactions()
+        preferred_settlement = self._preferred_native_reward_settlement_transaction(height=height, mempool_entries=mempool_entries)
+        if preferred_settlement is not None:
+            mempool_entries = [
+                entry
+                for entry in mempool_entries
+                if entry.transaction.txid() != preferred_settlement.txid()
+            ]
         return self.mining.build_block_template(
             previous_block_hash=previous_block_hash,
             height=height,
             miner_address=miner_address,
             bits=expected_bits,
-            mempool_entries=self.mempool.list_transactions(),
+            mempool_entries=mempool_entries,
             node_registry_view=self.node_registry.snapshot(),
             confirmed_transaction_ids=self._known_confirmed_transaction_ids(),
+            system_transactions=() if preferred_settlement is None else (preferred_settlement,),
         )
 
     def mining_status(self) -> dict[str, object]:
@@ -577,6 +633,10 @@ class NodeService:
             params=self.params,
             utxo_view=snapshot,
             node_registry_view=self.node_registry.snapshot(),
+            reward_attestation_identities=frozenset(self.reward_attestations.attestation_identities()),
+            reward_attestation_bundles=tuple(stored.bundle for stored in self.reward_attestations.list_bundles()),
+            settled_epoch_indexes=frozenset(self.reward_settlements.settled_epoch_indexes()),
+            epoch_seed_by_index=self._epoch_seed_map(height),
             expected_previous_block_hash=previous_hash,
             expected_bits=self._expected_bits_for_height(height),
         )
@@ -591,6 +651,7 @@ class NodeService:
         self.blocks.put(block)
         self.chainstate.apply_block(block, height)
         self._apply_node_registry_block(block, height)
+        self._apply_native_reward_block(block, height)
         self.headers.set_tip(block.block_hash(), height)
         self.mempool.reconcile()
         self.invalidate_mining_templates()
@@ -658,6 +719,10 @@ class NodeService:
         if snapshot_anchor is None:
             utxo_view = InMemoryUtxoView()
             node_registry_view = InMemoryNodeRegistryView()
+            reward_attestation_bundles: list[StoredRewardAttestationBundle] = []
+            reward_settlements: list[StoredEpochSettlement] = []
+            reward_attestation_identities: set[tuple[int, int, str, str]] = set()
+            settled_epoch_indexes: set[int] = set()
             previous_hash = "00" * 32
             median_time_past = 0
             validated_headers = []
@@ -665,6 +730,10 @@ class NodeService:
         else:
             utxo_view = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
             node_registry_view = self.node_registry.snapshot()
+            reward_attestation_bundles = self.reward_attestations.list_bundles()
+            reward_settlements = self.reward_settlements.list_settlements()
+            reward_attestation_identities = self.reward_attestations.attestation_identities()
+            settled_epoch_indexes = self.reward_settlements.settled_epoch_indexes()
             previous_hash = snapshot_anchor.block_hash
             anchor_header = self.headers.get(snapshot_anchor.block_hash)
             if anchor_header is None:
@@ -691,12 +760,24 @@ class NodeService:
                 params=self.params,
                 utxo_view=utxo_view,
                 node_registry_view=node_registry_view,
+                reward_attestation_identities=frozenset(reward_attestation_identities),
+                reward_attestation_bundles=tuple(stored.bundle for stored in reward_attestation_bundles),
+                settled_epoch_indexes=frozenset(settled_epoch_indexes),
+                epoch_seed_by_index=self._epoch_seed_map(height, path_hashes=path_hashes),
                 expected_previous_block_hash=previous_hash,
                 expected_bits=self._expected_bits_for_candidate_height(height, validated_headers),
             )
             validate_block(block, context)
             utxo_view.apply_block(block, height)
             self._apply_node_registry_block(block, height, registry_view=node_registry_view)
+            self._collect_native_reward_block(
+                block,
+                height,
+                attestation_bundles=reward_attestation_bundles,
+                settled_epochs=reward_settlements,
+                attestation_identities=reward_attestation_identities,
+                settled_epoch_indexes=settled_epoch_indexes,
+            )
             validated_headers.append(block.header)
             previous_hash = block_hash
             median_time_past = block.header.timestamp
@@ -704,6 +785,8 @@ class NodeService:
 
         self.chainstate.replace_all(utxo_view.list_entries())
         self.node_registry.replace_all(node_registry_view.list_records())
+        self.reward_attestations.replace_all(reward_attestation_bundles)
+        self.reward_settlements.replace_all(reward_settlements)
         self.headers.set_main_chain(path_hashes)
         disconnected_transactions = self._disconnected_branch_transactions(previous_tip, tip_hash)
         self.mempool.reconcile(extra_transactions=disconnected_transactions)
@@ -1113,6 +1196,7 @@ class NodeService:
             node_reward_pool_chipbits=node_reward_pool_chipbits(next_height, self.params),
             params=self.params,
         )
+        supply = self.supply_snapshot()
         peers = self.list_peers()
         handshaken_peer_count = sum(1 for peer in peers if peer.handshake_complete)
         banned_peer_count = sum(1 for peer in peers if peer.ban_until is not None and peer.ban_until > self.time_provider())
@@ -1153,15 +1237,24 @@ class NodeService:
                 sync_status=sync_status,
                 snapshot_trust_warnings=tuple(str(item) for item in snapshot_trust_warnings),
             ),
-            "next_block_reward_winners": [
+            "next_block_node_reward_recipients": [
                 {
                     "node_id": rewarded_node.node_id,
                     "payout_address": rewarded_node.payout_address,
                     "reward_chipbits": rewarded_node.reward_chipbits,
-                    "score_hex": rewarded_node.score_hex,
                 }
                 for rewarded_node in rewarded_nodes
             ],
+            "supply": {
+                "network": supply["network"],
+                "height": supply["height"],
+                "max_supply_chipbits": supply["max_supply_chipbits"],
+                "minted_supply_chipbits": supply["minted_supply_chipbits"],
+                "miner_minted_supply_chipbits": supply["miner_minted_supply_chipbits"],
+                "node_minted_supply_chipbits": supply["node_minted_supply_chipbits"],
+                "circulating_supply_chipbits": supply["circulating_supply_chipbits"],
+                "remaining_supply_chipbits": supply["remaining_supply_chipbits"],
+            },
         }
 
     def _operator_status_summary(
@@ -1494,6 +1587,10 @@ class NodeService:
                     "node_id": record.node_id,
                     "payout_address": record.payout_address,
                     "owner_pubkey": record.owner_pubkey.hex(),
+                    "node_pubkey": None if record.node_pubkey is None else record.node_pubkey.hex(),
+                    "declared_host": record.declared_host,
+                    "declared_port": record.declared_port,
+                    "reward_registration": record.reward_registration,
                     "registered_at_height": record.registered_height,
                     "last_renewal_height": record.last_renewed_height,
                     "last_renewal_epoch": renewal_epoch,
@@ -1505,39 +1602,428 @@ class NodeService:
             )
         return rows
 
+    def native_reward_epoch_seed_diagnostics(self, epoch_index: int | None = None) -> dict[str, object]:
+        """Return deterministic epoch seed diagnostics for one epoch."""
+
+        tip = self.chain_tip()
+        current_height = -1 if tip is None else tip.height
+        next_height = current_height + 1
+        resolved_epoch = (next_height // self.params.epoch_length_blocks) if epoch_index is None else epoch_index
+        seed_map = self._epoch_seed_map(next_height)
+        seed = seed_map.get(resolved_epoch)
+        previous_close_height = None if resolved_epoch == 0 else epoch_close_height(resolved_epoch - 1, self.params)
+        previous_close_hash = "00" * 32 if resolved_epoch == 0 else self.headers.get_hash_at_height(previous_close_height)
+        return {
+            "epoch_index": resolved_epoch,
+            "epoch_start_height": resolved_epoch * self.params.epoch_length_blocks,
+            "epoch_end_height": epoch_close_height(resolved_epoch, self.params),
+            "evaluation_height": next_height if resolved_epoch == (next_height // self.params.epoch_length_blocks) else min(
+                epoch_close_height(resolved_epoch, self.params),
+                current_height,
+            ),
+            "previous_epoch_close_height": previous_close_height,
+            "previous_epoch_close_hash": previous_close_hash,
+            "epoch_seed_hex": None if seed is None else seed.hex(),
+        }
+
+    def native_reward_assignments(self, *, epoch_index: int | None = None, node_id: str | None = None) -> list[dict[str, object]]:
+        """Return deterministic candidate-window and verifier assignments."""
+
+        seed_payload = self.native_reward_epoch_seed_diagnostics(epoch_index)
+        seed_hex = seed_payload["epoch_seed_hex"]
+        if not isinstance(seed_hex, str):
+            return []
+        resolved_epoch = int(seed_payload["epoch_index"])
+        evaluation_height = int(seed_payload["evaluation_height"])
+        all_active_records = [record for record in self.list_active_reward_nodes(evaluation_height) if record.reward_registration]
+        active_ids = sorted(record.node_id for record in all_active_records)
+        active_records = all_active_records
+        if node_id is not None:
+            active_records = [record for record in active_records if record.node_id == node_id]
+        seed = bytes.fromhex(seed_hex)
+        rows: list[dict[str, object]] = []
+        for record in sorted(active_records, key=lambda item: item.node_id):
+            windows = candidate_check_windows(node_id=record.node_id, seed=seed, params=self.params)
+            committees = {
+                str(window_index): list(
+                    verifier_committee(
+                        candidate_node_id=record.node_id,
+                        active_verifier_node_ids=active_ids,
+                        check_window_index=window_index,
+                        seed=seed,
+                        params=self.params,
+                    )
+                )
+                for window_index in windows
+            }
+            rows.append(
+                {
+                    "epoch_index": resolved_epoch,
+                    "evaluation_height": evaluation_height,
+                    "node_id": record.node_id,
+                    "declared_host": record.declared_host,
+                    "declared_port": record.declared_port,
+                    "candidate_check_windows": list(windows),
+                    "verifier_committees": committees,
+                }
+            )
+        return rows
+
+    def native_reward_attestation_diagnostics(self, *, epoch_index: int | None = None) -> list[dict[str, object]]:
+        """Return stored native attestation bundles."""
+
+        rows = []
+        for stored in self.reward_attestations.list_bundles(epoch_index=epoch_index):
+            rows.append(
+                {
+                    "txid": stored.txid,
+                    "block_height": stored.block_height,
+                    "epoch_index": stored.bundle.epoch_index,
+                    "bundle_window_index": stored.bundle.bundle_window_index,
+                    "bundle_submitter_node_id": stored.bundle.bundle_submitter_node_id,
+                    "attestation_count": len(stored.bundle.attestations),
+                    "attestations": [
+                        {
+                            "epoch_index": attestation.epoch_index,
+                            "check_window_index": attestation.check_window_index,
+                            "candidate_node_id": attestation.candidate_node_id,
+                            "verifier_node_id": attestation.verifier_node_id,
+                            "result_code": attestation.result_code,
+                            "observed_sync_gap": attestation.observed_sync_gap,
+                            "endpoint_commitment": attestation.endpoint_commitment,
+                            "concentration_key": attestation.concentration_key,
+                            "signature_hex": attestation.signature_hex,
+                        }
+                        for attestation in stored.bundle.attestations
+                    ],
+                }
+            )
+        return rows
+
+    def native_reward_settlement_diagnostics(self, *, epoch_index: int | None = None) -> list[dict[str, object]]:
+        """Return stored native settlement payloads."""
+
+        rows = []
+        for stored in self.reward_settlements.list_settlements(epoch_index=epoch_index):
+            settlement = stored.settlement
+            rows.append(
+                {
+                    "txid": stored.txid,
+                    "block_height": stored.block_height,
+                    "epoch_index": settlement.epoch_index,
+                    "epoch_start_height": settlement.epoch_start_height,
+                    "epoch_end_height": settlement.epoch_end_height,
+                    "epoch_seed": settlement.epoch_seed_hex,
+                    "policy_version": settlement.policy_version,
+                    "submission_mode": settlement.submission_mode,
+                    "candidate_summary_root": settlement.candidate_summary_root,
+                    "verified_nodes_root": settlement.verified_nodes_root,
+                    "rewarded_nodes_root": settlement.rewarded_nodes_root,
+                    "rewarded_node_count": settlement.rewarded_node_count,
+                    "distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
+                    "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+                    "reward_entries": [
+                        {
+                            "node_id": entry.node_id,
+                            "payout_address": entry.payout_address,
+                            "reward_chipbits": entry.reward_chipbits,
+                            "selection_rank": entry.selection_rank,
+                            "concentration_key": entry.concentration_key,
+                            "final_confirmation_passed": entry.final_confirmation_passed,
+                        }
+                        for entry in settlement.reward_entries
+                    ],
+                }
+            )
+        return rows
+
+    def native_reward_settlement_preview(self, *, epoch_index: int | None = None) -> dict[str, object]:
+        """Return one deterministic prototype settlement preview for an epoch."""
+
+        settlement = self.build_native_reward_settlement(epoch_index=epoch_index, submission_mode="preview")
+        return {
+            "epoch_index": settlement.epoch_index,
+            "epoch_start_height": settlement.epoch_start_height,
+            "epoch_end_height": settlement.epoch_end_height,
+            "epoch_seed": settlement.epoch_seed_hex,
+            "policy_version": settlement.policy_version,
+            "submission_mode": settlement.submission_mode,
+            "candidate_summary_root": settlement.candidate_summary_root,
+            "verified_nodes_root": settlement.verified_nodes_root,
+            "rewarded_nodes_root": settlement.rewarded_nodes_root,
+            "rewarded_node_count": settlement.rewarded_node_count,
+            "distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
+            "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+            "reward_entries": [
+                {
+                    "node_id": entry.node_id,
+                    "payout_address": entry.payout_address,
+                    "reward_chipbits": entry.reward_chipbits,
+                    "selection_rank": entry.selection_rank,
+                    "concentration_key": entry.concentration_key,
+                    "final_confirmation_passed": entry.final_confirmation_passed,
+                }
+                for entry in settlement.reward_entries
+            ],
+            "eligible_reason": "deterministic_attestation_quorum",
+        }
+
+    def native_reward_settlement_report(self, *, epoch_index: int | None = None) -> dict[str, object]:
+        """Return a detailed deterministic report explaining one epoch settlement outcome."""
+
+        seed_payload = self.native_reward_epoch_seed_diagnostics(epoch_index)
+        seed_hex = seed_payload["epoch_seed_hex"]
+        if not isinstance(seed_hex, str):
+            raise ValueError("Epoch seed is unavailable for the requested epoch.")
+        resolved_epoch = int(seed_payload["epoch_index"])
+        settlement_height = int(seed_payload["epoch_end_height"])
+        active_by_id = {
+            record.node_id: record
+            for record in self.list_active_reward_nodes(settlement_height)
+            if record.reward_registration
+        }
+        bundle_attestations = [
+            attestation
+            for stored in self.reward_attestations.list_bundles(epoch_index=resolved_epoch)
+            for attestation in stored.bundle.attestations
+        ]
+        scheduled_pool = node_reward_pool_chipbits(settlement_height, self.params)
+        analysis = analyze_reward_settlement(
+            active_records_by_id=active_by_id,
+            seed=bytes.fromhex(seed_hex),
+            attestations=bundle_attestations,
+            distributed_reward_chipbits=scheduled_pool,
+            params=self.params,
+        )
+        settlement = build_reward_settlement(
+            epoch_index=resolved_epoch,
+            epoch_seed_hex=seed_hex,
+            epoch_start_height=int(seed_payload["epoch_start_height"]),
+            epoch_end_height=settlement_height,
+            policy_version="native-v1-prototype",
+            submission_mode="report",
+            active_records_by_id=active_by_id,
+            attestations=bundle_attestations,
+            distributed_reward_chipbits=scheduled_pool,
+            params=self.params,
+        )
+        return {
+            "epoch_index": settlement.epoch_index,
+            "epoch_start_height": settlement.epoch_start_height,
+            "epoch_end_height": settlement.epoch_end_height,
+            "epoch_seed": settlement.epoch_seed_hex,
+            "policy_version": settlement.policy_version,
+            "scheduled_node_reward_chipbits": scheduled_pool,
+            "rewarded_node_count": settlement.rewarded_node_count,
+            "distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
+            "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+            "reward_entries": [
+                {
+                    "node_id": entry.node_id,
+                    "payout_address": entry.payout_address,
+                    "reward_chipbits": entry.reward_chipbits,
+                    "selection_rank": entry.selection_rank,
+                    "concentration_key": entry.concentration_key,
+                    "final_confirmation_passed": entry.final_confirmation_passed,
+                }
+                for entry in settlement.reward_entries
+            ],
+            "eligible_ranking": analysis["eligible_ranking"],
+            "node_evaluations": analysis["node_evaluations"],
+            "concentration_exclusions": analysis["concentration_exclusions"],
+            "settlement_accounting_summary": {
+                "scheduled_node_reward_chipbits": scheduled_pool,
+                "distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
+                "undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+            },
+        }
+
+    def native_reward_epoch_state(self, *, epoch_index: int | None = None, node_id: str | None = None) -> dict[str, object]:
+        """Return one compact reward-state snapshot for cross-node determinism checks."""
+
+        tip = self.chain_tip()
+        current_height = -1 if tip is None else tip.height
+        next_height = current_height + 1
+        seed_payload = self.native_reward_epoch_seed_diagnostics(epoch_index)
+        resolved_epoch = int(seed_payload["epoch_index"])
+        evaluation_height = int(seed_payload["evaluation_height"])
+        active_records = [
+            record
+            for record in self.list_active_reward_nodes(evaluation_height)
+            if record.reward_registration and (node_id is None or record.node_id == node_id)
+        ]
+        active_rows = [
+            {
+                "node_id": record.node_id,
+                "payout_address": record.payout_address,
+                "declared_host": record.declared_host,
+                "declared_port": record.declared_port,
+                "registered_at_height": record.registered_height,
+                "last_renewed_height": record.last_renewed_height,
+                "eligible_from_height": record.last_renewed_height + 1,
+            }
+            for record in sorted(active_records, key=lambda item: item.node_id)
+        ]
+        assignments = self.native_reward_assignments(epoch_index=resolved_epoch, node_id=node_id)
+        attestations = self.native_reward_attestation_diagnostics(epoch_index=resolved_epoch)
+        settlements = self.native_reward_settlement_diagnostics(epoch_index=resolved_epoch)
+        settlement_preview = self.native_reward_settlement_preview(epoch_index=resolved_epoch)
+        settlement_report = self.native_reward_settlement_report(epoch_index=resolved_epoch)
+        latest_settlement = None if not settlements else settlements[-1]
+        comparison_keys = {
+            "active_reward_nodes_digest": _stable_digest(active_rows),
+            "assignments_digest": _stable_digest(assignments),
+            "attestations_digest": _stable_digest(attestations),
+            "settlement_preview_digest": _stable_digest(
+                {
+                    "rewarded_node_count": settlement_preview["rewarded_node_count"],
+                    "distributed_node_reward_chipbits": settlement_preview["distributed_node_reward_chipbits"],
+                    "undistributed_node_reward_chipbits": settlement_preview["undistributed_node_reward_chipbits"],
+                    "reward_entries": settlement_preview["reward_entries"],
+                    "rewarded_nodes_root": settlement_preview["rewarded_nodes_root"],
+                }
+            ),
+            "stored_settlements_digest": _stable_digest(settlements),
+        }
+        return {
+            "epoch_index": resolved_epoch,
+            "tip_height": current_height,
+            "tip_hash": None if tip is None else tip.block_hash,
+            "next_block_height": next_height,
+            "node_filter": node_id,
+            "seed": seed_payload,
+            "active_reward_node_count": len(active_rows),
+            "active_reward_nodes": active_rows,
+            "assignments_count": len(assignments),
+            "assignments": assignments,
+            "attestation_bundle_count": len(attestations),
+            "attestations": attestations,
+            "settlement_preview": {
+                "epoch_index": settlement_preview["epoch_index"],
+                "submission_mode": settlement_preview["submission_mode"],
+                "rewarded_node_count": settlement_preview["rewarded_node_count"],
+                "distributed_node_reward_chipbits": settlement_preview["distributed_node_reward_chipbits"],
+                "undistributed_node_reward_chipbits": settlement_preview["undistributed_node_reward_chipbits"],
+                "reward_entries": settlement_preview["reward_entries"],
+                "rewarded_nodes_root": settlement_preview["rewarded_nodes_root"],
+            },
+            "stored_settlement_count": len(settlements),
+            "latest_stored_settlement": latest_settlement,
+            "rejection_summary": {
+                "concentration_exclusions": settlement_report["concentration_exclusions"],
+                "node_evaluations": settlement_report["node_evaluations"],
+            },
+            "comparison_keys": comparison_keys,
+            "comparison_notes": [
+                "Compare comparison_keys across honest nodes at the same tip height.",
+                "If assignments_digest differs, registry state or epoch seed diverged.",
+                "If attestations_digest differs, bundle relay or block inclusion diverged.",
+                "If settlement_preview_digest differs, settlement inputs or accounting diverged.",
+            ],
+        }
+
+    def build_native_reward_settlement(
+        self,
+        *,
+        epoch_index: int | None = None,
+        submission_mode: str = "auto",
+    ):
+        """Build one canonical native reward settlement from persisted epoch state."""
+
+        seed_payload = self.native_reward_epoch_seed_diagnostics(epoch_index)
+        seed_hex = seed_payload["epoch_seed_hex"]
+        if not isinstance(seed_hex, str):
+            raise ValueError("Epoch seed is unavailable for the requested epoch.")
+        resolved_epoch = int(seed_payload["epoch_index"])
+        settlement_height = int(seed_payload["epoch_end_height"])
+        active_by_id = {
+            record.node_id: record
+            for record in self.list_active_reward_nodes(settlement_height)
+            if record.reward_registration
+        }
+        bundle_attestations = [
+            attestation
+            for stored in self.reward_attestations.list_bundles(epoch_index=resolved_epoch)
+            for attestation in stored.bundle.attestations
+        ]
+        return build_reward_settlement(
+            epoch_index=resolved_epoch,
+            epoch_seed_hex=seed_hex,
+            epoch_start_height=int(seed_payload["epoch_start_height"]),
+            epoch_end_height=settlement_height,
+            policy_version="native-v1-prototype",
+            submission_mode=submission_mode,
+            active_records_by_id=active_by_id,
+            attestations=bundle_attestations,
+            distributed_reward_chipbits=node_reward_pool_chipbits(settlement_height, self.params),
+            params=self.params,
+        )
+
+    def build_native_reward_settlement_transaction(
+        self,
+        *,
+        epoch_index: int | None = None,
+        submission_mode: str = "auto",
+    ) -> Transaction:
+        """Build one canonical settlement transaction from persisted epoch state."""
+
+        return build_reward_settlement_transaction(
+            self.build_native_reward_settlement(epoch_index=epoch_index, submission_mode=submission_mode)
+        )
+
+    def _preferred_native_reward_settlement_transaction(self, *, height: int, mempool_entries) -> Transaction | None:
+        """Return the manual settlement override or one auto-generated settlement for `height`."""
+
+        if height < self.params.node_reward_activation_height:
+            return None
+        if not is_epoch_reward_height(height, self.params):
+            return None
+        epoch_index = height // self.params.epoch_length_blocks
+        if epoch_index in self.reward_settlements.settled_epoch_indexes():
+            return None
+        manual_candidates = []
+        for entry in mempool_entries:
+            if entry.transaction.metadata.get("kind") != REWARD_SETTLE_EPOCH_KIND:
+                continue
+            settlement = parse_reward_settlement_metadata(entry.transaction.metadata)
+            if settlement.epoch_end_height == height:
+                manual_candidates.append(entry.transaction)
+        if manual_candidates:
+            manual_candidates.sort(key=lambda transaction: transaction.txid())
+            return manual_candidates[0]
+        return self.build_native_reward_settlement_transaction(epoch_index=epoch_index, submission_mode="auto")
+
     def next_winners_diagnostics(self) -> dict[str, object]:
-        """Return deterministic next-block node reward winner diagnostics."""
+        """Return deterministic next-block node reward diagnostics."""
 
         tip = self.chain_tip()
         next_height = 0 if tip is None else tip.height + 1
-        previous_block_hash = "00" * 32 if tip is None else tip.block_hash
         node_reward_pool = node_reward_pool_chipbits(next_height, self.params)
         rewarded_nodes = select_rewarded_nodes(
             self.node_registry.snapshot(),
             height=next_height,
-            previous_block_hash=previous_block_hash,
+            previous_block_hash="00" * 32 if tip is None else tip.block_hash,
             node_reward_pool_chipbits=node_reward_pool,
             params=self.params,
         )
         active_nodes = active_node_records(self.node_registry.snapshot(), height=next_height, params=self.params)
-        distributed_node_reward_chipbits = sum(rewarded_node.reward_chipbits for rewarded_node in rewarded_nodes)
         return {
             "next_block_height": next_height,
+            "next_block_epoch": next_height // self.params.epoch_length_blocks,
+            "epoch_closing_block": is_epoch_reward_height(next_height, self.params),
             "active_nodes_count": len(active_nodes),
-            "selected_winners": [
+            "rewarded_recipients": [
                 {
                     "node_id": rewarded_node.node_id,
                     "payout_address": rewarded_node.payout_address,
-                    "score_hex": rewarded_node.score_hex,
                     "reward_chipbits": rewarded_node.reward_chipbits,
                 }
                 for rewarded_node in rewarded_nodes
             ],
-            "reward_per_winner_chipbits": 0 if not rewarded_nodes else rewarded_nodes[0].reward_chipbits,
+            "rewarded_recipients_count": len(rewarded_nodes),
             "miner_subsidy_chipbits": miner_subsidy_chipbits(next_height, self.params),
-            "node_reward_pool_chipbits": node_reward_pool,
-            "remainder_to_miner_chipbits": node_reward_pool - distributed_node_reward_chipbits,
-            "selection_seed": previous_block_hash,
+            "node_reward_chipbits": node_reward_pool,
+            "selection_basis": "pre_block_registry",
         }
 
     def reward_history(self, recipient: str, *, limit: int = 50, descending: bool = True) -> list[dict[str, object]]:
@@ -1559,16 +2045,6 @@ class NodeService:
             except ValueError:
                 fees_chipbits = 0
             miner_subsidy = miner_subsidy_chipbits(height, self.params)
-            node_pool = node_reward_pool_chipbits(height, self.params)
-            rewarded_nodes = select_rewarded_nodes(
-                self._replay_chain_state_before_height(height)[1],
-                height=height,
-                previous_block_hash=block.header.previous_block_hash,
-                node_reward_pool_chipbits=node_pool,
-                params=self.params,
-            )
-            distributed_node_reward = sum(node.reward_chipbits for node in rewarded_nodes)
-            miner_subsidy_effective = miner_subsidy + (node_pool - distributed_node_reward)
             mature = height + self.params.coinbase_maturity < (tip.height + 1)
 
             if coinbase.outputs and coinbase.outputs[0].recipient == recipient:
@@ -1578,7 +2054,7 @@ class NodeService:
                         "block_hash": block.block_hash(),
                         "txid": coinbase_txid,
                         "reward_type": "miner_subsidy",
-                        "amount_chipbits": miner_subsidy_effective,
+                        "amount_chipbits": miner_subsidy,
                         "mature": mature,
                         "timestamp": block.header.timestamp,
                     }
@@ -1732,14 +2208,14 @@ class NodeService:
                 node_reward_pool_chipbits=node_pool_chipbits,
                 params=self.params,
             )
-            distributed_node_reward_chipbits = sum(node.reward_chipbits for node in rewarded_nodes)
             rows.append(
                 {
                     "height": height,
                     "block_hash": block.block_hash(),
                     "miner_subsidy_chipbits": miner_subsidy_chipbits(height, self.params),
                     "fees_chipbits": fees_chipbits,
-                    "remainder_from_node_pool_chipbits": node_pool_chipbits - distributed_node_reward_chipbits,
+                    "node_reward_chipbits": node_pool_chipbits,
+                    "node_reward_recipient_count": len(rewarded_nodes),
                     "timestamp": block.header.timestamp,
                 }
             )
@@ -1757,10 +2233,9 @@ class NodeService:
         current_bits = self.params.genesis_bits if tip is None else self.headers.get(tip.block_hash).bits
         registered_nodes = self.node_registry.list_records()
         active_nodes = active_node_records(self.node_registry.snapshot(), height=next_height, params=self.params)
-        current_miner_subsidy = miner_subsidy_chipbits(next_height, self.params)
-        current_node_reward_pool = node_reward_pool_chipbits(next_height, self.params)
-        total_emitted_supply_chipbits = total_subsidy_through_height(-1 if tip is None else tip.height, self.params)
-        supply = self._supply_snapshot()
+        next_block_miner_subsidy = miner_subsidy_chipbits(next_height, self.params)
+        next_block_node_reward = node_reward_pool_chipbits(next_height, self.params)
+        supply = self.supply_snapshot()
         return {
             "current_height": current_height,
             "current_epoch": 0 if current_height is None else current_height // self.params.epoch_length_blocks,
@@ -1769,22 +2244,58 @@ class NodeService:
             "next_retarget_height": self._next_retarget_height(next_height),
             "registered_nodes_count": len(registered_nodes),
             "active_nodes_count": len(active_nodes),
-            "current_miner_subsidy_chipbits": current_miner_subsidy,
-            "current_node_reward_pool_chipbits": current_node_reward_pool,
-            "total_emitted_supply_chipbits": total_emitted_supply_chipbits,
-            "circulating_spendable_supply_chipbits": supply["circulating_spendable_supply_chipbits"],
+            "next_block_miner_subsidy_chipbits": next_block_miner_subsidy,
+            "next_block_node_reward_chipbits": next_block_node_reward,
+            "next_block_epoch_closing": is_epoch_reward_height(next_height, self.params),
+            "minted_supply_chipbits": supply["minted_supply_chipbits"],
+            "miner_minted_supply_chipbits": supply["miner_minted_supply_chipbits"],
+            "node_minted_supply_chipbits": supply["node_minted_supply_chipbits"],
+            "circulating_supply_chipbits": supply["circulating_supply_chipbits"],
             "immature_supply_chipbits": supply["immature_supply_chipbits"],
             "max_supply_chipbits": self.params.max_money_chipbits,
-            "remaining_supply_chipbits": max(0, self.params.max_money_chipbits - total_emitted_supply_chipbits),
+            "remaining_supply_chipbits": supply["remaining_supply_chipbits"],
+        }
+
+    def supply_snapshot(self) -> dict[str, int | str | None]:
+        """Return a protocol-oriented supply snapshot for the active chain."""
+
+        tip = self.chain_tip()
+        height = None if tip is None else tip.height
+        minted_supply_chipbits = total_subsidy_through_height(-1 if tip is None else tip.height, self.params)
+        miner_minted_supply_chipbits = 0
+        node_minted_supply_chipbits = 0
+        if tip is not None:
+            for block_height in range(tip.height + 1):
+                miner_subsidy_chipbits, node_reward_chipbits = subsidy_split_chipbits(block_height, self.params)
+                miner_minted_supply_chipbits += miner_subsidy_chipbits
+                node_minted_supply_chipbits += node_reward_chipbits
+        maturity_supply = self._supply_snapshot()
+        burned_supply_chipbits = 0
+        circulating_supply_chipbits = minted_supply_chipbits - burned_supply_chipbits - maturity_supply["immature_supply_chipbits"]
+        return {
+            "network": self.network,
+            "height": height,
+            "max_supply_chipbits": self.params.max_money_chipbits,
+            "minted_supply_chipbits": minted_supply_chipbits,
+            "miner_minted_supply_chipbits": miner_minted_supply_chipbits,
+            "node_minted_supply_chipbits": node_minted_supply_chipbits,
+            "burned_supply_chipbits": burned_supply_chipbits,
+            "immature_supply_chipbits": maturity_supply["immature_supply_chipbits"],
+            "circulating_supply_chipbits": circulating_supply_chipbits,
+            "remaining_supply_chipbits": max(0, self.params.max_money_chipbits - minted_supply_chipbits),
         }
 
     def supply_diagnostics(self) -> dict[str, object]:
         """Return a detailed supply and maturity snapshot for the active chain."""
 
         summary = self.economy_summary()
+        protocol_supply = self.supply_snapshot()
         supply = self._supply_snapshot()
         return {
             **summary,
+            "network": protocol_supply["network"],
+            "height": protocol_supply["height"],
+            "burned_supply_chipbits": protocol_supply["burned_supply_chipbits"],
             "confirmed_unspent_supply_chipbits": supply["confirmed_unspent_supply_chipbits"],
             "spendable_utxo_count": supply["spendable_utxo_count"],
             "immature_utxo_count": supply["immature_utxo_count"],
@@ -1808,14 +2319,6 @@ class NodeService:
             except ValueError:
                 fees_chipbits = 0
             node_pool_chipbits = node_reward_pool_chipbits(height, self.params)
-            rewarded_nodes = select_rewarded_nodes(
-                self._replay_chain_state_before_height(height)[1],
-                height=height,
-                previous_block_hash=block.header.previous_block_hash,
-                node_reward_pool_chipbits=node_pool_chipbits,
-                params=self.params,
-            )
-            distributed_node_reward_chipbits = sum(node.reward_chipbits for node in rewarded_nodes)
             entry = aggregated.setdefault(
                 miner_address,
                 {
@@ -1823,7 +2326,7 @@ class NodeService:
                     "blocks_mined": 0,
                     "total_miner_subsidy_chipbits": 0,
                     "total_fees_chipbits": 0,
-                    "total_remainder_from_node_pool_chipbits": 0,
+                    "total_node_reward_chipbits": 0,
                     "last_mined_height": None,
                 },
             )
@@ -1832,9 +2335,7 @@ class NodeService:
                 miner_subsidy_chipbits(height, self.params)
             )
             entry["total_fees_chipbits"] = int(entry["total_fees_chipbits"]) + int(fees_chipbits)
-            entry["total_remainder_from_node_pool_chipbits"] = int(
-                entry["total_remainder_from_node_pool_chipbits"]
-            ) + int(node_pool_chipbits - distributed_node_reward_chipbits)
+            entry["total_node_reward_chipbits"] = int(entry["total_node_reward_chipbits"]) + int(node_pool_chipbits)
             entry["last_mined_height"] = height
         rows = list(aggregated.values())
         rows.sort(
@@ -1928,6 +2429,10 @@ class NodeService:
             params=self.params,
             utxo_view=utxo_view,
             node_registry_view=self.node_registry.snapshot(),
+            reward_attestation_identities=frozenset(self.reward_attestations.attestation_identities()),
+            reward_attestation_bundles=tuple(stored.bundle for stored in self.reward_attestations.list_bundles()),
+            settled_epoch_indexes=frozenset(self.reward_settlements.settled_epoch_indexes()),
+            epoch_seed_by_index=self._epoch_seed_map(0 if tip is None else tip.height + 1),
         )
 
     def _find_transaction_in_active_chain(self, txid: str) -> Transaction | None:
@@ -2018,6 +2523,73 @@ class NodeService:
         for transaction in block.transactions[1:]:
             if is_special_node_transaction(transaction):
                 apply_special_node_transaction(transaction, height=height, registry_view=target_registry)
+
+    def _apply_native_reward_block(self, block: Block, height: int) -> None:
+        """Persist native reward-node payloads from one connected block."""
+
+        bundles: list[StoredRewardAttestationBundle] = []
+        settlements: list[StoredEpochSettlement] = []
+        attestation_identities: set[tuple[int, int, str, str]] = set()
+        settled_epoch_indexes: set[int] = set()
+        self._collect_native_reward_block(
+            block,
+            height,
+            attestation_bundles=bundles,
+            settled_epochs=settlements,
+            attestation_identities=attestation_identities,
+            settled_epoch_indexes=settled_epoch_indexes,
+            persist=True,
+        )
+
+    def _collect_native_reward_block(
+        self,
+        block: Block,
+        height: int,
+        *,
+        attestation_bundles: list[StoredRewardAttestationBundle],
+        settled_epochs: list[StoredEpochSettlement],
+        attestation_identities: set[tuple[int, int, str, str]],
+        settled_epoch_indexes: set[int],
+        persist: bool = False,
+    ) -> None:
+        """Collect or persist native reward payloads from one block."""
+
+        for transaction in block.transactions[1:]:
+            kind = transaction.metadata.get("kind")
+            if kind == REWARD_ATTESTATION_BUNDLE_KIND:
+                bundle = parse_reward_attestation_bundle_metadata(transaction.metadata)
+                stored = StoredRewardAttestationBundle(txid=transaction.txid(), block_height=height, bundle=bundle)
+                attestation_bundles.append(stored)
+                attestation_identities.update(
+                    (attestation.epoch_index, attestation.check_window_index, attestation.candidate_node_id, attestation.verifier_node_id)
+                    for attestation in bundle.attestations
+                )
+                if persist:
+                    self.reward_attestations.add_bundle(txid=stored.txid, block_height=height, bundle=bundle)
+            elif kind == REWARD_SETTLE_EPOCH_KIND:
+                settlement = parse_reward_settlement_metadata(transaction.metadata)
+                stored = StoredEpochSettlement(txid=transaction.txid(), block_height=height, settlement=settlement)
+                settled_epochs.append(stored)
+                settled_epoch_indexes.add(settlement.epoch_index)
+                if persist:
+                    self.reward_settlements.add_settlement(txid=stored.txid, block_height=height, settlement=settlement)
+
+    def _epoch_seed_map(self, next_height: int, *, path_hashes: list[str] | None = None) -> dict[int, bytes]:
+        """Return known deterministic epoch seeds up to the current or candidate height."""
+
+        last_epoch = max(0, next_height // self.params.epoch_length_blocks)
+        mapping: dict[int, bytes] = {0: epoch_seed("00" * 32, 0)}
+        for epoch_index in range(1, last_epoch + 1):
+            previous_close_height = epoch_close_height(epoch_index - 1, self.params)
+            previous_close_hash = None
+            if path_hashes is not None and previous_close_height < len(path_hashes):
+                previous_close_hash = path_hashes[previous_close_height]
+            else:
+                previous_close_hash = self.headers.get_hash_at_height(previous_close_height)
+            if previous_close_hash is None:
+                break
+            mapping[epoch_index] = epoch_seed(previous_close_hash, epoch_index)
+        return mapping
 
     def _disconnected_branch_transactions(self, previous_tip, new_tip_hash: str) -> list[Transaction]:
         """Return non-coinbase transactions from blocks disconnected by a reorg."""

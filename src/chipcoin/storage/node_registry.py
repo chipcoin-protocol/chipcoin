@@ -23,7 +23,8 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
     def get_by_node_id(self, node_id: str) -> NodeRecord | None:
         row = self.connection.execute(
             """
-            SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height
+            SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height,
+                   node_pubkey, declared_host, declared_port, reward_registration
             FROM node_registry
             WHERE node_id = ?
             """,
@@ -37,12 +38,17 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
             owner_pubkey=bytes.fromhex(row["owner_pubkey"]),
             registered_height=int(row["registered_height"]),
             last_renewed_height=int(row["last_renewed_height"]),
+            node_pubkey=None if row["node_pubkey"] is None else bytes.fromhex(row["node_pubkey"]),
+            declared_host=row["declared_host"],
+            declared_port=None if row["declared_port"] is None else int(row["declared_port"]),
+            reward_registration=bool(row["reward_registration"]),
         )
 
     def get_by_owner_pubkey(self, owner_pubkey: bytes) -> NodeRecord | None:
         row = self.connection.execute(
             """
-            SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height
+            SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height,
+                   node_pubkey, declared_host, declared_port, reward_registration
             FROM node_registry
             WHERE owner_pubkey = ?
             """,
@@ -56,6 +62,10 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
             owner_pubkey=bytes.fromhex(row["owner_pubkey"]),
             registered_height=int(row["registered_height"]),
             last_renewed_height=int(row["last_renewed_height"]),
+            node_pubkey=None if row["node_pubkey"] is None else bytes.fromhex(row["node_pubkey"]),
+            declared_host=row["declared_host"],
+            declared_port=None if row["declared_port"] is None else int(row["declared_port"]),
+            reward_registration=bool(row["reward_registration"]),
         )
 
     def upsert(self, record: NodeRecord) -> None:
@@ -67,8 +77,12 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                     payout_address,
                     owner_pubkey,
                     registered_height,
-                    last_renewed_height
-                ) VALUES (?, ?, ?, ?, ?)
+                    last_renewed_height,
+                    node_pubkey,
+                    declared_host,
+                    declared_port,
+                    reward_registration
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.node_id,
@@ -76,13 +90,18 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                     record.owner_pubkey.hex(),
                     record.registered_height,
                     record.last_renewed_height,
+                    None if record.node_pubkey is None else record.node_pubkey.hex(),
+                    record.declared_host,
+                    record.declared_port,
+                    1 if record.reward_registration else 0,
                 ),
             )
 
     def list_records(self) -> list[NodeRecord]:
         rows = self.connection.execute(
             """
-            SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height
+            SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height,
+                   node_pubkey, declared_host, declared_port, reward_registration
             FROM node_registry
             ORDER BY node_id
             """
@@ -94,6 +113,10 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                 owner_pubkey=bytes.fromhex(row["owner_pubkey"]),
                 registered_height=int(row["registered_height"]),
                 last_renewed_height=int(row["last_renewed_height"]),
+                node_pubkey=None if row["node_pubkey"] is None else bytes.fromhex(row["node_pubkey"]),
+                declared_host=row["declared_host"],
+                declared_port=None if row["declared_port"] is None else int(row["declared_port"]),
+                reward_registration=bool(row["reward_registration"]),
             )
             for row in rows
         ]
@@ -108,8 +131,12 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                     payout_address,
                     owner_pubkey,
                     registered_height,
-                    last_renewed_height
-                ) VALUES (?, ?, ?, ?, ?)
+                    last_renewed_height,
+                    node_pubkey,
+                    declared_host,
+                    declared_port,
+                    reward_registration
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -118,6 +145,10 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                         record.owner_pubkey.hex(),
                         record.registered_height,
                         record.last_renewed_height,
+                        None if record.node_pubkey is None else record.node_pubkey.hex(),
+                        record.declared_host,
+                        record.declared_port,
+                        1 if record.reward_registration else 0,
                     )
                     for record in records
                 ],

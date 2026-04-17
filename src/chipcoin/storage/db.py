@@ -79,6 +79,78 @@ SCHEMA_STATEMENTS = (
         last_renewed_height INTEGER NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS reward_attestation_bundles (
+        txid TEXT PRIMARY KEY,
+        block_height INTEGER NOT NULL,
+        epoch_index INTEGER NOT NULL,
+        bundle_window_index INTEGER NOT NULL,
+        bundle_submitter_node_id TEXT NOT NULL,
+        attestation_count INTEGER NOT NULL,
+        attestations_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reward_attestation_bundles_epoch_window
+    ON reward_attestation_bundles(epoch_index, bundle_window_index)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS reward_attestation_entries (
+        txid TEXT NOT NULL,
+        bundle_position INTEGER NOT NULL,
+        epoch_index INTEGER NOT NULL,
+        check_window_index INTEGER NOT NULL,
+        candidate_node_id TEXT NOT NULL,
+        verifier_node_id TEXT NOT NULL,
+        result_code TEXT NOT NULL,
+        observed_sync_gap INTEGER NOT NULL,
+        endpoint_commitment TEXT NOT NULL,
+        concentration_key TEXT NOT NULL,
+        signature_hex TEXT NOT NULL,
+        PRIMARY KEY(txid, bundle_position),
+        FOREIGN KEY(txid) REFERENCES reward_attestation_bundles(txid)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reward_attestation_entries_identity
+    ON reward_attestation_entries(epoch_index, check_window_index, candidate_node_id, verifier_node_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS epoch_settlements (
+        txid TEXT PRIMARY KEY,
+        block_height INTEGER NOT NULL,
+        epoch_index INTEGER NOT NULL,
+        epoch_start_height INTEGER NOT NULL,
+        epoch_end_height INTEGER NOT NULL,
+        epoch_seed_hex TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        submission_mode TEXT NOT NULL DEFAULT 'manual',
+        candidate_summary_root TEXT NOT NULL,
+        verified_nodes_root TEXT NOT NULL,
+        rewarded_nodes_root TEXT NOT NULL,
+        rewarded_node_count INTEGER NOT NULL,
+        distributed_node_reward_chipbits INTEGER NOT NULL,
+        undistributed_node_reward_chipbits INTEGER NOT NULL,
+        reward_entries_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_epoch_settlements_epoch_index
+    ON epoch_settlements(epoch_index)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS epoch_settlement_entries (
+        txid TEXT NOT NULL,
+        selection_rank INTEGER NOT NULL,
+        node_id TEXT NOT NULL,
+        payout_address TEXT NOT NULL,
+        reward_chipbits INTEGER NOT NULL,
+        concentration_key TEXT NOT NULL,
+        final_confirmation_passed INTEGER NOT NULL,
+        PRIMARY KEY(txid, selection_rank),
+        FOREIGN KEY(txid) REFERENCES epoch_settlements(txid)
+    )
+    """,
 )
 
 
@@ -123,6 +195,11 @@ def initialize_database(path: Path) -> sqlite3.Connection:
         _ensure_column(connection, table="peers", column="ban_until", definition="INTEGER")
         _ensure_column(connection, table="peers", column="last_penalty_reason", definition="TEXT")
         _ensure_column(connection, table="peers", column="last_penalty_at", definition="INTEGER")
+        _ensure_column(connection, table="node_registry", column="node_pubkey", definition="TEXT")
+        _ensure_column(connection, table="node_registry", column="declared_host", definition="TEXT")
+        _ensure_column(connection, table="node_registry", column="declared_port", definition="INTEGER")
+        _ensure_column(connection, table="node_registry", column="reward_registration", definition="INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(connection, table="epoch_settlements", column="submission_mode", definition="TEXT NOT NULL DEFAULT 'manual'")
     return connection
 
 

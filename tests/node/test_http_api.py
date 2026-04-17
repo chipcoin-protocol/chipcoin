@@ -9,11 +9,13 @@ from tempfile import TemporaryDirectory
 
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, OutPoint
+from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_block, serialize_transaction
 from chipcoin.interfaces.cli import main as cli_main
 from chipcoin.interfaces.http_api import HttpApiApp
 from chipcoin.node.service import NodeService
+from chipcoin.wallet.signer import TransactionSigner
 from ..helpers import put_wallet_utxo, signed_payment, wallet_key
 
 
@@ -97,6 +99,7 @@ def test_http_api_health_status_and_tip() -> None:
 
         health_status, _, health_body = _call_wsgi(app, method="GET", path="/v1/health")
         status_status, _, status_body = _call_wsgi(app, method="GET", path="/v1/status")
+        supply_status, _, supply_body = _call_wsgi(app, method="GET", path="/v1/supply")
         tip_status, _, tip_body = _call_wsgi(app, method="GET", path="/v1/tip")
 
         assert health_status == "200 OK"
@@ -105,12 +108,21 @@ def test_http_api_health_status_and_tip() -> None:
         assert status_body["api_version"] == "v1"
         assert status_body["network"] == "mainnet"
         assert status_body["sync"]["mode"] == "idle"
+        assert status_body["supply"]["minted_supply_chipbits"] == 0
+        assert status_body["supply"]["remaining_supply_chipbits"] == 11_000_000 * 100_000_000
         assert status_body["operator_summary"] == {
             "sync_state": "idle",
             "connectivity_state": "no_known_peers",
             "peer_attention": True,
             "warnings": ["no_known_peers"],
         }
+        assert supply_status == "200 OK"
+        assert supply_body["api_version"] == "v1"
+        assert supply_body["network"] == "mainnet"
+        assert supply_body["minted_supply_chipbits"] == 0
+        assert supply_body["miner_minted_supply_chipbits"] == 0
+        assert supply_body["node_minted_supply_chipbits"] == 0
+        assert supply_body["remaining_supply_chipbits"] == 11_000_000 * 100_000_000
         assert tip_status == "200 OK"
         assert tip_body == {"height": None, "block_hash": None}
 
@@ -143,6 +155,72 @@ def test_http_api_exposes_mining_status_and_template() -> None:
         assert template_body["height"] == 0
         assert template_body["previous_block_hash"] == "00" * 32
         assert template_body["payout_address"] == wallet_key(0).address
+
+
+def test_http_api_exposes_native_reward_epoch_routes() -> None:
+    with TemporaryDirectory() as tempdir:
+        params = replace(
+            MAINNET_PARAMS,
+            node_reward_activation_height=0,
+            epoch_length_blocks=5,
+            reward_check_windows_per_epoch=4,
+            reward_target_checks_per_epoch=1,
+            reward_min_passed_checks_per_epoch=1,
+            reward_verifier_committee_size=1,
+            reward_verifier_quorum=1,
+            reward_final_confirmation_window_blocks=1,
+            max_rewarded_nodes_per_epoch=4,
+        )
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            params=params,
+            time_provider=lambda: next(timestamps),
+        )
+        app = HttpApiApp(service)
+        for node_id, wallet, port in (
+            ("reward-node-a", wallet_key(0), 19001),
+            ("reward-node-b", wallet_key(1), 19002),
+        ):
+            service.receive_transaction(
+                TransactionSigner(wallet).build_register_reward_node_transaction(
+                    node_id=node_id,
+                    payout_address=wallet.address,
+                    node_public_key_hex=wallet.public_key.hex(),
+                    declared_host="127.0.0.1",
+                    declared_port=port,
+                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                )
+            )
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        epoch_status, _, epoch_body = _call_wsgi(app, method="GET", path="/v1/rewards/epoch", query="epoch_index=0")
+        assignments_status, _, assignments_body = _call_wsgi(app, method="GET", path="/v1/rewards/assignments", query="epoch_index=0")
+        attestations_status, _, attestations_body = _call_wsgi(app, method="GET", path="/v1/rewards/attestations", query="epoch_index=0")
+        settlements_status, _, settlements_body = _call_wsgi(app, method="GET", path="/v1/rewards/settlements", query="epoch_index=0")
+        report_status, _, report_body = _call_wsgi(app, method="GET", path="/v1/rewards/settlement-report", query="epoch_index=0")
+
+        assert epoch_status == "200 OK"
+        assert epoch_body["api_version"] == "v1"
+        assert epoch_body["epoch_index"] == 0
+        assert epoch_body["active_reward_node_count"] == 2
+        assert set(epoch_body["comparison_keys"]) == {
+            "active_reward_nodes_digest",
+            "assignments_digest",
+            "attestations_digest",
+            "settlement_preview_digest",
+            "stored_settlements_digest",
+        }
+        assert assignments_status == "200 OK"
+        assert assignments_body["assignments"]
+        assert len(assignments_body["assignments"]) == 2
+        assert attestations_status == "200 OK"
+        assert attestations_body["attestations"] == []
+        assert settlements_status == "200 OK"
+        assert settlements_body["settlements"] == []
+        assert report_status == "200 OK"
+        assert report_body["rewarded_node_count"] == 0
+        assert report_body["settlement_accounting_summary"]["distributed_node_reward_chipbits"] == 0
 
 
 def test_http_api_submit_block_accepts_solved_template_and_rejects_stale() -> None:
@@ -470,8 +548,19 @@ def test_http_api_stable_client_subset_shapes() -> None:
             "banned_peer_count",
             "sync",
             "operator_summary",
-            "next_block_reward_winners",
+            "next_block_node_reward_recipients",
+            "supply",
         }.issubset(status.keys())
+        assert {
+            "network",
+            "height",
+            "max_supply_chipbits",
+            "minted_supply_chipbits",
+            "miner_minted_supply_chipbits",
+            "node_minted_supply_chipbits",
+            "circulating_supply_chipbits",
+            "remaining_supply_chipbits",
+        }.issubset(status["supply"].keys())
         assert {
             "mode",
             "validated_tip_height",

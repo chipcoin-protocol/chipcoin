@@ -1,4 +1,4 @@
-"""On-chain node registry and deterministic node-reward selection."""
+"""On-chain node registry and deterministic epoch reward selection."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Iterable
 from ..crypto.addresses import is_valid_address
 from ..crypto.keys import parse_public_key_hex
 from ..crypto.signatures import verify_digest
+from .epoch_settlement import REGISTER_REWARD_NODE_KIND, RENEW_REWARD_NODE_KIND
 from .hashes import double_sha256
 from .models import Transaction
 from .params import ConsensusParams
@@ -26,6 +27,10 @@ class NodeRecord:
     owner_pubkey: bytes
     registered_height: int
     last_renewed_height: int
+    node_pubkey: bytes | None = None
+    declared_host: str | None = None
+    declared_port: int | None = None
+    reward_registration: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,15 +95,36 @@ class InMemoryNodeRegistryView(NodeRegistryView):
 def is_special_node_transaction(transaction: Transaction) -> bool:
     """Return whether a transaction is a node registry special transaction."""
 
-    return transaction.metadata.get("kind") in {REGISTER_NODE_KIND, RENEW_NODE_KIND}
+    return transaction.metadata.get("kind") in {
+        REGISTER_NODE_KIND,
+        RENEW_NODE_KIND,
+        REGISTER_REWARD_NODE_KIND,
+        RENEW_REWARD_NODE_KIND,
+    }
 
 
-def is_register_node_transaction(transaction: Transaction) -> bool:
+def is_legacy_register_node_transaction(transaction: Transaction) -> bool:
     return transaction.metadata.get("kind") == REGISTER_NODE_KIND
 
 
-def is_renew_node_transaction(transaction: Transaction) -> bool:
+def is_legacy_renew_node_transaction(transaction: Transaction) -> bool:
     return transaction.metadata.get("kind") == RENEW_NODE_KIND
+
+
+def is_register_reward_node_transaction(transaction: Transaction) -> bool:
+    return transaction.metadata.get("kind") == REGISTER_REWARD_NODE_KIND
+
+
+def is_renew_reward_node_transaction(transaction: Transaction) -> bool:
+    return transaction.metadata.get("kind") == RENEW_REWARD_NODE_KIND
+
+
+def is_register_node_transaction(transaction: Transaction) -> bool:
+    return is_legacy_register_node_transaction(transaction) or is_register_reward_node_transaction(transaction)
+
+
+def is_renew_node_transaction(transaction: Transaction) -> bool:
+    return is_legacy_renew_node_transaction(transaction) or is_renew_reward_node_transaction(transaction)
 
 
 def current_epoch(height: int, params: ConsensusParams) -> int:
@@ -125,6 +151,16 @@ def active_node_records(
     ]
 
 
+def epoch_reward_remainder(height: int, params: ConsensusParams) -> int:
+    """Return the base-unit remainder carried by deterministic equal split at one height."""
+
+    if height < 0:
+        raise ValueError("Block height cannot be negative.")
+    if (height + 1) % params.epoch_length_blocks != 0:
+        return 0
+    return 0
+
+
 def select_rewarded_nodes(
     registry_view: NodeRegistryView,
     *,
@@ -133,35 +169,40 @@ def select_rewarded_nodes(
     node_reward_pool_chipbits: int,
     params: ConsensusParams,
 ) -> list[RewardedNode]:
-    """Return the deterministic node reward winners for a block."""
+    """Return deterministic epoch reward recipients for one block height.
+
+    The current devnet baseline no longer uses per-block weighted winner selection.
+    On epoch-closing blocks, all active node records participate in an equal split of
+    the block-attached node reward amount, with deterministic remainder handling.
+
+    `previous_block_hash` is retained for temporary call-site compatibility but is no
+    longer used by the selection rule.
+    """
 
     active_records = active_node_records(registry_view, height=height, params=params)
     if not active_records or node_reward_pool_chipbits <= 0:
         return []
 
-    winners_count = min(params.max_rewarded_nodes_per_block, len(active_records))
-    scored = []
-    for record in active_records:
+    _ = previous_block_hash
+    ordered_records = sorted(active_records, key=lambda record: (record.node_id, record.payout_address))
+    recipient_count = len(ordered_records)
+    base_reward_chipbits = node_reward_pool_chipbits // recipient_count
+    remainder_chipbits = node_reward_pool_chipbits % recipient_count
+
+    winners = []
+    for index, record in enumerate(ordered_records):
         score_hex = double_sha256(
-            previous_block_hash.encode("utf-8")
-            + b"\x00"
-            + record.node_id.encode("utf-8")
+            record.node_id.encode("utf-8")
             + b"\x00"
             + record.payout_address.encode("utf-8")
         ).hex()
-        scored.append((score_hex, record))
-    scored.sort(key=lambda item: (item[0], item[1].node_id, item[1].payout_address))
-
-    reward_chipbits = node_reward_pool_chipbits // winners_count
-    winners = []
-    for score_hex, record in scored[:winners_count]:
         winners.append(
             RewardedNode(
                 node_id=record.node_id,
                 payout_address=record.payout_address,
                 owner_pubkey=record.owner_pubkey,
                 score_hex=score_hex,
-                reward_chipbits=reward_chipbits,
+                reward_chipbits=base_reward_chipbits + (1 if index < remainder_chipbits else 0),
             )
         )
     return winners
@@ -170,11 +211,17 @@ def select_rewarded_nodes(
 def validate_special_node_transaction_stateless(transaction: Transaction) -> None:
     """Validate metadata shape and signatures for node special transactions."""
 
-    if is_register_node_transaction(transaction):
+    if is_legacy_register_node_transaction(transaction):
         _validate_register_node_transaction(transaction)
         return
-    if is_renew_node_transaction(transaction):
+    if is_legacy_renew_node_transaction(transaction):
         _validate_renew_node_transaction(transaction)
+        return
+    if is_register_reward_node_transaction(transaction):
+        _validate_register_reward_node_transaction(transaction)
+        return
+    if is_renew_reward_node_transaction(transaction):
+        _validate_renew_reward_node_transaction(transaction)
         return
     raise ValueError("Transaction is not a special node transaction.")
 
@@ -187,7 +234,7 @@ def apply_special_node_transaction(
 ) -> None:
     """Apply a validated node special transaction to registry state."""
 
-    if is_register_node_transaction(transaction):
+    if is_legacy_register_node_transaction(transaction):
         owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
         registry_view.upsert(
             NodeRecord(
@@ -200,7 +247,24 @@ def apply_special_node_transaction(
         )
         return
 
-    if is_renew_node_transaction(transaction):
+    if is_register_reward_node_transaction(transaction):
+        owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+        registry_view.upsert(
+            NodeRecord(
+                node_id=transaction.metadata["node_id"],
+                payout_address=transaction.metadata["payout_address"],
+                owner_pubkey=owner_pubkey,
+                registered_height=height,
+                last_renewed_height=height,
+                node_pubkey=parse_public_key_hex(transaction.metadata["node_pubkey_hex"]),
+                declared_host=transaction.metadata["declared_host"],
+                declared_port=int(transaction.metadata["declared_port"]),
+                reward_registration=True,
+            )
+        )
+        return
+
+    if is_legacy_renew_node_transaction(transaction):
         record = registry_view.get_by_node_id(transaction.metadata["node_id"])
         if record is None:
             raise ValueError("Cannot renew a node that is not registered.")
@@ -211,6 +275,25 @@ def apply_special_node_transaction(
                 owner_pubkey=record.owner_pubkey,
                 registered_height=record.registered_height,
                 last_renewed_height=height,
+            )
+        )
+        return
+
+    if is_renew_reward_node_transaction(transaction):
+        record = registry_view.get_by_node_id(transaction.metadata["node_id"])
+        if record is None:
+            raise ValueError("Cannot renew a node that is not registered.")
+        registry_view.upsert(
+            NodeRecord(
+                node_id=record.node_id,
+                payout_address=record.payout_address,
+                owner_pubkey=record.owner_pubkey,
+                registered_height=record.registered_height,
+                last_renewed_height=height,
+                node_pubkey=record.node_pubkey,
+                declared_host=transaction.metadata["declared_host"],
+                declared_port=int(transaction.metadata["declared_port"]),
+                reward_registration=record.reward_registration,
             )
         )
         return
@@ -232,6 +315,19 @@ def special_node_transaction_signature_digest(transaction: Transaction) -> bytes
                 owner_pubkey_hex,
             ]
         )
+    elif kind == REGISTER_REWARD_NODE_KIND:
+        payload = "|".join(
+            [
+                REGISTER_REWARD_NODE_KIND,
+                transaction.metadata.get("node_id", ""),
+                transaction.metadata.get("payout_address", ""),
+                owner_pubkey_hex,
+                transaction.metadata.get("node_pubkey_hex", ""),
+                transaction.metadata.get("declared_host", ""),
+                transaction.metadata.get("declared_port", ""),
+                transaction.metadata.get("registration_fee_chipbits", ""),
+            ]
+        )
     elif kind == RENEW_NODE_KIND:
         payload = "|".join(
             [
@@ -239,6 +335,18 @@ def special_node_transaction_signature_digest(transaction: Transaction) -> bytes
                 transaction.metadata.get("node_id", ""),
                 transaction.metadata.get("renewal_epoch", ""),
                 owner_pubkey_hex,
+            ]
+        )
+    elif kind == RENEW_REWARD_NODE_KIND:
+        payload = "|".join(
+            [
+                RENEW_REWARD_NODE_KIND,
+                transaction.metadata.get("node_id", ""),
+                transaction.metadata.get("renewal_epoch", ""),
+                owner_pubkey_hex,
+                transaction.metadata.get("declared_host", ""),
+                transaction.metadata.get("declared_port", ""),
+                transaction.metadata.get("renewal_fee_chipbits", ""),
             ]
         )
     else:
@@ -274,6 +382,50 @@ def _validate_renew_node_transaction(transaction: Transaction) -> None:
         raise ValueError("renew_node transaction owner signature is invalid.")
 
 
+def _validate_register_reward_node_transaction(transaction: Transaction) -> None:
+    _validate_node_metadata_common(transaction)
+    node_id = transaction.metadata.get("node_id", "")
+    payout_address = transaction.metadata.get("payout_address", "")
+    node_pubkey_hex = transaction.metadata.get("node_pubkey_hex", "")
+    declared_host = transaction.metadata.get("declared_host", "")
+    declared_port = transaction.metadata.get("declared_port", "")
+    registration_fee_chipbits = transaction.metadata.get("registration_fee_chipbits", "")
+    if not node_id:
+        raise ValueError("register_reward_node transactions must declare a node_id.")
+    if not payout_address or not is_valid_address(payout_address):
+        raise ValueError("register_reward_node transactions must declare a valid payout_address.")
+    if not node_pubkey_hex:
+        raise ValueError("register_reward_node transactions must declare node_pubkey_hex.")
+    parse_public_key_hex(node_pubkey_hex)
+    _validate_declared_endpoint(declared_host, declared_port, kind=REGISTER_REWARD_NODE_KIND)
+    if not registration_fee_chipbits or int(registration_fee_chipbits) < 0:
+        raise ValueError("register_reward_node transactions must declare a non-negative registration_fee_chipbits.")
+    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
+    if not verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature):
+        raise ValueError("register_reward_node transaction owner signature is invalid.")
+
+
+def _validate_renew_reward_node_transaction(transaction: Transaction) -> None:
+    _validate_node_metadata_common(transaction)
+    node_id = transaction.metadata.get("node_id", "")
+    renewal_epoch = transaction.metadata.get("renewal_epoch", "")
+    declared_host = transaction.metadata.get("declared_host", "")
+    declared_port = transaction.metadata.get("declared_port", "")
+    renewal_fee_chipbits = transaction.metadata.get("renewal_fee_chipbits", "")
+    if not node_id:
+        raise ValueError("renew_reward_node transactions must declare a node_id.")
+    if not renewal_epoch:
+        raise ValueError("renew_reward_node transactions must declare renewal_epoch.")
+    _validate_declared_endpoint(declared_host, declared_port, kind=RENEW_REWARD_NODE_KIND)
+    if not renewal_fee_chipbits or int(renewal_fee_chipbits) < 0:
+        raise ValueError("renew_reward_node transactions must declare a non-negative renewal_fee_chipbits.")
+    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
+    if not verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature):
+        raise ValueError("renew_reward_node transaction owner signature is invalid.")
+
+
 def _validate_node_metadata_common(transaction: Transaction) -> None:
     owner_pubkey_hex = transaction.metadata.get("owner_pubkey_hex", "")
     owner_signature_hex = transaction.metadata.get("owner_signature_hex", "")
@@ -285,3 +437,13 @@ def _validate_node_metadata_common(transaction: Transaction) -> None:
         raise ValueError("Special node transactions must declare owner_pubkey_hex.")
     if not owner_signature_hex:
         raise ValueError("Special node transactions must declare owner_signature_hex.")
+
+
+def _validate_declared_endpoint(host: str, port: str, *, kind: str) -> None:
+    if not host:
+        raise ValueError(f"{kind} transactions must declare declared_host.")
+    if not port:
+        raise ValueError(f"{kind} transactions must declare declared_port.")
+    port_value = int(port)
+    if port_value <= 0 or port_value > 65535:
+        raise ValueError(f"{kind} transactions must declare a valid declared_port.")

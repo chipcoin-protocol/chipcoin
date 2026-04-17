@@ -1,0 +1,15 @@
+{
+  "network": "devnet",
+  "storage_path": "run/rewards/devnet-observer.sqlite3",
+  "node_data_path": "run/node/node-devnet.sqlite3",
+  "epoch_length_blocks": 100,
+  "warmup_epochs": 1,
+  "required_observations_per_epoch": 100,
+  "min_successful_observations": 75,
+  "per_public_ipv4_cap": 2,
+  "per_subnet_v4_prefix": 24,
+  "per_subnet_cap": 3,
+  "fingerprint_cap": null,
+  "observation_timeout_seconds": 5.0,
+  "observation_retry_count": 1
+}

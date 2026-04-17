@@ -7,11 +7,14 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from chipcoin.consensus.epoch_settlement import RewardAttestation, RewardAttestationBundle, RewardSettlement, RewardSettlementEntry
 from chipcoin.consensus.models import Block
+from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, snapshot_checksum, write_snapshot_file
 from chipcoin.node.service import NodeService
 from chipcoin.node.sync import SyncManager
+from chipcoin.storage.native_rewards import StoredEpochSettlement, StoredRewardAttestationBundle
 
 
 def _make_service(database_path: Path, *, start_time: int) -> NodeService:
@@ -95,6 +98,92 @@ def test_snapshot_v2_signed_import_roundtrip() -> None:
         assert imported["trusted_signature_count"] == 1
         assert target.chain_tip() is not None
         assert target.chain_tip().block_hash == source.chain_tip().block_hash
+
+
+def test_snapshot_roundtrip_preserves_native_reward_registry_and_payload_tables() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 4, "CHCminer-source")
+        source.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-a",
+                payout_address="CHCreward-node-a",
+                owner_pubkey=bytes.fromhex("11" * 33),
+                registered_height=2,
+                last_renewed_height=3,
+                node_pubkey=bytes.fromhex("22" * 33),
+                declared_host="127.0.0.1",
+                declared_port=19001,
+                reward_registration=True,
+            )
+        )
+        source.reward_attestations.replace_all(
+            [
+                StoredRewardAttestationBundle(
+                    txid="aa" * 32,
+                    block_height=3,
+                    bundle=RewardAttestationBundle(
+                        epoch_index=0,
+                        bundle_window_index=1,
+                        bundle_submitter_node_id="reward-node-a",
+                        attestations=(
+                            RewardAttestation(
+                                epoch_index=0,
+                                check_window_index=1,
+                                candidate_node_id="reward-node-a",
+                                verifier_node_id="reward-node-a",
+                                result_code="pass",
+                                observed_sync_gap=0,
+                                endpoint_commitment="127.0.0.1:19001",
+                                concentration_key="ip:127.0.0.1",
+                                signature_hex="ab",
+                            ),
+                        ),
+                    ),
+                )
+            ]
+        )
+        source.reward_settlements.replace_all(
+            [
+                StoredEpochSettlement(
+                    txid="bb" * 32,
+                    block_height=3,
+                    settlement=RewardSettlement(
+                        epoch_index=0,
+                        epoch_start_height=0,
+                        epoch_end_height=99,
+                        epoch_seed_hex="33" * 32,
+                        policy_version="native-v1-test",
+                        submission_mode="manual",
+                        candidate_summary_root="44" * 32,
+                        verified_nodes_root="55" * 32,
+                        rewarded_nodes_root="66" * 32,
+                        rewarded_node_count=1,
+                        distributed_node_reward_chipbits=1234,
+                        undistributed_node_reward_chipbits=0,
+                        reward_entries=(
+                            RewardSettlementEntry(
+                                node_id="reward-node-a",
+                                payout_address="CHCreward-node-a",
+                                reward_chipbits=1234,
+                                selection_rank=0,
+                                concentration_key="ip:127.0.0.1",
+                                final_confirmation_passed=True,
+                            ),
+                        ),
+                    ),
+                )
+            ]
+        )
+        snapshot_path = Path(tempdir) / "snapshot-native.bin"
+        source.export_snapshot_file(snapshot_path)
+
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        target.import_snapshot_file(snapshot_path)
+
+        assert target.node_registry.list_records() == source.node_registry.list_records()
+        assert target.reward_attestations.list_bundles() == source.reward_attestations.list_bundles()
+        assert target.reward_settlements.list_settlements() == source.reward_settlements.list_settlements()
 
 
 def test_sync_manager_downloads_only_delta_after_snapshot_import() -> None:

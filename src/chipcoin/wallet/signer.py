@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..consensus.models import ChipbitAmount, OutPoint, Transaction, TxInput, TxOutput
+from ..consensus.epoch_settlement import RewardAttestation, reward_attestation_signature_digest
 from ..consensus.nodes import special_node_transaction_signature_digest
 from ..consensus.validation import transaction_signature_digest
 from ..crypto.addresses import is_valid_address, public_key_to_address
@@ -148,3 +149,73 @@ class TransactionSigner:
         signed_metadata = dict(metadata)
         signed_metadata["owner_signature_hex"] = self.sign(special_node_transaction_signature_digest(unsigned)).hex()
         return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+
+    def build_register_reward_node_transaction(
+        self,
+        *,
+        node_id: str,
+        payout_address: str,
+        node_public_key_hex: str,
+        declared_host: str,
+        declared_port: int,
+        registration_fee_chipbits: int,
+    ) -> Transaction:
+        """Construct and sign a native `register_reward_node` transaction."""
+
+        if not node_id:
+            raise ValueError("Node id must not be empty.")
+        if not is_valid_address(payout_address):
+            raise ValueError("Payout address must be a valid CHC address.")
+        if not node_public_key_hex:
+            raise ValueError("Node public key hex must not be empty.")
+        metadata = {
+            "kind": "register_reward_node",
+            "node_id": node_id,
+            "payout_address": payout_address,
+            "node_pubkey_hex": node_public_key_hex,
+            "declared_host": declared_host,
+            "declared_port": str(declared_port),
+            "registration_fee_chipbits": str(registration_fee_chipbits),
+            "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
+            "owner_signature_hex": "",
+        }
+        unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+        signed_metadata = dict(metadata)
+        signed_metadata["owner_signature_hex"] = self.sign(special_node_transaction_signature_digest(unsigned)).hex()
+        return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+
+    def build_renew_reward_node_transaction(
+        self,
+        *,
+        node_id: str,
+        renewal_epoch: int,
+        declared_host: str,
+        declared_port: int,
+        renewal_fee_chipbits: int,
+    ) -> Transaction:
+        """Construct and sign a native `renew_reward_node` transaction."""
+
+        if not node_id:
+            raise ValueError("Node id must not be empty.")
+        metadata = {
+            "kind": "renew_reward_node",
+            "node_id": node_id,
+            "renewal_epoch": str(renewal_epoch),
+            "declared_host": declared_host,
+            "declared_port": str(declared_port),
+            "renewal_fee_chipbits": str(renewal_fee_chipbits),
+            "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
+            "owner_signature_hex": "",
+        }
+        unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+        signed_metadata = dict(metadata)
+        signed_metadata["owner_signature_hex"] = self.sign(special_node_transaction_signature_digest(unsigned)).hex()
+        return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+
+    def sign_reward_attestation(self, attestation: RewardAttestation) -> RewardAttestation:
+        """Sign one native reward attestation."""
+
+        return replace(
+            attestation,
+            signature_hex=self.sign(reward_attestation_signature_digest(attestation)).hex(),
+        )

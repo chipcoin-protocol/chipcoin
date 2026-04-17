@@ -8,11 +8,15 @@ import json
 import logging
 import secrets
 import sys
+from dataclasses import replace
 from pathlib import Path
 from urllib import error, request
 from urllib.parse import urlparse
 
 from ..config import DEFAULT_NETWORK, NETWORK_CONFIGS, get_network_config, resolve_data_path
+from ..consensus.epoch_settlement import RewardAttestation
+from ..consensus.models import Transaction
+from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
 from ..crypto.keys import parse_private_key_hex, serialize_private_key_hex, serialize_public_key_hex
 from ..miner.config import MinerWorkerConfig
@@ -86,6 +90,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "tip":
             assert service is not None
             _print_json(service.tip_diagnostics())
+            return 0
+
+        if args.command == "mine-local-block":
+            assert service is not None
+            mined_block = _mine_local_candidate_block(service, args.payout_address)
+            _print_json(
+                {
+                    "accepted": True,
+                    "block_hash": mined_block.block_hash(),
+                    "height": service.chain_tip().height if service.chain_tip() is not None else None,
+                    "tx_count": len(mined_block.transactions),
+                }
+            )
             return 0
 
         if args.command == "block":
@@ -173,16 +190,14 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(
                 {
                     **payload,
-                    "reward_per_winner_chc": format_amount_chc(int(payload["reward_per_winner_chipbits"])),
                     "miner_subsidy_chc": format_amount_chc(int(payload["miner_subsidy_chipbits"])),
-                    "node_reward_pool_chc": format_amount_chc(int(payload["node_reward_pool_chipbits"])),
-                    "remainder_to_miner_chc": format_amount_chc(int(payload["remainder_to_miner_chipbits"])),
-                    "selected_winners": [
+                    "node_reward_chc": format_amount_chc(int(payload["node_reward_chipbits"])),
+                    "rewarded_recipients": [
                         {
-                            **winner,
-                            "reward_chc": format_amount_chc(int(winner["reward_chipbits"])),
+                            **recipient,
+                            "reward_chc": format_amount_chc(int(recipient["reward_chipbits"])),
                         }
-                        for winner in payload["selected_winners"]
+                        for recipient in payload["rewarded_recipients"]
                     ],
                 }
             )
@@ -253,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
                         **row,
                         "miner_subsidy_chc": format_amount_chc(int(row["miner_subsidy_chipbits"])),
                         "fees_chc": format_amount_chc(int(row["fees_chipbits"])),
-                        "remainder_from_node_pool_chc": format_amount_chc(int(row["remainder_from_node_pool_chipbits"])),
+                        "node_reward_chc": format_amount_chc(int(row["node_reward_chipbits"])),
                     }
                     for row in service.mining_history(args.address, limit=args.limit, descending=not args.ascending)
                 ]
@@ -266,14 +281,32 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(
                 {
                     **payload,
-                    "current_miner_subsidy_chc": format_amount_chc(int(payload["current_miner_subsidy_chipbits"])),
-                    "current_node_reward_pool_chc": format_amount_chc(int(payload["current_node_reward_pool_chipbits"])),
-                    "total_emitted_supply_chc": format_amount_chc(int(payload["total_emitted_supply_chipbits"])),
-                    "circulating_spendable_supply_chc": format_amount_chc(
-                        int(payload["circulating_spendable_supply_chipbits"])
-                    ),
+                    "next_block_miner_subsidy_chc": format_amount_chc(int(payload["next_block_miner_subsidy_chipbits"])),
+                    "next_block_node_reward_chc": format_amount_chc(int(payload["next_block_node_reward_chipbits"])),
+                    "minted_supply_chc": format_amount_chc(int(payload["minted_supply_chipbits"])),
+                    "miner_minted_supply_chc": format_amount_chc(int(payload["miner_minted_supply_chipbits"])),
+                    "node_minted_supply_chc": format_amount_chc(int(payload["node_minted_supply_chipbits"])),
+                    "circulating_supply_chc": format_amount_chc(int(payload["circulating_supply_chipbits"])),
                     "immature_supply_chc": format_amount_chc(int(payload["immature_supply_chipbits"])),
                     "max_supply_chc": format_amount_chc(int(payload["max_supply_chipbits"])),
+                    "remaining_supply_chc": format_amount_chc(int(payload["remaining_supply_chipbits"])),
+                }
+            )
+            return 0
+
+        if args.command == "supply":
+            assert service is not None
+            payload = service.supply_snapshot()
+            _print_json(
+                {
+                    **payload,
+                    "max_supply_chc": format_amount_chc(int(payload["max_supply_chipbits"])),
+                    "minted_supply_chc": format_amount_chc(int(payload["minted_supply_chipbits"])),
+                    "miner_minted_supply_chc": format_amount_chc(int(payload["miner_minted_supply_chipbits"])),
+                    "node_minted_supply_chc": format_amount_chc(int(payload["node_minted_supply_chipbits"])),
+                    "burned_supply_chc": format_amount_chc(int(payload["burned_supply_chipbits"])),
+                    "immature_supply_chc": format_amount_chc(int(payload["immature_supply_chipbits"])),
+                    "circulating_supply_chc": format_amount_chc(int(payload["circulating_supply_chipbits"])),
                     "remaining_supply_chc": format_amount_chc(int(payload["remaining_supply_chipbits"])),
                 }
             )
@@ -287,9 +320,7 @@ def main(argv: list[str] | None = None) -> int:
                         **row,
                         "total_miner_subsidy_chc": format_amount_chc(int(row["total_miner_subsidy_chipbits"])),
                         "total_fees_chc": format_amount_chc(int(row["total_fees_chipbits"])),
-                        "total_remainder_from_node_pool_chc": format_amount_chc(
-                            int(row["total_remainder_from_node_pool_chipbits"])
-                        ),
+                        "total_node_reward_chc": format_amount_chc(int(row["total_node_reward_chipbits"])),
                     }
                     for row in service.top_miners(limit=args.limit)
                 ]
@@ -331,12 +362,13 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(
                 {
                     **payload,
-                    "current_miner_subsidy_chc": format_amount_chc(int(payload["current_miner_subsidy_chipbits"])),
-                    "current_node_reward_pool_chc": format_amount_chc(int(payload["current_node_reward_pool_chipbits"])),
-                    "total_emitted_supply_chc": format_amount_chc(int(payload["total_emitted_supply_chipbits"])),
-                    "circulating_spendable_supply_chc": format_amount_chc(
-                        int(payload["circulating_spendable_supply_chipbits"])
-                    ),
+                    "next_block_miner_subsidy_chc": format_amount_chc(int(payload["next_block_miner_subsidy_chipbits"])),
+                    "next_block_node_reward_chc": format_amount_chc(int(payload["next_block_node_reward_chipbits"])),
+                    "minted_supply_chc": format_amount_chc(int(payload["minted_supply_chipbits"])),
+                    "miner_minted_supply_chc": format_amount_chc(int(payload["miner_minted_supply_chipbits"])),
+                    "node_minted_supply_chc": format_amount_chc(int(payload["node_minted_supply_chipbits"])),
+                    "burned_supply_chc": format_amount_chc(int(payload["burned_supply_chipbits"])),
+                    "circulating_supply_chc": format_amount_chc(int(payload["circulating_supply_chipbits"])),
                     "immature_supply_chc": format_amount_chc(int(payload["immature_supply_chipbits"])),
                     "max_supply_chc": format_amount_chc(int(payload["max_supply_chipbits"])),
                     "remaining_supply_chc": format_amount_chc(int(payload["remaining_supply_chipbits"])),
@@ -489,6 +521,92 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "register-reward-node":
+            assert service is not None
+            wallet_key = _load_wallet_key(Path(args.wallet_file))
+            transaction = _build_register_reward_node_transaction(service, wallet_key, args)
+            submitted = _submit_special_transaction(service, transaction, args.connect)
+            _print_json(
+                {
+                    "txid": transaction.txid(),
+                    "node_id": args.node_id,
+                    "payout_address": args.payout_address,
+                    "node_pubkey_hex": args.node_pubkey_hex,
+                    "declared_host": args.declared_host,
+                    "declared_port": args.declared_port,
+                    "submitted": submitted,
+                }
+            )
+            return 0
+
+        if args.command == "renew-reward-node":
+            assert service is not None
+            wallet_key = _load_wallet_key(Path(args.wallet_file))
+            current_epoch = service.next_block_epoch()
+            transaction = _build_renew_reward_node_transaction(service, wallet_key, args, current_epoch=current_epoch)
+            submitted = _submit_special_transaction(service, transaction, args.connect)
+            _print_json(
+                {
+                    "txid": transaction.txid(),
+                    "node_id": args.node_id,
+                    "current_epoch": current_epoch,
+                    "declared_host": args.declared_host,
+                    "declared_port": args.declared_port,
+                    "submitted": submitted,
+                }
+            )
+            return 0
+
+        if args.command == "reward-epoch-seed":
+            assert service is not None
+            _print_json(service.native_reward_epoch_seed_diagnostics(epoch_index=args.epoch_index))
+            return 0
+
+        if args.command == "reward-epoch-state":
+            assert service is not None
+            _print_json(service.native_reward_epoch_state(epoch_index=args.epoch_index, node_id=args.node_id))
+            return 0
+
+        if args.command == "reward-assignments":
+            assert service is not None
+            _print_json(service.native_reward_assignments(epoch_index=args.epoch_index, node_id=args.node_id))
+            return 0
+
+        if args.command == "reward-attestations":
+            assert service is not None
+            _print_json(service.native_reward_attestation_diagnostics(epoch_index=args.epoch_index))
+            return 0
+
+        if args.command == "reward-settlements":
+            assert service is not None
+            _print_json(service.native_reward_settlement_diagnostics(epoch_index=args.epoch_index))
+            return 0
+
+        if args.command == "reward-settlement-preview":
+            assert service is not None
+            _print_json(service.native_reward_settlement_preview(epoch_index=args.epoch_index))
+            return 0
+
+        if args.command == "reward-settlement-report":
+            assert service is not None
+            _print_json(service.native_reward_settlement_report(epoch_index=args.epoch_index))
+            return 0
+
+        if args.command == "submit-reward-attestation-bundle":
+            assert service is not None
+            wallet_key = _load_wallet_key(Path(args.wallet_file)) if args.wallet_file else None
+            transaction = _build_reward_attestation_bundle_transaction(service, args, wallet_key)
+            submitted = _submit_special_transaction(service, transaction, args.connect)
+            _print_json({"txid": transaction.txid(), "submitted": submitted, "raw_hex": serialize_transaction(transaction).hex()})
+            return 0
+
+        if args.command == "submit-reward-settle-epoch":
+            assert service is not None
+            transaction = _build_reward_settle_epoch_transaction(args)
+            submitted = _submit_special_transaction(service, transaction, args.connect)
+            _print_json({"txid": transaction.txid(), "submitted": submitted, "raw_hex": serialize_transaction(transaction).hex()})
+            return 0
+
         if args.command == "wallet-build":
             assert service is not None
             wallet_key = _load_wallet_key(Path(args.wallet_file))
@@ -602,6 +720,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser("status")
     subparsers.add_parser("tip")
+    mine_local_block = subparsers.add_parser("mine-local-block")
+    mine_local_block.add_argument("--payout-address", required=True)
 
     block_parser = subparsers.add_parser("block")
     group = block_parser.add_mutually_exclusive_group(required=True)
@@ -649,6 +769,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mining_history_parser.add_argument("--limit", type=int, default=50)
     mining_history_parser.add_argument("--ascending", action="store_true")
     subparsers.add_parser("economy-summary")
+    subparsers.add_parser("supply")
     top_miners_parser = subparsers.add_parser("top-miners")
     top_miners_parser.add_argument("--limit", type=int, default=10)
     top_nodes_parser = subparsers.add_parser("top-nodes")
@@ -707,6 +828,43 @@ def _build_parser() -> argparse.ArgumentParser:
     renew_node.add_argument("--wallet-file", required=True)
     renew_node.add_argument("--node-id", required=True)
     renew_node.add_argument("--connect")
+    register_reward_node = subparsers.add_parser("register-reward-node")
+    register_reward_node.add_argument("--wallet-file", required=True)
+    register_reward_node.add_argument("--node-id", required=True)
+    register_reward_node.add_argument("--payout-address", required=True)
+    register_reward_node.add_argument("--node-pubkey-hex", required=True)
+    register_reward_node.add_argument("--declared-host", required=True)
+    register_reward_node.add_argument("--declared-port", required=True, type=int)
+    register_reward_node.add_argument("--connect")
+    renew_reward_node = subparsers.add_parser("renew-reward-node")
+    renew_reward_node.add_argument("--wallet-file", required=True)
+    renew_reward_node.add_argument("--node-id", required=True)
+    renew_reward_node.add_argument("--declared-host", required=True)
+    renew_reward_node.add_argument("--declared-port", required=True, type=int)
+    renew_reward_node.add_argument("--connect")
+    reward_epoch_seed = subparsers.add_parser("reward-epoch-seed")
+    reward_epoch_seed.add_argument("--epoch-index", type=int)
+    reward_epoch_state = subparsers.add_parser("reward-epoch-state")
+    reward_epoch_state.add_argument("--epoch-index", type=int)
+    reward_epoch_state.add_argument("--node-id")
+    reward_assignments = subparsers.add_parser("reward-assignments")
+    reward_assignments.add_argument("--epoch-index", type=int)
+    reward_assignments.add_argument("--node-id")
+    reward_attestations = subparsers.add_parser("reward-attestations")
+    reward_attestations.add_argument("--epoch-index", type=int)
+    reward_settlements = subparsers.add_parser("reward-settlements")
+    reward_settlements.add_argument("--epoch-index", type=int)
+    reward_settlement_preview = subparsers.add_parser("reward-settlement-preview")
+    reward_settlement_preview.add_argument("--epoch-index", type=int)
+    reward_settlement_report = subparsers.add_parser("reward-settlement-report")
+    reward_settlement_report.add_argument("--epoch-index", type=int)
+    submit_reward_attestation_bundle = subparsers.add_parser("submit-reward-attestation-bundle")
+    submit_reward_attestation_bundle.add_argument("--bundle-file", required=True)
+    submit_reward_attestation_bundle.add_argument("--wallet-file")
+    submit_reward_attestation_bundle.add_argument("--connect")
+    submit_reward_settlement = subparsers.add_parser("submit-reward-settle-epoch")
+    submit_reward_settlement.add_argument("--settlement-file", required=True)
+    submit_reward_settlement.add_argument("--connect")
 
     wallet_build = subparsers.add_parser("wallet-build")
     wallet_build.add_argument("--wallet-file", required=True)
@@ -835,6 +993,19 @@ def _run_miner_worker(args) -> dict[str, object]:
     )
     worker = MinerWorker(config)
     return worker.run()
+
+
+def _mine_local_candidate_block(service: NodeService, payout_address: str):
+    """Build, solve, and apply one local candidate block."""
+
+    candidate = service.build_candidate_block(payout_address).block
+    for nonce in range(2_000_000):
+        header = replace(candidate.header, nonce=nonce)
+        if verify_proof_of_work(header):
+            solved = replace(candidate, header=header)
+            service.apply_block(solved)
+            return solved
+    raise ValueError("unable to find a valid nonce for the local candidate block")
 
 
 def _submit_raw_transaction_via_http(args) -> dict[str, object]:
@@ -1017,6 +1188,140 @@ def _build_renew_node_transaction(service: NodeService, wallet_key: WalletKey, a
     if record.owner_pubkey != wallet_key.public_key:
         raise ValueError("Wallet does not match the registered node owner.")
     return signer.build_renew_node_transaction(node_id=args.node_id, renewal_epoch=current_epoch)
+
+
+def _build_register_reward_node_transaction(service: NodeService, wallet_key: WalletKey, args) -> Transaction:
+    """Build a signed native `register_reward_node` transaction."""
+
+    signer = TransactionSigner(wallet_key)
+    if service.get_registered_node(args.node_id) is not None:
+        raise ValueError("Node id is already registered.")
+    if service.get_registered_node_by_owner(wallet_key.public_key) is not None:
+        raise ValueError("This wallet owner is already registered to a node.")
+    return signer.build_register_reward_node_transaction(
+        node_id=args.node_id,
+        payout_address=args.payout_address,
+        node_public_key_hex=args.node_pubkey_hex,
+        declared_host=args.declared_host,
+        declared_port=args.declared_port,
+        registration_fee_chipbits=service.params.register_node_fee_chipbits,
+    )
+
+
+def _build_renew_reward_node_transaction(service: NodeService, wallet_key: WalletKey, args, *, current_epoch: int) -> Transaction:
+    """Build a signed native `renew_reward_node` transaction."""
+
+    signer = TransactionSigner(wallet_key)
+    record = service.get_registered_node(args.node_id)
+    if record is None:
+        raise ValueError("Node id is not registered.")
+    if record.owner_pubkey != wallet_key.public_key:
+        raise ValueError("Wallet does not match the registered node owner.")
+    return signer.build_renew_reward_node_transaction(
+        node_id=args.node_id,
+        renewal_epoch=current_epoch,
+        declared_host=args.declared_host,
+        declared_port=args.declared_port,
+        renewal_fee_chipbits=service.params.renew_node_fee_chipbits,
+    )
+
+
+def _build_reward_attestation_bundle_transaction(service: NodeService, args, wallet_key: WalletKey | None) -> Transaction:
+    """Build a native `reward_attestation_bundle` transaction from JSON input."""
+
+    payload = json.loads(Path(args.bundle_file).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Bundle file must contain a JSON object.")
+    raw_attestations = payload.get("attestations", [])
+    if not isinstance(raw_attestations, list):
+        raise ValueError("Bundle file attestations must be a JSON array.")
+    signer = None if wallet_key is None else TransactionSigner(wallet_key)
+    attestations: list[RewardAttestation] = []
+    for raw in raw_attestations:
+        if not isinstance(raw, dict):
+            raise ValueError("Bundle attestation entries must be objects.")
+        attestation = RewardAttestation(
+            epoch_index=int(raw["epoch_index"]),
+            check_window_index=int(raw["check_window_index"]),
+            candidate_node_id=str(raw["candidate_node_id"]),
+            verifier_node_id=str(raw["verifier_node_id"]),
+            result_code=str(raw["result_code"]),
+            observed_sync_gap=int(raw["observed_sync_gap"]),
+            endpoint_commitment=str(raw["endpoint_commitment"]),
+            concentration_key=str(raw["concentration_key"]),
+            signature_hex=str(raw.get("signature_hex", "")),
+        )
+        if wallet_key is not None:
+            verifier_record = service.get_registered_node(attestation.verifier_node_id)
+            if verifier_record is None:
+                raise ValueError(
+                    f"Verifier node_id is not registered locally: {attestation.verifier_node_id}"
+                )
+            if verifier_record.node_pubkey is None:
+                raise ValueError(
+                    f"Registered verifier node is missing node_pubkey: {attestation.verifier_node_id}"
+                )
+            if verifier_record.node_pubkey != wallet_key.public_key:
+                raise ValueError(
+                    "Wallet public key does not match the registered verifier node_pubkey "
+                    f"for verifier_node_id={attestation.verifier_node_id}"
+                )
+        if signer is not None:
+            attestation = signer.sign_reward_attestation(attestation)
+        attestations.append(attestation)
+    metadata = {
+        "kind": "reward_attestation_bundle",
+        "epoch_index": str(payload["epoch_index"]),
+        "bundle_window_index": str(payload["bundle_window_index"]),
+        "bundle_submitter_node_id": str(payload["bundle_submitter_node_id"]),
+        "attestation_count": str(len(attestations)),
+        "attestations_json": json.dumps(
+            [
+                {
+                    "epoch_index": attestation.epoch_index,
+                    "check_window_index": attestation.check_window_index,
+                    "candidate_node_id": attestation.candidate_node_id,
+                    "verifier_node_id": attestation.verifier_node_id,
+                    "result_code": attestation.result_code,
+                    "observed_sync_gap": attestation.observed_sync_gap,
+                    "endpoint_commitment": attestation.endpoint_commitment,
+                    "concentration_key": attestation.concentration_key,
+                    "signature_hex": attestation.signature_hex,
+                }
+                for attestation in attestations
+            ],
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    }
+    return Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+
+
+def _build_reward_settle_epoch_transaction(args) -> Transaction:
+    """Build a native `reward_settle_epoch` transaction from JSON input."""
+
+    payload = json.loads(Path(args.settlement_file).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Settlement file must contain a JSON object.")
+    reward_entries = payload.get("reward_entries", [])
+    if not isinstance(reward_entries, list):
+        raise ValueError("Settlement reward_entries must be a JSON array.")
+    metadata = {
+        "kind": "reward_settle_epoch",
+        "epoch_index": str(payload["epoch_index"]),
+        "epoch_start_height": str(payload["epoch_start_height"]),
+        "epoch_end_height": str(payload["epoch_end_height"]),
+        "epoch_seed": str(payload["epoch_seed"]),
+        "policy_version": str(payload["policy_version"]),
+        "candidate_summary_root": str(payload["candidate_summary_root"]),
+        "verified_nodes_root": str(payload["verified_nodes_root"]),
+        "rewarded_nodes_root": str(payload["rewarded_nodes_root"]),
+        "rewarded_node_count": str(payload["rewarded_node_count"]),
+        "distributed_node_reward_chipbits": str(payload["distributed_node_reward_chipbits"]),
+        "undistributed_node_reward_chipbits": str(payload["undistributed_node_reward_chipbits"]),
+        "reward_entries_json": json.dumps(reward_entries, sort_keys=True, separators=(",", ":")),
+    }
+    return Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
 
 
 def _submit_special_transaction(service: NodeService, transaction, connect: str | None) -> bool:

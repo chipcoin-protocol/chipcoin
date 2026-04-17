@@ -25,6 +25,21 @@ from tests.helpers import signed_payment, wallet_key
 TEST_PARAMS = replace(MAINNET_PARAMS, coinbase_maturity=0)
 
 
+def _local_socket_available() -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+    except OSError:
+        return False
+    return True
+
+
+pytestmark = pytest.mark.skipif(
+    not _local_socket_available(),
+    reason="local TCP binds are unavailable in this environment",
+)
+
+
 def _http_json(method: str, url: str, body: dict[str, object] | None = None) -> dict[str, object]:
     encoded = None if body is None else json.dumps(body, sort_keys=True).encode("utf-8")
     headers = {"Accept": "application/json"}

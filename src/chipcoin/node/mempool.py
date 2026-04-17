@@ -7,6 +7,7 @@ from typing import Iterable
 
 from ..consensus.models import Transaction
 from ..consensus.serialization import serialize_transaction
+from ..consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND, REWARD_SETTLE_EPOCH_KIND
 from ..consensus.nodes import is_special_node_transaction
 from ..consensus.utxo import InMemoryUtxoView
 from ..consensus.validation import ValidationError, is_coinbase_transaction, validate_transaction
@@ -141,7 +142,7 @@ class MempoolManager:
             raise ValidationError("Transaction exceeds mempool output-count policy.")
         if fee_chipbits < 0:
             raise ValidationError("Transaction fee cannot be negative.")
-        if not is_special_node_transaction(transaction) and fee_chipbits < self.policy.min_fee_chipbits_normal_tx:
+        if not _is_zero_fee_native_reward_transaction(transaction) and not is_special_node_transaction(transaction) and fee_chipbits < self.policy.min_fee_chipbits_normal_tx:
             raise ValidationError("Transaction fee is below the configured mempool minimum.")
 
         for output in transaction.outputs:
@@ -188,3 +189,9 @@ class MempoolManager:
         if self.known_chain_transaction_lookup is None:
             return False
         return self.known_chain_transaction_lookup(txid) is not None
+
+
+def _is_zero_fee_native_reward_transaction(transaction: Transaction) -> bool:
+    """Return whether a transaction is a native zero-IO reward control payload."""
+
+    return transaction.metadata.get("kind") in {REWARD_ATTESTATION_BUNDLE_KIND, REWARD_SETTLE_EPOCH_KIND}

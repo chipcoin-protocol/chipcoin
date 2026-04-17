@@ -13,11 +13,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from ..consensus.models import BlockHeader, OutPoint, TxOutput
+from ..consensus.epoch_settlement import parse_reward_attestation_bundle_metadata, parse_reward_settlement_metadata
 from ..consensus.nodes import NodeRecord
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import calculate_next_work_required, header_work, verify_proof_of_work
 from ..consensus.serialization import deserialize_block_header, serialize_block_header
 from ..consensus.utxo import UtxoEntry
+from ..storage.native_rewards import StoredEpochSettlement, StoredRewardAttestationBundle
 
 
 SNAPSHOT_KIND = "chipcoin-chainstate-snapshot"
@@ -55,6 +57,8 @@ class LoadedSnapshot:
     headers: tuple[SnapshotHeaderRecord, ...]
     utxos: tuple[tuple[OutPoint, UtxoEntry], ...]
     node_registry_records: tuple[NodeRecord, ...]
+    reward_attestation_bundles: tuple[StoredRewardAttestationBundle, ...] = ()
+    epoch_settlements: tuple[StoredEpochSettlement, ...] = ()
     valid_signature_count: int = 0
     trusted_signature_count: int = 0
     accepted_signer_pubkeys: tuple[str, ...] = ()
@@ -89,6 +93,8 @@ def _snapshot_body(payload: dict[str, object]) -> dict[str, object]:
         "headers": payload.get("headers", []),
         "utxos": payload.get("utxos", []),
         "node_registry": payload.get("node_registry", []),
+        "reward_attestation_bundles": payload.get("reward_attestation_bundles", []),
+        "epoch_settlements": payload.get("epoch_settlements", []),
     }
 
 
@@ -367,6 +373,67 @@ def decode_snapshot_payload(
                 owner_pubkey=bytes.fromhex(str(raw_record["owner_pubkey_hex"])),
                 registered_height=int(raw_record["registered_height"]),
                 last_renewed_height=int(raw_record["last_renewed_height"]),
+                node_pubkey=None
+                if raw_record.get("node_pubkey_hex") in (None, "")
+                else bytes.fromhex(str(raw_record["node_pubkey_hex"])),
+                declared_host=None if raw_record.get("declared_host") in (None, "") else str(raw_record["declared_host"]),
+                declared_port=None if raw_record.get("declared_port") in (None, "") else int(raw_record["declared_port"]),
+                reward_registration=bool(raw_record.get("reward_registration", False)),
+            )
+        )
+
+    raw_bundles = payload.get("reward_attestation_bundles", [])
+    if not isinstance(raw_bundles, list):
+        raise ValueError("snapshot reward_attestation_bundles must be a list")
+    reward_attestation_bundles: list[StoredRewardAttestationBundle] = []
+    for raw_bundle in raw_bundles:
+        if not isinstance(raw_bundle, dict):
+            raise ValueError("snapshot reward attestation bundle must be an object")
+        bundle = parse_reward_attestation_bundle_metadata(
+            {
+                "epoch_index": str(raw_bundle["epoch_index"]),
+                "bundle_window_index": str(raw_bundle["bundle_window_index"]),
+                "bundle_submitter_node_id": str(raw_bundle["bundle_submitter_node_id"]),
+                "attestation_count": str(raw_bundle["attestation_count"]),
+                "attestations_json": json.dumps(raw_bundle["attestations"], sort_keys=True, separators=(",", ":")),
+            }
+        )
+        reward_attestation_bundles.append(
+            StoredRewardAttestationBundle(
+                txid=str(raw_bundle["txid"]),
+                block_height=int(raw_bundle["block_height"]),
+                bundle=bundle,
+            )
+        )
+
+    raw_settlements = payload.get("epoch_settlements", [])
+    if not isinstance(raw_settlements, list):
+        raise ValueError("snapshot epoch_settlements must be a list")
+    epoch_settlements: list[StoredEpochSettlement] = []
+    for raw_settlement in raw_settlements:
+        if not isinstance(raw_settlement, dict):
+            raise ValueError("snapshot epoch settlement must be an object")
+        settlement = parse_reward_settlement_metadata(
+            {
+                "epoch_index": str(raw_settlement["epoch_index"]),
+                "epoch_start_height": str(raw_settlement["epoch_start_height"]),
+                "epoch_end_height": str(raw_settlement["epoch_end_height"]),
+                "epoch_seed": str(raw_settlement["epoch_seed_hex"]),
+                "policy_version": str(raw_settlement["policy_version"]),
+                "candidate_summary_root": str(raw_settlement["candidate_summary_root"]),
+                "verified_nodes_root": str(raw_settlement["verified_nodes_root"]),
+                "rewarded_nodes_root": str(raw_settlement["rewarded_nodes_root"]),
+                "rewarded_node_count": str(raw_settlement["rewarded_node_count"]),
+                "distributed_node_reward_chipbits": str(raw_settlement["distributed_node_reward_chipbits"]),
+                "undistributed_node_reward_chipbits": str(raw_settlement["undistributed_node_reward_chipbits"]),
+                "reward_entries_json": json.dumps(raw_settlement["reward_entries"], sort_keys=True, separators=(",", ":")),
+            }
+        )
+        epoch_settlements.append(
+            StoredEpochSettlement(
+                txid=str(raw_settlement["txid"]),
+                block_height=int(raw_settlement["block_height"]),
+                settlement=settlement,
             )
         )
 
@@ -375,6 +442,8 @@ def decode_snapshot_payload(
         headers=tuple(headers),
         utxos=tuple(utxos),
         node_registry_records=tuple(node_registry_records),
+        reward_attestation_bundles=tuple(reward_attestation_bundles),
+        epoch_settlements=tuple(epoch_settlements),
         valid_signature_count=valid_signature_count,
         trusted_signature_count=trusted_signature_count,
         accepted_signer_pubkeys=accepted_signer_pubkeys,
@@ -390,6 +459,8 @@ def build_snapshot_payload(
     headers: tuple[SnapshotHeaderRecord, ...],
     utxos: tuple[tuple[OutPoint, UtxoEntry], ...],
     node_registry_records: tuple[NodeRecord, ...],
+    reward_attestation_bundles: tuple[StoredRewardAttestationBundle, ...] = (),
+    epoch_settlements: tuple[StoredEpochSettlement, ...] = (),
     format_version: int = SNAPSHOT_FORMAT_VERSION,
 ) -> dict[str, object]:
     """Build one canonical snapshot payload from live service state."""
@@ -409,6 +480,8 @@ def build_snapshot_payload(
             "header_count": len(headers),
             "utxo_count": len(utxos),
             "node_registry_count": len(node_registry_records),
+            "reward_attestation_bundle_count": len(reward_attestation_bundles),
+            "epoch_settlement_count": len(epoch_settlements),
             "consensus": {
                 "genesis_bits": params.genesis_bits,
                 "difficulty_adjustment_window": params.difficulty_adjustment_window,
@@ -453,8 +526,66 @@ def build_snapshot_payload(
                 "owner_pubkey_hex": record.owner_pubkey.hex(),
                 "registered_height": record.registered_height,
                 "last_renewed_height": record.last_renewed_height,
+                "node_pubkey_hex": None if record.node_pubkey is None else record.node_pubkey.hex(),
+                "declared_host": record.declared_host,
+                "declared_port": record.declared_port,
+                "reward_registration": record.reward_registration,
             }
             for record in node_registry_records
+        ],
+        "reward_attestation_bundles": [
+            {
+                "txid": stored.txid,
+                "block_height": stored.block_height,
+                "epoch_index": stored.bundle.epoch_index,
+                "bundle_window_index": stored.bundle.bundle_window_index,
+                "bundle_submitter_node_id": stored.bundle.bundle_submitter_node_id,
+                "attestation_count": len(stored.bundle.attestations),
+                "attestations": [
+                    {
+                        "epoch_index": attestation.epoch_index,
+                        "check_window_index": attestation.check_window_index,
+                        "candidate_node_id": attestation.candidate_node_id,
+                        "verifier_node_id": attestation.verifier_node_id,
+                        "result_code": attestation.result_code,
+                        "observed_sync_gap": attestation.observed_sync_gap,
+                        "endpoint_commitment": attestation.endpoint_commitment,
+                        "concentration_key": attestation.concentration_key,
+                        "signature_hex": attestation.signature_hex,
+                    }
+                    for attestation in stored.bundle.attestations
+                ],
+            }
+            for stored in reward_attestation_bundles
+        ],
+        "epoch_settlements": [
+            {
+                "txid": stored.txid,
+                "block_height": stored.block_height,
+                "epoch_index": stored.settlement.epoch_index,
+                "epoch_start_height": stored.settlement.epoch_start_height,
+                "epoch_end_height": stored.settlement.epoch_end_height,
+                "epoch_seed_hex": stored.settlement.epoch_seed_hex,
+                "policy_version": stored.settlement.policy_version,
+                "candidate_summary_root": stored.settlement.candidate_summary_root,
+                "verified_nodes_root": stored.settlement.verified_nodes_root,
+                "rewarded_nodes_root": stored.settlement.rewarded_nodes_root,
+                "rewarded_node_count": stored.settlement.rewarded_node_count,
+                "distributed_node_reward_chipbits": stored.settlement.distributed_node_reward_chipbits,
+                "undistributed_node_reward_chipbits": stored.settlement.undistributed_node_reward_chipbits,
+                "reward_entries": [
+                    {
+                        "node_id": entry.node_id,
+                        "payout_address": entry.payout_address,
+                        "reward_chipbits": entry.reward_chipbits,
+                        "selection_rank": entry.selection_rank,
+                        "concentration_key": entry.concentration_key,
+                        "final_confirmation_passed": entry.final_confirmation_passed,
+                    }
+                    for entry in stored.settlement.reward_entries
+                ],
+            }
+            for stored in epoch_settlements
         ],
     }
     if format_version == SNAPSHOT_FORMAT_VERSION_V1:

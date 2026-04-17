@@ -6,9 +6,10 @@ from dataclasses import dataclass, replace
 from functools import cmp_to_key
 
 from ..consensus.economics import subsidy_split_chipbits
+from ..consensus.epoch_settlement import REWARD_SETTLE_EPOCH_KIND, RewardSettlement, parse_reward_settlement_metadata
 from ..consensus.merkle import merkle_root
 from ..consensus.models import Block, BlockHeader, Transaction, TxOutput
-from ..consensus.nodes import NodeRegistryView, RewardedNode, select_rewarded_nodes
+from ..consensus.nodes import NodeRegistryView
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
@@ -45,7 +46,7 @@ def build_coinbase_transaction(
     height: int,
     miner_address: str,
     miner_amount_chipbits: int,
-    rewarded_nodes: tuple[RewardedNode, ...],
+    rewarded_outputs: tuple[TxOutput, ...],
     extra_metadata: dict[str, str] | None = None,
 ) -> Transaction:
     """Build one deterministic coinbase transaction for a candidate block."""
@@ -58,10 +59,7 @@ def build_coinbase_transaction(
         inputs=(),
         outputs=(
             TxOutput(value=miner_amount_chipbits, recipient=miner_address),
-            *tuple(
-                TxOutput(value=rewarded_node.reward_chipbits, recipient=rewarded_node.payout_address)
-                for rewarded_node in rewarded_nodes
-            ),
+            *rewarded_outputs,
         ),
         metadata=metadata,
     )
@@ -90,45 +88,47 @@ class MiningCoordinator:
         node_registry_view: NodeRegistryView,
         confirmed_transaction_ids: set[str] | None = None,
         extra_coinbase_metadata: dict[str, str] | None = None,
+        system_transactions: tuple[Transaction, ...] = (),
     ) -> BlockTemplate:
         """Construct a block template from chainstate and mempool."""
 
         miner_subsidy_chipbits, node_pool_chipbits = subsidy_split_chipbits(height, self.params)
-        rewarded_nodes = select_rewarded_nodes(
-            node_registry_view,
-            height=height,
-            previous_block_hash=previous_block_hash,
-            node_reward_pool_chipbits=node_pool_chipbits,
-            params=self.params,
-        )
         provisional_coinbase = build_coinbase_transaction(
             height=height,
             miner_address=miner_address,
             miner_amount_chipbits=0,
-            rewarded_nodes=rewarded_nodes,
+            rewarded_outputs=(),
         )
         coinbase_weight_units = transaction_weight_units(provisional_coinbase)
-        max_transaction_weight_units = max(0, self.params.max_block_weight - coinbase_weight_units)
+        system_transaction_weight_units = sum(transaction_weight_units(transaction) for transaction in system_transactions)
+        max_transaction_weight_units = max(0, self.params.max_block_weight - coinbase_weight_units - system_transaction_weight_units)
         selected_entries = self._select_mempool_entries(
             mempool_entries,
             max_transaction_weight_units=max_transaction_weight_units,
             confirmed_transaction_ids=confirmed_transaction_ids or set(),
         )
         total_fees_chipbits = sum(entry.fee for entry in selected_entries)
-        distributed_node_reward_chipbits = sum(rewarded_node.reward_chipbits for rewarded_node in rewarded_nodes)
-        miner_amount_chipbits = (
-            miner_subsidy_chipbits
-            + total_fees_chipbits
-            + (node_pool_chipbits - distributed_node_reward_chipbits)
-        )
+        miner_amount_chipbits = miner_subsidy_chipbits + total_fees_chipbits
+        included_transactions = [*system_transactions, *(entry.transaction for entry in selected_entries)]
+        settlement = _included_epoch_settlement(included_transactions, height=height)
+        rewarded_outputs = _reward_outputs_for_settlement(settlement)
+        coinbase_metadata = dict(extra_coinbase_metadata or {})
+        if settlement is not None:
+            coinbase_metadata.update(
+                {
+                    "reward_settlement_epoch": str(settlement.epoch_index),
+                    "reward_settlement_rewarded_count": str(settlement.rewarded_node_count),
+                    "reward_settlement_submission_mode": settlement.submission_mode,
+                }
+            )
         coinbase = build_coinbase_transaction(
             height=height,
             miner_address=miner_address,
             miner_amount_chipbits=miner_amount_chipbits,
-            rewarded_nodes=rewarded_nodes,
-            extra_metadata=extra_coinbase_metadata,
+            rewarded_outputs=rewarded_outputs,
+            extra_metadata=coinbase_metadata or None,
         )
-        transactions = (coinbase, *(entry.transaction for entry in selected_entries))
+        transactions = (coinbase, *system_transactions, *(entry.transaction for entry in selected_entries))
         header = BlockHeader(
             version=1,
             previous_block_hash=previous_block_hash,
@@ -218,6 +218,30 @@ class MiningCoordinator:
             if parent_txid not in selections and parent_txid not in confirmed_transaction_ids:
                 return True
         return False
+
+
+def _included_epoch_settlement(transactions: list[Transaction], *, height: int) -> RewardSettlement | None:
+    """Return the reward settlement included for the current block height, if any."""
+
+    for transaction in transactions:
+        if transaction.metadata.get("kind") != REWARD_SETTLE_EPOCH_KIND:
+            continue
+        settlement = parse_reward_settlement_metadata(transaction.metadata)
+        if settlement.epoch_end_height == height:
+            return settlement
+    return None
+
+
+def _reward_outputs_for_settlement(settlement: RewardSettlement | None) -> tuple[TxOutput, ...]:
+    """Return deterministic coinbase node reward outputs for one settlement."""
+
+    if settlement is None:
+        return ()
+    ordered_entries = sorted(settlement.reward_entries, key=lambda entry: entry.selection_rank)
+    return tuple(
+        TxOutput(value=entry.reward_chipbits, recipient=entry.payout_address)
+        for entry in ordered_entries
+    )
 
 
 def transaction_weight_units(transaction: Transaction) -> int:

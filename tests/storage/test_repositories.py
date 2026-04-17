@@ -8,8 +8,15 @@ from chipcoin.storage.blocks import SQLiteBlockRepository
 from chipcoin.storage.chainstate import SQLiteChainStateRepository
 from chipcoin.storage.db import initialize_database
 from chipcoin.storage.headers import SQLiteHeaderRepository
+from chipcoin.storage.native_rewards import SQLiteEpochSettlementRepository, SQLiteRewardAttestationRepository
 from chipcoin.storage.node_registry import SQLiteNodeRegistryRepository
 from chipcoin.consensus.nodes import NodeRecord
+from chipcoin.consensus.epoch_settlement import (
+    RewardAttestation,
+    RewardAttestationBundle,
+    RewardSettlement,
+    RewardSettlementEntry,
+)
 from tests.helpers import wallet_key
 
 
@@ -130,11 +137,80 @@ def test_node_registry_repository_roundtrip() -> None:
                 owner_pubkey=wallet_key(0).public_key,
                 registered_height=10,
                 last_renewed_height=10,
+                node_pubkey=wallet_key(1).public_key,
+                declared_host="node-1.example",
+                declared_port=18444,
+                reward_registration=True,
             )
 
             repository.upsert(record)
 
             assert repository.get_by_node_id("node-1") == record
             assert repository.get_by_owner_pubkey(wallet_key(0).public_key) == record
+        finally:
+            connection.close()
+
+
+def test_native_reward_repositories_roundtrip() -> None:
+    with TemporaryDirectory() as tempdir:
+        connection = initialize_database(Path(tempdir) / "chipcoin.sqlite3")
+        try:
+            attestation_repository = SQLiteRewardAttestationRepository(connection)
+            settlement_repository = SQLiteEpochSettlementRepository(connection)
+            bundle = RewardAttestationBundle(
+                epoch_index=3,
+                bundle_window_index=2,
+                bundle_submitter_node_id="node-submitter",
+                attestations=(
+                    RewardAttestation(
+                        epoch_index=3,
+                        check_window_index=2,
+                        candidate_node_id="node-a",
+                        verifier_node_id="node-b",
+                        result_code="pass",
+                        observed_sync_gap=1,
+                        endpoint_commitment="endpoint-a",
+                        concentration_key="ip:1.2.3.4",
+                        signature_hex="aa",
+                    ),
+                ),
+            )
+            settlement = RewardSettlement(
+                epoch_index=3,
+                epoch_start_height=300,
+                epoch_end_height=399,
+                epoch_seed_hex="11" * 32,
+                policy_version="v1",
+                submission_mode="auto",
+                candidate_summary_root="22" * 32,
+                verified_nodes_root="33" * 32,
+                rewarded_nodes_root="44" * 32,
+                rewarded_node_count=1,
+                distributed_node_reward_chipbits=5_000_000_000,
+                undistributed_node_reward_chipbits=0,
+                reward_entries=(
+                    RewardSettlementEntry(
+                        node_id="node-a",
+                        payout_address=wallet_key(0).address,
+                        reward_chipbits=5_000_000_000,
+                        selection_rank=0,
+                        concentration_key="ip:1.2.3.4",
+                        final_confirmation_passed=True,
+                    ),
+                ),
+            )
+
+            attestation_repository.add_bundle(txid="aa" * 32, block_height=321, bundle=bundle)
+            settlement_repository.add_settlement(txid="bb" * 32, block_height=399, settlement=settlement)
+
+            stored_bundles = attestation_repository.list_bundles(epoch_index=3)
+            stored_settlements = settlement_repository.list_settlements(epoch_index=3)
+
+            assert len(stored_bundles) == 1
+            assert stored_bundles[0].bundle == bundle
+            assert attestation_repository.attestation_identities() == {(3, 2, "node-a", "node-b")}
+            assert len(stored_settlements) == 1
+            assert stored_settlements[0].settlement == settlement
+            assert settlement_repository.settled_epoch_indexes() == {3}
         finally:
             connection.close()

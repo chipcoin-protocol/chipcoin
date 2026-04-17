@@ -1,4 +1,5 @@
 from chipcoin.consensus.economics import node_reward_pool_chipbits
+from chipcoin.consensus.epoch_settlement import REGISTER_REWARD_NODE_KIND, RENEW_REWARD_NODE_KIND
 from chipcoin.consensus.models import Transaction
 from chipcoin.consensus.nodes import (
     InMemoryNodeRegistryView,
@@ -36,6 +37,28 @@ def _register_node_transaction(*, node_id: str, owner_index: int = 0, payout_add
     return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
 
 
+def _register_reward_node_transaction(*, node_id: str, owner_index: int = 0, payout_address: str | None = None) -> Transaction:
+    owner = wallet_key(owner_index)
+    node_key = wallet_key((owner_index + 1) % 3)
+    metadata = {
+        "kind": REGISTER_REWARD_NODE_KIND,
+        "node_id": node_id,
+        "payout_address": owner.address if payout_address is None else payout_address,
+        "owner_pubkey_hex": owner.public_key.hex(),
+        "node_pubkey_hex": node_key.public_key.hex(),
+        "declared_host": f"{node_id}.example",
+        "declared_port": "18444",
+        "registration_fee_chipbits": str(MAINNET_PARAMS.register_node_fee_chipbits),
+        "owner_signature_hex": "",
+    }
+    unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
+
+    signed_metadata = dict(metadata)
+    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
+    return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+
+
 def _renew_node_transaction(*, node_id: str, owner_index: int = 0, renewal_epoch: int = 0) -> Transaction:
     owner = wallet_key(owner_index)
     metadata = {
@@ -43,6 +66,26 @@ def _renew_node_transaction(*, node_id: str, owner_index: int = 0, renewal_epoch
         "node_id": node_id,
         "renewal_epoch": str(renewal_epoch),
         "owner_pubkey_hex": owner.public_key.hex(),
+        "owner_signature_hex": "",
+    }
+    unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
+
+    signed_metadata = dict(metadata)
+    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
+    return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+
+
+def _renew_reward_node_transaction(*, node_id: str, owner_index: int = 0, renewal_epoch: int = 0) -> Transaction:
+    owner = wallet_key(owner_index)
+    metadata = {
+        "kind": RENEW_REWARD_NODE_KIND,
+        "node_id": node_id,
+        "renewal_epoch": str(renewal_epoch),
+        "owner_pubkey_hex": owner.public_key.hex(),
+        "declared_host": f"{node_id}.renewed.example",
+        "declared_port": "18445",
+        "renewal_fee_chipbits": str(MAINNET_PARAMS.renew_node_fee_chipbits),
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
@@ -103,7 +146,7 @@ def test_active_node_set_excludes_same_block_registration() -> None:
     assert len(active_node_records(registry, height=1001, params=MAINNET_PARAMS)) == 1
 
 
-def test_winner_selection_limits_to_ten_nodes_and_is_deterministic() -> None:
+def test_reward_selection_includes_all_active_nodes_and_is_deterministic() -> None:
     records = [
         NodeRecord(
             node_id=f"node-{index}",
@@ -118,17 +161,47 @@ def test_winner_selection_limits_to_ten_nodes_and_is_deterministic() -> None:
 
     winners = select_rewarded_nodes(
         registry,
-        height=2,
+        height=99,
         previous_block_hash="11" * 32,
-        node_reward_pool_chipbits=node_reward_pool_chipbits(0, MAINNET_PARAMS),
+        node_reward_pool_chipbits=node_reward_pool_chipbits(99, MAINNET_PARAMS),
         params=MAINNET_PARAMS,
     )
 
-    assert len(winners) == 10
+    assert len(winners) == 12
+    assert winners[0].node_id == "node-0"
+    assert winners[-1].node_id == "node-9"
     assert winners == select_rewarded_nodes(
         registry,
-        height=2,
+        height=99,
         previous_block_hash="11" * 32,
-        node_reward_pool_chipbits=node_reward_pool_chipbits(0, MAINNET_PARAMS),
+        node_reward_pool_chipbits=node_reward_pool_chipbits(99, MAINNET_PARAMS),
         params=MAINNET_PARAMS,
     )
+
+
+def test_register_reward_node_transaction_is_special_and_updates_reward_registry_fields() -> None:
+    registry = InMemoryNodeRegistryView()
+    transaction = _register_reward_node_transaction(node_id="reward-node-1")
+
+    assert is_special_node_transaction(transaction) is True
+    apply_special_node_transaction(transaction, height=9, registry_view=registry)
+    record = registry.get_by_node_id("reward-node-1")
+    assert record is not None
+    assert record.reward_registration is True
+    assert record.node_pubkey is not None
+    assert record.declared_host == "reward-node-1.example"
+    assert record.declared_port == 18444
+
+
+def test_renew_reward_node_transaction_preserves_reward_registration_and_updates_endpoint() -> None:
+    registry = InMemoryNodeRegistryView()
+    register_transaction = _register_reward_node_transaction(node_id="reward-node-2")
+    apply_special_node_transaction(register_transaction, height=8, registry_view=registry)
+    renew_transaction = _renew_reward_node_transaction(node_id="reward-node-2", renewal_epoch=1)
+
+    apply_special_node_transaction(renew_transaction, height=101, registry_view=registry)
+    record = registry.get_by_node_id("reward-node-2")
+    assert record is not None
+    assert record.reward_registration is True
+    assert record.declared_host == "reward-node-2.renewed.example"
+    assert record.declared_port == 18445

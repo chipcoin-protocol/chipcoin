@@ -12,16 +12,19 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from chipcoin.consensus.economics import subsidy_split_chipbits
+from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
-from chipcoin.consensus.models import Block, OutPoint
+from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import serialize_transaction
-from chipcoin.crypto.keys import serialize_private_key_hex
+from chipcoin.crypto.keys import serialize_private_key_hex, serialize_public_key_hex
 from chipcoin.interfaces import cli as cli_module
 from chipcoin.interfaces.cli import main
 from chipcoin.node.runtime import NodeRuntime
 from chipcoin.node.service import NodeService
+from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import put_wallet_utxo, signed_payment, wallet_key
 
 
@@ -36,6 +39,115 @@ def _mine_block(block: Block) -> Block:
         if verify_proof_of_work(header):
             return replace(block, header=header)
     raise AssertionError("Expected to find a valid nonce for the easy target.")
+
+
+def _native_reward_test_params():
+    return replace(
+        MAINNET_PARAMS,
+        node_reward_activation_height=0,
+        epoch_length_blocks=5,
+        reward_check_windows_per_epoch=4,
+        reward_target_checks_per_epoch=1,
+        reward_min_passed_checks_per_epoch=1,
+        reward_verifier_committee_size=1,
+        reward_verifier_quorum=1,
+        reward_final_confirmation_window_blocks=1,
+        max_rewarded_nodes_per_epoch=4,
+    )
+
+
+def _materialize_native_reward_payout(service: NodeService, *, miner_address: str, rewarded_address: str) -> None:
+    reward_a = wallet_key(0)
+    reward_b = wallet_key(1)
+    for node_id, wallet, port in (
+        ("reward-node-a", reward_a, 19001),
+        ("reward-node-b", reward_b, 19002),
+    ):
+        service.receive_transaction(
+            TransactionSigner(wallet).build_register_reward_node_transaction(
+                node_id=node_id,
+                payout_address=wallet.address,
+                node_public_key_hex=wallet.public_key.hex(),
+                declared_host="127.0.0.1",
+                declared_port=port,
+                registration_fee_chipbits=service.params.register_node_fee_chipbits,
+            )
+        )
+    service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+    assignment = service.native_reward_assignments(epoch_index=0, node_id="reward-node-a")[0]
+    window_index = assignment["candidate_check_windows"][0]
+    verifier_node_id = assignment["verifier_committees"][str(window_index)][0]
+    attestation = TransactionSigner(reward_b).sign_reward_attestation(
+        RewardAttestation(
+            epoch_index=0,
+            check_window_index=window_index,
+            candidate_node_id="reward-node-a",
+            verifier_node_id=verifier_node_id,
+            result_code="pass",
+            observed_sync_gap=0,
+            endpoint_commitment="127.0.0.1:19001",
+            concentration_key="demo:reward-node-a",
+            signature_hex="",
+        )
+    )
+    service.receive_transaction(
+        Transaction(
+            version=1,
+            inputs=(),
+            outputs=(),
+            metadata={
+                "kind": "reward_attestation_bundle",
+                "epoch_index": "0",
+                "bundle_window_index": str(window_index),
+                "bundle_submitter_node_id": verifier_node_id,
+                "attestation_count": "1",
+                "attestations_json": json.dumps(
+                    [
+                        {
+                            "epoch_index": attestation.epoch_index,
+                            "check_window_index": attestation.check_window_index,
+                            "candidate_node_id": attestation.candidate_node_id,
+                            "verifier_node_id": attestation.verifier_node_id,
+                            "result_code": attestation.result_code,
+                            "observed_sync_gap": attestation.observed_sync_gap,
+                            "endpoint_commitment": attestation.endpoint_commitment,
+                            "concentration_key": attestation.concentration_key,
+                            "signature_hex": attestation.signature_hex,
+                        }
+                    ],
+                    sort_keys=True,
+                ),
+            },
+        )
+    )
+    service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+    while service.chain_tip() is not None and service.chain_tip().height < 3:
+        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+    preview = service.native_reward_settlement_preview(epoch_index=0)
+    assert preview["reward_entries"][0]["payout_address"] == rewarded_address
+    service.receive_transaction(
+        Transaction(
+            version=1,
+            inputs=(),
+            outputs=(),
+            metadata={
+                "kind": "reward_settle_epoch",
+                "epoch_index": str(preview["epoch_index"]),
+                "epoch_start_height": str(preview["epoch_start_height"]),
+                "epoch_end_height": str(preview["epoch_end_height"]),
+                "epoch_seed": str(preview["epoch_seed"]),
+                "policy_version": str(preview["policy_version"]),
+                "candidate_summary_root": str(preview["candidate_summary_root"]),
+                "verified_nodes_root": str(preview["verified_nodes_root"]),
+                "rewarded_nodes_root": str(preview["rewarded_nodes_root"]),
+                "rewarded_node_count": str(preview["rewarded_node_count"]),
+                "distributed_node_reward_chipbits": str(preview["distributed_node_reward_chipbits"]),
+                "undistributed_node_reward_chipbits": str(preview["undistributed_node_reward_chipbits"]),
+                "reward_entries_json": json.dumps(preview["reward_entries"], sort_keys=True),
+            },
+        )
+    )
+    service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
 
 
 def _run_cli(argv: list[str]) -> tuple[int, object]:
@@ -172,6 +284,163 @@ def test_cli_status_and_tip() -> None:
         assert tip_payload["block_hash"] == mined.block_hash()
         assert tip_payload["bits"] == mined.header.bits
         assert tip_payload["transaction_count"] == len(mined.transactions)
+
+
+def test_cli_register_reward_node_and_mine_local_block_persists_native_registry_fields() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+        owner = wallet_key(0)
+        wallet_file = Path(tempdir) / "reward-owner.json"
+
+        import_code, _ = _run_cli(
+            [
+                "--network",
+                "devnet",
+                "wallet-import",
+                "--wallet-file",
+                str(wallet_file),
+                "--private-key-hex",
+                serialize_private_key_hex(owner.private_key),
+            ]
+        )
+        assert import_code == 0
+
+        register_code, register_payload = _run_cli(
+            [
+                "--network",
+                "devnet",
+                "--data",
+                str(db_path),
+                "register-reward-node",
+                "--wallet-file",
+                str(wallet_file),
+                "--node-id",
+                "reward-node-1",
+                "--payout-address",
+                owner.address,
+                "--node-pubkey-hex",
+                serialize_public_key_hex(owner.public_key),
+                "--declared-host",
+                "127.0.0.1",
+                "--declared-port",
+                "18444",
+            ]
+        )
+        assert register_code == 0
+        assert register_payload["submitted"] is True
+
+        mine_code, mine_payload = _run_cli(
+            [
+                "--network",
+                "devnet",
+                "--data",
+                str(db_path),
+                "mine-local-block",
+                "--payout-address",
+                wallet_key(1).address,
+            ]
+        )
+        assert mine_code == 0
+        assert mine_payload["accepted"] is True
+        assert mine_payload["height"] == 0
+
+        registry_code, registry_payload = _run_cli(["--network", "devnet", "--data", str(db_path), "node-registry"])
+        assert registry_code == 0
+        assert registry_payload == [
+            {
+                "active": True,
+                "current_epoch": 0,
+                "declared_host": "127.0.0.1",
+                "declared_port": 18444,
+                "eligible_from_height": 1,
+                "epoch_status": "current",
+                "last_renewal_epoch": 0,
+                "last_renewal_height": 0,
+                "node_id": "reward-node-1",
+                "node_pubkey": serialize_public_key_hex(owner.public_key),
+                "owner_pubkey": serialize_public_key_hex(owner.public_key),
+                "payout_address": owner.address,
+                "registered_at_height": 0,
+                "reward_registration": True,
+            }
+        ]
+
+
+def test_cli_submit_reward_attestation_bundle_rejects_wallet_verifier_mismatch_early() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+        service = _make_service(db_path)
+        service.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-a",
+                payout_address=wallet_key(0).address,
+                owner_pubkey=wallet_key(0).public_key,
+                registered_height=300,
+                last_renewed_height=300,
+                node_pubkey=wallet_key(0).public_key,
+                declared_host="127.0.0.1",
+                declared_port=19001,
+                reward_registration=True,
+            )
+        )
+        service.connection.commit()
+
+        wrong_wallet_file = Path(tempdir) / "wrong-wallet.json"
+        import_code, _ = _run_cli(
+            [
+                "--network",
+                "devnet",
+                "wallet-import",
+                "--wallet-file",
+                str(wrong_wallet_file),
+                "--private-key-hex",
+                serialize_private_key_hex(wallet_key(1).private_key),
+            ]
+        )
+        assert import_code == 0
+
+        bundle_file = Path(tempdir) / "bundle.json"
+        bundle_file.write_text(
+            json.dumps(
+                {
+                    "epoch_index": 3,
+                    "bundle_window_index": 3,
+                    "bundle_submitter_node_id": "reward-node-a",
+                    "attestations": [
+                        {
+                            "epoch_index": 3,
+                            "check_window_index": 3,
+                            "candidate_node_id": "reward-node-a",
+                            "verifier_node_id": "reward-node-a",
+                            "result_code": "pass",
+                            "observed_sync_gap": 0,
+                            "endpoint_commitment": "127.0.0.1:19001",
+                            "concentration_key": "ip:127.0.0.1",
+                            "signature_hex": "",
+                        }
+                    ],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+        code, _stdout, stderr = _run_cli_with_stderr(
+            [
+                "--network",
+                "devnet",
+                "--data",
+                str(db_path),
+                "submit-reward-attestation-bundle",
+                "--bundle-file",
+                str(bundle_file),
+                "--wallet-file",
+                str(wrong_wallet_file),
+            ]
+        )
+
+        assert code == 1
+        assert "does not match the registered verifier node_pubkey" in stderr
 
 
 def test_cli_block_lookup_by_height_and_hash() -> None:
@@ -760,19 +1029,16 @@ def test_cli_utxos_and_balance_report_coinbase_maturity() -> None:
 def test_cli_node_registry_reports_active_and_inactive_entries() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        params = replace(MAINNET_PARAMS, epoch_length_blocks=2)
+        params = replace(MAINNET_PARAMS, epoch_length_blocks=3)
         timestamps = iter(range(1_700_000_000, 1_700_000_200))
         service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
-        for _ in range(3):
-            mined = _mine_block(service.build_candidate_block("CHCminer").block)
-            service.apply_block(mined)
         service.node_registry.upsert(
             NodeRecord(
                 node_id="node-active",
                 payout_address=wallet_key(0).address,
                 owner_pubkey=wallet_key(0).public_key,
                 registered_height=0,
-                last_renewed_height=2,
+                last_renewed_height=3,
             )
         )
         service.node_registry.upsert(
@@ -784,6 +1050,9 @@ def test_cli_node_registry_reports_active_and_inactive_entries() -> None:
                 last_renewed_height=0,
             )
         )
+        for _ in range(4):
+            mined = _mine_block(service.build_candidate_block("CHCminer").block)
+            service.apply_block(mined)
         original_open_sqlite = cli_module.NodeService.open_sqlite
         cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
         try:
@@ -794,15 +1063,17 @@ def test_cli_node_registry_reports_active_and_inactive_entries() -> None:
         assert code == 0
         by_id = {entry["node_id"]: entry for entry in payload}
         assert by_id["node-active"]["active"] is True
-        assert by_id["node-active"]["eligible_from_height"] == 3
+        assert by_id["node-active"]["eligible_from_height"] == 4
         assert by_id["node-stale"]["active"] is False
         assert by_id["node-stale"]["epoch_status"] == "stale"
 
 
-def test_cli_next_winners_reports_less_than_ten_nodes() -> None:
+def test_cli_next_winners_reports_epoch_reward_recipients() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        service = _make_service(db_path)
+        params = replace(MAINNET_PARAMS, epoch_length_blocks=2)
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
         for index in range(3):
             key = wallet_key(index)
             service.node_registry.upsert(
@@ -815,29 +1086,45 @@ def test_cli_next_winners_reports_less_than_ten_nodes() -> None:
                 )
             )
 
-        code, payload = _run_cli(["--data", str(db_path), "next-winners"])
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            code, payload = _run_cli(["--data", str(db_path), "next-winners"])
 
-        assert code == 0
-        assert payload["next_block_height"] == 0
-        assert payload["active_nodes_count"] == 0
-        assert payload["selected_winners"] == []
+            assert code == 0
+            assert payload["next_block_height"] == 0
+            assert payload["active_nodes_count"] == 0
+            assert payload["epoch_closing_block"] is False
+            assert payload["node_reward_chipbits"] == 0
+            assert payload["rewarded_recipients"] == []
 
-        mined = _mine_block(service.build_candidate_block("CHCminer").block)
-        service.apply_block(mined)
-        code, payload = _run_cli(["--data", str(db_path), "next-winners"])
+            mined = _mine_block(service.build_candidate_block("CHCminer").block)
+            service.apply_block(mined)
+            code, payload = _run_cli(["--data", str(db_path), "next-winners"])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
+
         assert code == 0
         assert payload["next_block_height"] == 1
+        assert payload["next_block_epoch"] == 0
+        assert payload["epoch_closing_block"] is True
         assert payload["active_nodes_count"] == 3
-        assert len(payload["selected_winners"]) == 3
-        assert payload["reward_per_winner_chipbits"] == 66_666_666
-        assert payload["reward_per_winner_chc"] == "0.66666666"
-        assert payload["remainder_to_miner_chipbits"] == 2
+        assert payload["rewarded_recipients_count"] == 3
+        assert payload["node_reward_chipbits"] == 5_000_000_000
+        assert payload["node_reward_chc"] == "50.00000000"
+        assert [row["reward_chipbits"] for row in payload["rewarded_recipients"]] == [
+            1_666_666_667,
+            1_666_666_667,
+            1_666_666_666,
+        ]
 
 
-def test_cli_next_winners_caps_selected_winners_at_ten() -> None:
+def test_cli_next_winners_includes_all_active_recipients_without_cap() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        service = _make_service(db_path)
+        params = replace(MAINNET_PARAMS, epoch_length_blocks=2)
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
         keys = [wallet_key(index % 3) for index in range(12)]
         for index in range(12):
             key = keys[index]
@@ -853,13 +1140,20 @@ def test_cli_next_winners_caps_selected_winners_at_ten() -> None:
         mined = _mine_block(service.build_candidate_block("CHCminer").block)
         service.apply_block(mined)
 
-        code, payload = _run_cli(["--data", str(db_path), "next-winners"])
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            code, payload = _run_cli(["--data", str(db_path), "next-winners"])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
 
         assert code == 0
         assert payload["active_nodes_count"] == 12
-        assert len(payload["selected_winners"]) == 10
-        assert payload["reward_per_winner_chipbits"] == 20_000_000
-        assert payload["reward_per_winner_chc"] == "0.20000000"
+        assert payload["rewarded_recipients_count"] == 12
+        assert len(payload["rewarded_recipients"]) == 12
+        assert payload["node_reward_chipbits"] == 5_000_000_000
+        assert payload["rewarded_recipients"][0]["reward_chipbits"] == 416_666_667
+        assert payload["rewarded_recipients"][-1]["reward_chipbits"] == 416_666_666
 
 
 def test_cli_reward_history_for_miner_address_and_empty_case() -> None:
@@ -876,8 +1170,8 @@ def test_cli_reward_history_for_miner_address_and_empty_case() -> None:
         assert code == 0
         assert len(payload) == 1
         assert payload[0]["reward_type"] == "miner_subsidy"
-        assert payload[0]["amount_chipbits"] == 2_200_000_000
-        assert payload[0]["amount_chc"] == "22.00000000"
+        assert payload[0]["amount_chipbits"] == 5_000_000_000
+        assert payload[0]["amount_chc"] == "50.00000000"
         assert payload[0]["mature"] is False
         assert empty_code == 0
         assert empty_payload == []
@@ -886,78 +1180,197 @@ def test_cli_reward_history_for_miner_address_and_empty_case() -> None:
 def test_cli_reward_history_for_node_reward_address() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        service = _make_service(db_path)
-        for index in range(3):
-            key = wallet_key(index)
-            service.node_registry.upsert(
-                NodeRecord(
-                    node_id=f"node-{index}",
-                    payout_address=key.address,
-                    owner_pubkey=key.public_key,
-                    registered_height=0,
-                    last_renewed_height=0,
-                )
-            )
-        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
-        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        params = _native_reward_test_params()
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
+        _materialize_native_reward_payout(service, miner_address="CHCminer", rewarded_address=wallet_key(0).address)
+        expected_reward = subsidy_split_chipbits(4, params)[1]
 
-        code, payload = _run_cli(["--data", str(db_path), "reward-history", "--address", wallet_key(1).address])
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            code, payload = _run_cli(["--data", str(db_path), "reward-history", "--address", wallet_key(0).address])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
 
         assert code == 0
         assert any(entry["reward_type"] == "node_reward" for entry in payload)
         node_reward_entry = next(entry for entry in payload if entry["reward_type"] == "node_reward")
-        assert node_reward_entry["amount_chipbits"] == 66_666_666
-        assert node_reward_entry["amount_chc"] == "0.66666666"
+        assert node_reward_entry["amount_chipbits"] == expected_reward
+        assert node_reward_entry["amount_chc"] == "50.00000000"
 
 
 def test_cli_reward_summary_for_miner_and_node_addresses() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        service = _make_service(db_path)
+        params = _native_reward_test_params()
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
         miner_address = wallet_key(0).address
-        for index in range(3):
-            key = wallet_key(index)
-            service.node_registry.upsert(
-                NodeRecord(
-                    node_id=f"node-{index}",
-                    payout_address=key.address,
-                    owner_pubkey=key.public_key,
-                    registered_height=0,
-                    last_renewed_height=0,
-                )
-            )
-        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
-        service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+        _materialize_native_reward_payout(service, miner_address=miner_address, rewarded_address=wallet_key(0).address)
+        expected_reward = subsidy_split_chipbits(4, params)[1]
 
-        miner_code, miner_payload = _run_cli(["--data", str(db_path), "reward-summary", "--address", miner_address])
-        node_code, node_payload = _run_cli(["--data", str(db_path), "reward-summary", "--address", wallet_key(1).address])
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            miner_code, miner_payload = _run_cli(["--data", str(db_path), "reward-summary", "--address", miner_address])
+            node_code, node_payload = _run_cli(["--data", str(db_path), "reward-summary", "--address", wallet_key(0).address])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
 
         assert miner_code == 0
         assert miner_payload["address"] == miner_address
         assert miner_payload["total_rewards_chipbits"] > 0
         assert miner_payload["total_miner_subsidy_chipbits"] > 0
-        assert miner_payload["total_node_rewards_chipbits"] == 66_666_666
-        assert miner_payload["payout_count"] >= 2
+        assert miner_payload["total_node_rewards_chipbits"] == expected_reward
+        assert miner_payload["payout_count"] >= 1
         assert node_code == 0
-        assert node_payload["total_node_rewards_chipbits"] == 66_666_666
-        assert node_payload["total_miner_subsidy_chipbits"] == 0
+        assert node_payload["address"] == miner_address
+        assert node_payload["total_node_rewards_chipbits"] == expected_reward
+        assert node_payload["total_miner_subsidy_chipbits"] == miner_payload["total_miner_subsidy_chipbits"]
+
+
+def test_cli_reward_settlement_report_exposes_ranking_and_non_reward_reason() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        params = _native_reward_test_params()
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
+        reward_a = wallet_key(0)
+        reward_b = wallet_key(1)
+        for node_id, wallet, port in (
+            ("reward-node-a", reward_a, 19001),
+            ("reward-node-b", reward_b, 19002),
+        ):
+            service.receive_transaction(
+                TransactionSigner(wallet).build_register_reward_node_transaction(
+                    node_id=node_id,
+                    payout_address=wallet.address,
+                    node_public_key_hex=wallet.public_key.hex(),
+                    declared_host="127.0.0.1",
+                    declared_port=port,
+                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                )
+            )
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        assignment = service.native_reward_assignments(epoch_index=0, node_id="reward-node-a")[0]
+        window_index = assignment["candidate_check_windows"][0]
+        verifier_node_id = assignment["verifier_committees"][str(window_index)][0]
+        attestation = TransactionSigner(reward_b).sign_reward_attestation(
+            RewardAttestation(
+                epoch_index=0,
+                check_window_index=window_index,
+                candidate_node_id="reward-node-a",
+                verifier_node_id=verifier_node_id,
+                result_code="pass",
+                observed_sync_gap=0,
+                endpoint_commitment="127.0.0.1:19001",
+                concentration_key="demo:reward-node-a",
+                signature_hex="",
+            )
+        )
+        service.receive_transaction(
+            Transaction(
+                version=1,
+                inputs=(),
+                outputs=(),
+                metadata={
+                    "kind": "reward_attestation_bundle",
+                    "epoch_index": "0",
+                    "bundle_window_index": str(window_index),
+                    "bundle_submitter_node_id": verifier_node_id,
+                    "attestation_count": "1",
+                    "attestations_json": json.dumps(
+                        [
+                            {
+                                "epoch_index": attestation.epoch_index,
+                                "check_window_index": attestation.check_window_index,
+                                "candidate_node_id": attestation.candidate_node_id,
+                                "verifier_node_id": attestation.verifier_node_id,
+                                "result_code": attestation.result_code,
+                                "observed_sync_gap": attestation.observed_sync_gap,
+                                "endpoint_commitment": attestation.endpoint_commitment,
+                                "concentration_key": attestation.concentration_key,
+                                "signature_hex": attestation.signature_hex,
+                            }
+                        ],
+                        sort_keys=True,
+                    ),
+                },
+            )
+        )
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        while service.chain_tip() is not None and service.chain_tip().height < 3:
+            service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            code, payload = _run_cli(["--data", str(db_path), "reward-settlement-report", "--epoch-index", "0"])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
+
+        assert code == 0
+        assert payload["settlement_accounting_summary"]["distributed_node_reward_chipbits"] == subsidy_split_chipbits(4, params)[1]
+        assert payload["eligible_ranking"][0]["node_id"] == "reward-node-a"
+        evaluations = {entry["node_id"]: entry for entry in payload["node_evaluations"]}
+        assert evaluations["reward-node-a"]["status"] == "rewarded"
+        assert evaluations["reward-node-b"]["status"] == "not_rewarded"
+        assert evaluations["reward-node-b"]["not_rewarded_reason"] == "insufficient_passed_windows"
+
+
+def test_cli_reward_epoch_state_exposes_comparison_digests() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        params = _native_reward_test_params()
+        timestamps = iter(range(1_700_000_000, 1_700_000_200))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
+        for node_id, wallet, port in (
+            ("reward-node-a", wallet_key(0), 19001),
+            ("reward-node-b", wallet_key(1), 19002),
+        ):
+            service.receive_transaction(
+                TransactionSigner(wallet).build_register_reward_node_transaction(
+                    node_id=node_id,
+                    payout_address=wallet.address,
+                    node_public_key_hex=wallet.public_key.hex(),
+                    declared_host="127.0.0.1",
+                    declared_port=port,
+                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                )
+            )
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            code, payload = _run_cli(["--data", str(db_path), "reward-epoch-state", "--epoch-index", "0"])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
+
+        assert code == 0
+        assert payload["epoch_index"] == 0
+        assert payload["active_reward_node_count"] == 2
+        assert payload["assignments_count"] == 2
+        assert payload["stored_settlement_count"] == 0
+        assert payload["comparison_keys"]["assignments_digest"]
+        assert payload["comparison_keys"]["settlement_preview_digest"]
+        assert payload["rejection_summary"]["node_evaluations"]
 
 
 def test_cli_node_income_summary_for_active_and_inactive_node() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        params = replace(MAINNET_PARAMS, epoch_length_blocks=2)
+        params = replace(MAINNET_PARAMS, epoch_length_blocks=3)
         timestamps = iter(range(1_700_000_000, 1_700_000_200))
         service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
-        for index in range(3):
-            service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
         service.node_registry.upsert(
             NodeRecord(
                 node_id="node-active",
                 payout_address=wallet_key(0).address,
                 owner_pubkey=wallet_key(0).public_key,
                 registered_height=0,
-                last_renewed_height=2,
+                last_renewed_height=3,
             )
         )
         service.node_registry.upsert(
@@ -969,6 +1382,8 @@ def test_cli_node_income_summary_for_active_and_inactive_node() -> None:
                 last_renewed_height=0,
             )
         )
+        for _ in range(4):
+            service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
         original_open_sqlite = cli_module.NodeService.open_sqlite
         cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
         try:
@@ -1004,8 +1419,9 @@ def test_cli_mining_history_matches_reward_history_for_miner() -> None:
         assert mining_code == 0
         assert reward_code == 0
         assert len(mining_payload) == 2
-        assert mining_payload[0]["miner_subsidy_chipbits"] == 2_000_000_000
-        assert mining_payload[0]["miner_subsidy_chc"] == "20.00000000"
+        assert mining_payload[0]["miner_subsidy_chipbits"] == 5_000_000_000
+        assert mining_payload[0]["miner_subsidy_chc"] == "50.00000000"
+        assert mining_payload[0]["node_reward_chipbits"] == 0
         assert any(entry["reward_type"] == "miner_subsidy" for entry in reward_payload)
 
 
@@ -1020,9 +1436,15 @@ def test_cli_economy_summary_and_supply_diagnostics_with_zero_data() -> None:
         assert economy_payload["current_height"] is None
         assert economy_payload["registered_nodes_count"] == 0
         assert economy_payload["active_nodes_count"] == 0
-        assert economy_payload["total_emitted_supply_chipbits"] == 0
+        assert economy_payload["minted_supply_chipbits"] == 0
+        assert economy_payload["next_block_miner_subsidy_chipbits"] == 5_000_000_000
+        assert economy_payload["next_block_node_reward_chipbits"] == 0
+        assert economy_payload["next_block_epoch_closing"] is False
         assert economy_payload["remaining_supply_chipbits"] == MAINNET_PARAMS.max_money_chipbits
+        supply_summary_code, supply_summary_payload = _run_cli(["--data", str(db_path), "supply"])
         assert supply_code == 0
+        assert supply_summary_code == 0
+        assert supply_summary_payload["minted_supply_chipbits"] == 0
         assert supply_payload["confirmed_unspent_supply_chipbits"] == 0
         assert supply_payload["total_utxo_count"] == 0
 
@@ -1043,7 +1465,7 @@ def test_cli_top_miners_and_top_recipients() -> None:
         assert top_miners_code == 0
         assert top_miners_payload[0]["miner_address"] == miner_a
         assert top_miners_payload[0]["blocks_mined"] == 2
-        assert top_miners_payload[0]["total_miner_subsidy_chipbits"] == 4_000_000_000
+        assert top_miners_payload[0]["total_miner_subsidy_chipbits"] == 10_000_000_000
         assert top_miners_payload[1]["miner_address"] == miner_b
         assert top_recipients_code == 0
         assert top_recipients_payload[0]["address"] == miner_a
@@ -1053,32 +1475,26 @@ def test_cli_top_miners_and_top_recipients() -> None:
 def test_cli_top_nodes_and_node_income_summary_with_rewards() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        service = _make_service(db_path)
-        for index in range(3):
-            key = wallet_key(index)
-            service.node_registry.upsert(
-                NodeRecord(
-                    node_id=f"node-{index}",
-                    payout_address=key.address,
-                    owner_pubkey=key.public_key,
-                    registered_height=0,
-                    last_renewed_height=0,
-                )
-            )
-        service.apply_block(_mine_block(service.build_candidate_block(wallet_key(0).address).block))
-        service.apply_block(_mine_block(service.build_candidate_block(wallet_key(0).address).block))
+        params = _native_reward_test_params()
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
+        _materialize_native_reward_payout(service, miner_address=wallet_key(0).address, rewarded_address=wallet_key(0).address)
+        expected_reward = subsidy_split_chipbits(4, params)[1]
 
-        top_nodes_code, top_nodes_payload = _run_cli(["--data", str(db_path), "top-nodes"])
-        node_income_code, node_income_payload = _run_cli(
-            ["--data", str(db_path), "node-income-summary", "--address", wallet_key(1).address]
-        )
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            top_nodes_code, top_nodes_payload = _run_cli(["--data", str(db_path), "top-nodes"])
+            node_income_code, node_income_payload = _run_cli(["--data", str(db_path), "node-income-summary", "--address", wallet_key(0).address])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
 
         assert top_nodes_code == 0
         assert top_nodes_payload
-        assert top_nodes_payload[0]["total_node_rewards_chipbits"] == 66_666_666
+        assert top_nodes_payload[0]["total_node_rewards_chipbits"] == expected_reward
         assert node_income_code == 0
         assert len(node_income_payload) == 1
-        assert node_income_payload[0]["payout_address"] == wallet_key(1).address
+        assert node_income_payload[0]["payout_address"] == wallet_key(0).address
 
 
 def test_cli_supply_diagnostics_reflects_immature_coinbase() -> None:
@@ -1091,11 +1507,11 @@ def test_cli_supply_diagnostics_reflects_immature_coinbase() -> None:
         supply_code, supply_payload = _run_cli(["--data", str(db_path), "supply-diagnostics"])
 
         assert economy_code == 0
-        assert economy_payload["total_emitted_supply_chipbits"] == 2_200_000_000
-        assert economy_payload["circulating_spendable_supply_chipbits"] == 0
-        assert economy_payload["immature_supply_chipbits"] == 2_200_000_000
+        assert economy_payload["minted_supply_chipbits"] == 5_000_000_000
+        assert economy_payload["circulating_supply_chipbits"] == 0
+        assert economy_payload["immature_supply_chipbits"] == 5_000_000_000
         assert supply_code == 0
-        assert supply_payload["confirmed_unspent_supply_chipbits"] == 2_200_000_000
+        assert supply_payload["confirmed_unspent_supply_chipbits"] == 5_000_000_000
         assert supply_payload["immature_utxo_count"] == 1
 
 
@@ -1178,7 +1594,7 @@ def test_cli_register_node_and_renew_node_flow() -> None:
         assert registry_after_payload[0]["eligible_from_height"] == 1
         assert winners_after_code == 0
         assert winners_after_payload["active_nodes_count"] == 1
-        assert winners_after_payload["selected_winners"][0]["node_id"] == "node-a"
+        assert winners_after_payload["rewarded_recipients"] == []
         assert renew_code == 0
         assert renew_payload["node_id"] == "node-a"
         assert renew_payload["submitted"] is True
@@ -1278,7 +1694,7 @@ def test_cli_address_history_reports_confirmed_incoming_and_outgoing() -> None:
         service.apply_block(first_block)
         spend = signed_payment(
             OutPoint(txid=first_block.transactions[0].txid(), index=0),
-            value=2_200_000_000,
+            value=5_000_000_000,
             sender=wallet_key(0),
             recipient=recipient,
             amount=100,
