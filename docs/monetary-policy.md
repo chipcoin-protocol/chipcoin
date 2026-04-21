@@ -25,6 +25,44 @@ All consensus calculations must be performed in integer base units only.
 - No treasury
 - Node rewards are part of capped issuance, not extra inflation
 
+## Reward Node Fee Policy
+
+Reward-node registration and renewal fees are no longer fixed forever in CHC terms.
+
+Consensus now derives them deterministically from the on-chain reward-node registry size:
+
+- Driver: `registered_reward_node_count`
+- Curve shape: logarithmic, monotonic, integer-only
+- Target saturation point: `20,000` registered reward nodes
+- Registration fee range: `1 CHC` down to `0.0001 CHC`
+- Renewal fee range: `0.1 CHC` down to `0.00001 CHC`
+
+In base units:
+
+- `max_register_fee_chipbits = 100_000_000`
+- `min_register_fee_chipbits = 10_000`
+- `max_renew_fee_chipbits = 10_000_000`
+- `min_renew_fee_chipbits = 1_000`
+
+Policy intent:
+
+- keep Sybil resistance meaningful when the registry is small
+- reduce fiat-denominated entry cost as the network grows
+- avoid using noisy peer-connectivity data in consensus
+
+Consensus source of truth:
+
+- on-chain reward-node registry count, not observed connected peers
+- fee evaluation is anchored to parent-tip registry state for deterministic block validation
+
+Operational guidance:
+
+- explorer, website, CLI and node HTTP surfaces should display the current live fee
+- the easiest canonical read surfaces are:
+  - `chipcoin reward-node-fees`
+  - `GET /v1/rewards/node-fees`
+  - `GET /v1/status` under `reward_node_fees`
+
 In base units:
 
 - `max_supply = 1_100_000_000_000_000`
@@ -174,6 +212,21 @@ Must add a reduced summary:
 - `remaining_supply`
 
 This should be a compact operator-facing view, not a duplicate of the full `/v1/supply` payload.
+
+### `GET /v1/rewards/node-fees`
+
+Must expose the live adaptive reward-node fee schedule, including:
+
+- `policy_version`
+- `driver`
+- `registered_reward_node_count`
+- `active_reward_node_count`
+- `target_registered_reward_node_count`
+- `register_fee_chipbits`
+- `register_fee_chc`
+- `renew_fee_chipbits`
+- `renew_fee_chc`
+- min/max bounds
 
 ## Reference Numbers
 

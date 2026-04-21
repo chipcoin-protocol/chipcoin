@@ -2,6 +2,7 @@ import json
 from dataclasses import replace
 
 from chipcoin.consensus.economics import block_subsidy, subsidy_split_chipbits
+from chipcoin.consensus.economics import renew_reward_node_fee_chipbits, register_reward_node_fee_chipbits
 from chipcoin.consensus.epoch_settlement import (
     REWARD_ATTESTATION_BUNDLE_KIND,
     REWARD_SETTLE_EPOCH_KIND,
@@ -78,7 +79,11 @@ def _register_reward_node_transaction(*, node_id: str, owner_index: int = 0, fee
         "node_pubkey_hex": node_key.public_key.hex(),
         "declared_host": f"{node_id}.example",
         "declared_port": "18444",
-        "registration_fee_chipbits": str(MAINNET_PARAMS.register_node_fee_chipbits if fee_chipbits is None else fee_chipbits),
+        "registration_fee_chipbits": str(
+            register_reward_node_fee_chipbits(registered_reward_node_count=0, params=MAINNET_PARAMS)
+            if fee_chipbits is None
+            else fee_chipbits
+        ),
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
@@ -98,7 +103,11 @@ def _renew_reward_node_transaction(*, node_id: str, owner_index: int = 0, renewa
         "owner_pubkey_hex": owner.public_key.hex(),
         "declared_host": f"{node_id}.example",
         "declared_port": "18444",
-        "renewal_fee_chipbits": str(MAINNET_PARAMS.renew_node_fee_chipbits if fee_chipbits is None else fee_chipbits),
+        "renewal_fee_chipbits": str(
+            renew_reward_node_fee_chipbits(registered_reward_node_count=0, params=MAINNET_PARAMS)
+            if fee_chipbits is None
+            else fee_chipbits
+        ),
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
@@ -172,6 +181,7 @@ def _native_reward_test_params():
         MAINNET_PARAMS,
         node_reward_activation_height=0,
         epoch_length_blocks=10,
+        reward_node_warmup_epochs=0,
         reward_check_windows_per_epoch=4,
         reward_target_checks_per_epoch=1,
         reward_min_passed_checks_per_epoch=1,

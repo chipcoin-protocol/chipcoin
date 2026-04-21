@@ -24,7 +24,13 @@ from .epoch_settlement import (
     reward_attestation_signature_digest,
     verifier_committee,
 )
-from .economics import is_epoch_reward_height, subsidy_split_chipbits
+from .economics import (
+    is_epoch_reward_height,
+    renew_reward_node_fee_chipbits,
+    reward_registered_node_count,
+    register_reward_node_fee_chipbits,
+    subsidy_split_chipbits,
+)
 from .hashes import double_sha256
 from .merkle import merkle_root
 from .models import Block, Transaction, TxOutput
@@ -77,6 +83,7 @@ class ValidationContext:
     expected_previous_block_hash: str | None = None
     expected_bits: int | None = None
     enforce_coinbase_maturity: bool = True
+    reward_fee_registry_count: int | None = None
 
 
 def is_coinbase_transaction(transaction: Transaction) -> bool:
@@ -275,6 +282,11 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
             settled_epoch_indexes=frozenset(staged_settled_epoch_indexes),
             epoch_seed_by_index=dict(context.epoch_seed_by_index),
             enforce_coinbase_maturity=context.enforce_coinbase_maturity,
+            reward_fee_registry_count=(
+                context.reward_fee_registry_count
+                if context.reward_fee_registry_count is not None
+                else reward_registered_node_count(context.node_registry_view)
+            ),
         )
         fee_chipbits = validate_transaction_stateful(transaction, staged_context)
         total_fees_chipbits += fee_chipbits
@@ -390,6 +402,11 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
     """Validate stateful node registry rules for register and renew actions."""
 
     owner_pubkey = bytes.fromhex(transaction.metadata["owner_pubkey_hex"])
+    fee_registry_count = (
+        context.reward_fee_registry_count
+        if context.reward_fee_registry_count is not None
+        else reward_registered_node_count(context.node_registry_view)
+    )
     if is_legacy_register_node_transaction(transaction):
         node_id = transaction.metadata["node_id"]
         if context.node_registry_view.get_by_node_id(node_id) is not None:
@@ -407,8 +424,12 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
         node_pubkey = bytes.fromhex(transaction.metadata["node_pubkey_hex"])
         if _find_registry_record_by_node_pubkey(context.node_registry_view, node_pubkey) is not None:
             raise ContextualValidationError("register_reward_node transaction reuses an existing node_pubkey.")
-        if int(transaction.metadata.get("registration_fee_chipbits", "-1")) != context.params.register_node_fee_chipbits:
-            raise ContextualValidationError("register_reward_node transaction registration_fee_chipbits does not match consensus params.")
+        expected_fee = register_reward_node_fee_chipbits(
+            registered_reward_node_count=fee_registry_count,
+            params=context.params,
+        )
+        if int(transaction.metadata.get("registration_fee_chipbits", "-1")) != expected_fee:
+            raise ContextualValidationError("register_reward_node transaction registration_fee_chipbits does not match consensus fee schedule.")
         return
 
     if is_legacy_renew_node_transaction(transaction):
@@ -431,8 +452,12 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
             raise ContextualValidationError("renew_reward_node transaction owner_pubkey does not match the registered node owner.")
         if transaction.metadata.get("renewal_epoch") != str(context.height // context.params.epoch_length_blocks):
             raise ContextualValidationError("renew_reward_node transaction renewal_epoch does not match the block epoch.")
-        if int(transaction.metadata.get("renewal_fee_chipbits", "-1")) != context.params.renew_node_fee_chipbits:
-            raise ContextualValidationError("renew_reward_node transaction renewal_fee_chipbits does not match consensus params.")
+        expected_fee = renew_reward_node_fee_chipbits(
+            registered_reward_node_count=fee_registry_count,
+            params=context.params,
+        )
+        if int(transaction.metadata.get("renewal_fee_chipbits", "-1")) != expected_fee:
+            raise ContextualValidationError("renew_reward_node transaction renewal_fee_chipbits does not match consensus fee schedule.")
         return
 
     raise ContextualValidationError("Unsupported special node transaction kind.")

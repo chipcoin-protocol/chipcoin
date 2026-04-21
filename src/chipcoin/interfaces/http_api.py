@@ -132,6 +132,9 @@ class HttpApiApp:
             except ValueError as exc:
                 raise ApiError(404, "not_found", str(exc)) from exc
 
+        if method == "GET" and path == "/v1/rewards/node-fees":
+            return {"api_version": self.API_VERSION, **self.service.reward_node_fee_schedule()}
+
         if method == "GET" and path == "/v1/rewards/epoch-summary":
             query = parse_qs(environ.get("QUERY_STRING", ""))
             epoch_index = self._parse_required_int(query, "epoch_index", minimum=0)

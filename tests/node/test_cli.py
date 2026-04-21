@@ -12,7 +12,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from chipcoin.consensus.economics import subsidy_split_chipbits
+from chipcoin.consensus.economics import register_reward_node_fee_chipbits, subsidy_split_chipbits
 from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
@@ -71,7 +71,10 @@ def _materialize_native_reward_payout(service: NodeService, *, miner_address: st
                 node_public_key_hex=wallet.public_key.hex(),
                 declared_host="127.0.0.1",
                 declared_port=port,
-                registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                registration_fee_chipbits=register_reward_node_fee_chipbits(
+                    registered_reward_node_count=0,
+                    params=service.params,
+                ),
             )
         )
     service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
@@ -1250,7 +1253,7 @@ def test_cli_reward_settlement_report_exposes_ranking_and_non_reward_reason() ->
                     node_public_key_hex=wallet.public_key.hex(),
                     declared_host="127.0.0.1",
                     declared_port=port,
-                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                    registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
                 )
             )
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
@@ -1337,7 +1340,7 @@ def test_cli_reward_epoch_state_exposes_comparison_digests() -> None:
                     node_public_key_hex=wallet.public_key.hex(),
                     declared_host="127.0.0.1",
                     declared_port=port,
-                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                    registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
                 )
             )
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
@@ -1512,6 +1515,39 @@ def test_cli_reward_epoch_summary_reports_closed_epoch_with_payouts() -> None:
         assert payload["rewarded_node_ids"] == ["reward-node-a"]
         assert payload["payout_totals"]["distributed_node_reward_chipbits"] == subsidy_split_chipbits(4, params)[1]
         assert payload["payout_totals"]["undistributed_node_reward_chipbits"] == 0
+
+
+def test_cli_reward_node_fees_reports_current_adaptive_schedule() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-a",
+                payout_address=wallet_key(0).address,
+                owner_pubkey=wallet_key(0).public_key,
+                registered_height=0,
+                last_renewed_height=0,
+                node_pubkey=wallet_key(0).public_key,
+                declared_host="node-a.example",
+                declared_port=19001,
+                reward_registration=True,
+            )
+        )
+
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            code, payload = _run_cli(["--data", str(db_path), "reward-node-fees"])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
+
+        assert code == 0
+        assert payload["policy_version"] == "registry_log_v1"
+        assert payload["driver"] == "registered_reward_node_count"
+        assert payload["registered_reward_node_count"] == 1
+        assert payload["register_fee_chipbits"] == service.params.register_node_fee_chipbits
+        assert payload["renew_fee_chipbits"] == service.params.renew_node_fee_chipbits
 
 
 def test_cli_node_income_summary_for_active_and_inactive_node() -> None:

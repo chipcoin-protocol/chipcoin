@@ -57,6 +57,58 @@ Relevant public areas:
 
 Operator-only or internal material may still exist in the tree, but it is not part of the primary public onboarding path.
 
+## Economic Baseline
+
+Chipcoin v2 currently exposes a deterministic, integer-only economic model for subsidy, node rewards, and reward-node operating fees.
+
+Core issuance:
+
+- maximum supply: `11,000,000 CHC`
+- target block time: `300 seconds`
+- initial miner subsidy: `50 CHC` per block
+- initial node reward pool: `50 CHC` per epoch
+- epoch length: `100` blocks
+- halving interval: `111,000` blocks
+- miner subsidy and node epoch reward halve together
+- node rewards are part of capped issuance, not extra inflation
+
+Reward-node lifecycle:
+
+- reward-node activation height on `devnet`: `300`
+- reward-node warmup: `2` epochs
+- reward eligibility depends on on-chain registration plus valid renewal timing
+- reward settlement remains deterministic and consensus-visible
+
+Adaptive reward-node fees:
+
+- registration and renewal are no longer intended to stay fixed forever in CHC terms
+- current policy is driven by the on-chain `registered_reward_node_count`
+- connected peer count is not used as a consensus fee input
+- curve shape is logarithmic and monotonic
+- the schedule saturates at `20,000` registered reward nodes
+
+Fee bounds:
+
+- registration fee: `1 CHC` down to `0.0001 CHC`
+- renewal fee: `0.1 CHC` down to `0.00001 CHC`
+
+Current canonical read surfaces for the live fee:
+
+- CLI: `chipcoin reward-node-fees`
+- HTTP: `GET /v1/rewards/node-fees`
+- status summary: `GET /v1/status` under `reward_node_fees`
+
+Design intent:
+
+- keep early-network Sybil resistance meaningful while the registry is small
+- reduce entry and renewal friction as the network grows
+- keep fee evaluation deterministic across nodes and reorg-safe
+- derive fees from on-chain registry state rather than noisy network-observation data
+
+Detailed monetary policy and constraints:
+
+- [docs/monetary-policy.md](/home/komarek/Documents/CODEX/Chipcoin-v2/docs/monetary-policy.md)
+
 ## System Requirements
 
 Documented and conservatively validated baseline:

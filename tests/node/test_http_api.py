@@ -191,7 +191,7 @@ def test_http_api_exposes_native_reward_epoch_routes() -> None:
                     node_public_key_hex=wallet.public_key.hex(),
                     declared_host="127.0.0.1",
                     declared_port=port,
-                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                    registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
                 )
             )
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
@@ -334,6 +334,34 @@ def test_http_api_reward_node_status_errors_for_missing_and_unknown_node_id() ->
         assert unknown_body["error"]["message"] == "Node id is not registered."
 
 
+def test_http_api_reward_node_fees_reports_current_schedule() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+        service.node_registry.upsert(
+            NodeRecord(
+                node_id="reward-node-a",
+                payout_address=wallet_key(0).address,
+                owner_pubkey=wallet_key(0).public_key,
+                registered_height=0,
+                last_renewed_height=0,
+                node_pubkey=wallet_key(0).public_key,
+                declared_host="node-a.example",
+                declared_port=19001,
+                reward_registration=True,
+            )
+        )
+
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/rewards/node-fees")
+
+        assert status == "200 OK"
+        assert body["api_version"] == "v1"
+        assert body["policy_version"] == "registry_log_v1"
+        assert body["registered_reward_node_count"] == 1
+        assert body["register_fee_chipbits"] == service.params.register_node_fee_chipbits
+        assert body["renew_fee_chipbits"] == service.params.renew_node_fee_chipbits
+
+
 def test_http_api_reward_epoch_summary_reports_open_epoch_and_required_fields() -> None:
     with TemporaryDirectory() as tempdir:
         params = replace(
@@ -418,7 +446,7 @@ def test_http_api_reward_epoch_summary_reports_closed_epoch_with_payouts() -> No
                     node_public_key_hex=wallet.public_key.hex(),
                     declared_host="127.0.0.1",
                     declared_port=port,
-                    registration_fee_chipbits=service.params.register_node_fee_chipbits,
+                    registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
                 )
             )
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))

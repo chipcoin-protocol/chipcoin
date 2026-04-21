@@ -41,9 +41,16 @@ from ..consensus.params import ConsensusParams
 from ..consensus.pow import bits_to_target, calculate_next_work_required, header_work
 from ..consensus.serialization import deserialize_block, deserialize_transaction, serialize_transaction
 from ..consensus.economics import (
+    CHCBITS_PER_CHC,
     is_epoch_reward_height,
     miner_subsidy_chipbits,
     node_reward_pool_chipbits,
+    renew_reward_node_fee_chipbits,
+    reward_registered_node_count,
+    register_reward_node_fee_chipbits,
+    REWARD_NODE_FEE_TARGET_COUNT,
+    REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS,
+    REWARD_NODE_MIN_RENEW_FEE_CHIPBITS,
     subsidy_split_chipbits,
     total_subsidy_through_height,
 )
@@ -136,6 +143,14 @@ def _stable_digest(payload: object) -> str:
 
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _format_chipbits_as_chc(chipbits: int) -> str:
+    """Return one fixed-precision CHC string for operator-facing economics data."""
+
+    whole = chipbits // CHCBITS_PER_CHC
+    fractional = chipbits % CHCBITS_PER_CHC
+    return f"{whole}.{fractional:08d}"
 
 
 def _misbehavior_sort_key(peer: dict[str, object]) -> tuple[int, str, int]:
@@ -1212,6 +1227,7 @@ class NodeService:
         )
         supply = self.supply_snapshot()
         peers = self.list_peers()
+        reward_node_fees = self.reward_node_fee_schedule()
         handshaken_peer_count = sum(1 for peer in peers if peer.handshake_complete)
         banned_peer_count = sum(1 for peer in peers if peer.ban_until is not None and peer.ban_until > self.time_provider())
         sync_status = self.sync_status()
@@ -1259,6 +1275,7 @@ class NodeService:
                 }
                 for rewarded_node in rewarded_nodes
             ],
+            "reward_node_fees": reward_node_fees,
             "supply": {
                 "network": supply["network"],
                 "height": supply["height"],
@@ -1268,6 +1285,50 @@ class NodeService:
                 "node_minted_supply_chipbits": supply["node_minted_supply_chipbits"],
                 "circulating_supply_chipbits": supply["circulating_supply_chipbits"],
                 "remaining_supply_chipbits": supply["remaining_supply_chipbits"],
+            },
+        }
+
+    def reward_node_fee_schedule(self) -> dict[str, object]:
+        """Return the current adaptive reward-node fee schedule snapshot."""
+
+        registry_snapshot = self.node_registry.snapshot()
+        registered_reward_node_count = reward_registered_node_count(registry_snapshot)
+        tip = self.chain_tip()
+        next_height = 0 if tip is None else tip.height + 1
+        active_reward_node_count = len(
+            active_node_records(
+                registry_snapshot,
+                height=next_height,
+                params=self.params,
+            )
+        )
+        register_fee = register_reward_node_fee_chipbits(
+            registered_reward_node_count=registered_reward_node_count,
+            params=self.params,
+        )
+        renew_fee = renew_reward_node_fee_chipbits(
+            registered_reward_node_count=registered_reward_node_count,
+            params=self.params,
+        )
+        return {
+            "policy_version": "registry_log_v1",
+            "driver": "registered_reward_node_count",
+            "registered_reward_node_count": registered_reward_node_count,
+            "active_reward_node_count": active_reward_node_count,
+            "target_registered_reward_node_count": REWARD_NODE_FEE_TARGET_COUNT,
+            "register_fee_chipbits": register_fee,
+            "register_fee_chc": _format_chipbits_as_chc(register_fee),
+            "renew_fee_chipbits": renew_fee,
+            "renew_fee_chc": _format_chipbits_as_chc(renew_fee),
+            "bounds": {
+                "max_register_fee_chipbits": self.params.register_node_fee_chipbits,
+                "max_register_fee_chc": _format_chipbits_as_chc(self.params.register_node_fee_chipbits),
+                "min_register_fee_chipbits": REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS,
+                "min_register_fee_chc": _format_chipbits_as_chc(REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS),
+                "max_renew_fee_chipbits": self.params.renew_node_fee_chipbits,
+                "max_renew_fee_chc": _format_chipbits_as_chc(self.params.renew_node_fee_chipbits),
+                "min_renew_fee_chipbits": REWARD_NODE_MIN_RENEW_FEE_CHIPBITS,
+                "min_renew_fee_chc": _format_chipbits_as_chc(REWARD_NODE_MIN_RENEW_FEE_CHIPBITS),
             },
         }
 

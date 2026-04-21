@@ -99,7 +99,7 @@ def _register_reward_node(service: NodeService, *, wallet, node_id: str, declare
             node_public_key_hex=wallet.public_key.hex(),
             declared_host="127.0.0.1",
             declared_port=declared_port,
-            registration_fee_chipbits=service.params.register_node_fee_chipbits,
+            registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
         )
     )
 

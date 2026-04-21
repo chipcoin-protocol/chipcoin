@@ -577,6 +577,11 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(service.reward_node_status(node_id=args.node_id, epoch_index=args.epoch_index))
             return 0
 
+        if args.command == "reward-node-fees":
+            assert service is not None
+            _print_json(service.reward_node_fee_schedule())
+            return 0
+
         if args.command == "reward-epoch-summary":
             assert service is not None
             _print_json(service.reward_epoch_summary(epoch_index=args.epoch_index))
@@ -863,6 +868,7 @@ def _build_parser() -> argparse.ArgumentParser:
     reward_node_status = subparsers.add_parser("reward-node-status")
     reward_node_status.add_argument("--node-id", required=True)
     reward_node_status.add_argument("--epoch-index", type=int)
+    subparsers.add_parser("reward-node-fees")
     reward_epoch_summary = subparsers.add_parser("reward-epoch-summary")
     reward_epoch_summary.add_argument("--epoch-index", required=True, type=int)
     reward_attestations = subparsers.add_parser("reward-attestations")
@@ -1219,7 +1225,7 @@ def _build_register_reward_node_transaction(service: NodeService, wallet_key: Wa
         node_public_key_hex=args.node_pubkey_hex,
         declared_host=args.declared_host,
         declared_port=args.declared_port,
-        registration_fee_chipbits=service.params.register_node_fee_chipbits,
+        registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
     )
 
 
@@ -1237,7 +1243,7 @@ def _build_renew_reward_node_transaction(service: NodeService, wallet_key: Walle
         renewal_epoch=current_epoch,
         declared_host=args.declared_host,
         declared_port=args.declared_port,
-        renewal_fee_chipbits=service.params.renew_node_fee_chipbits,
+        renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
     )
 
 

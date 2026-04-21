@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from .params import ConsensusParams
+from .nodes import NodeRegistryView
 
 
 CHCBITS_PER_CHC = 100_000_000
+REWARD_NODE_FEE_TARGET_COUNT = 20_000
+REWARD_NODE_FEE_LOG_SCALE = 1_000_000
+REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS = 10_000
+REWARD_NODE_MIN_RENEW_FEE_CHIPBITS = 1_000
 
 
 def _regular_miner_subsidy_chipbits(height: int, params: ConsensusParams) -> int:
@@ -108,3 +113,69 @@ def total_subsidy_through_height(height: int, params: ConsensusParams) -> int:
         remaining_supply = max(0, params.max_money_chipbits - total)
         total += min(scheduled_total, remaining_supply)
     return total
+
+
+def reward_registered_node_count(registry_view: NodeRegistryView) -> int:
+    """Return the count of reward-node registrations visible on-chain."""
+
+    return sum(1 for record in registry_view.list_records() if record.reward_registration)
+
+
+def _approx_log2_scaled(value: int) -> int:
+    """Return a monotonic fixed-point approximation of log2(value)."""
+
+    if value <= 0:
+        raise ValueError("Logarithm input must be positive.")
+    if value == 1:
+        return 0
+    exponent = value.bit_length() - 1
+    lower = 1 << exponent
+    upper = lower << 1
+    fraction = ((value - lower) * REWARD_NODE_FEE_LOG_SCALE) // (upper - lower)
+    return exponent * REWARD_NODE_FEE_LOG_SCALE + fraction
+
+
+def _adaptive_reward_node_fee_chipbits(
+    *,
+    registered_reward_node_count: int,
+    maximum_fee_chipbits: int,
+    minimum_fee_chipbits: int,
+) -> int:
+    """Return one deterministic logarithmic reward-node fee from registry size."""
+
+    if maximum_fee_chipbits <= 0:
+        raise ValueError("Maximum fee must be positive.")
+    if minimum_fee_chipbits <= 0:
+        raise ValueError("Minimum fee must be positive.")
+    if minimum_fee_chipbits > maximum_fee_chipbits:
+        raise ValueError("Minimum fee cannot exceed maximum fee.")
+
+    clamped_count = min(max(registered_reward_node_count, 1), REWARD_NODE_FEE_TARGET_COUNT)
+    if clamped_count == 1:
+        return maximum_fee_chipbits
+
+    target_log = _approx_log2_scaled(REWARD_NODE_FEE_TARGET_COUNT)
+    progress = _approx_log2_scaled(clamped_count)
+    span = maximum_fee_chipbits - minimum_fee_chipbits
+    reduced_fee = maximum_fee_chipbits - ((span * progress) // target_log)
+    return max(minimum_fee_chipbits, reduced_fee)
+
+
+def register_reward_node_fee_chipbits(*, registered_reward_node_count: int, params: ConsensusParams) -> int:
+    """Return the current reward-node registration fee in chipbits."""
+
+    return _adaptive_reward_node_fee_chipbits(
+        registered_reward_node_count=registered_reward_node_count,
+        maximum_fee_chipbits=params.register_node_fee_chipbits,
+        minimum_fee_chipbits=REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS,
+    )
+
+
+def renew_reward_node_fee_chipbits(*, registered_reward_node_count: int, params: ConsensusParams) -> int:
+    """Return the current reward-node renewal fee in chipbits."""
+
+    return _adaptive_reward_node_fee_chipbits(
+        registered_reward_node_count=registered_reward_node_count,
+        maximum_fee_chipbits=params.renew_node_fee_chipbits,
+        minimum_fee_chipbits=REWARD_NODE_MIN_RENEW_FEE_CHIPBITS,
+    )

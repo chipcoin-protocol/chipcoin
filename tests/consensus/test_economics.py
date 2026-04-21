@@ -1,7 +1,11 @@
 from chipcoin.consensus.economics import (
+    REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS,
+    REWARD_NODE_MIN_RENEW_FEE_CHIPBITS,
     is_epoch_reward_height,
     miner_subsidy_chipbits,
     node_reward_pool_chipbits,
+    renew_reward_node_fee_chipbits,
+    register_reward_node_fee_chipbits,
     subsidy_split_chipbits,
     total_block_subsidy_chipbits,
     total_subsidy_through_height,
@@ -83,3 +87,19 @@ def test_cap_clamp_applies_to_the_exact_crossing_event() -> None:
     assert minted_before + miner_subsidy + node_reward == max_supply
     assert miner_subsidy >= 0
     assert node_reward >= 0
+
+
+def test_reward_node_fee_schedule_starts_at_maximum_and_hits_minimum_at_target() -> None:
+    assert register_reward_node_fee_chipbits(registered_reward_node_count=0, params=MAINNET_PARAMS) == MAINNET_PARAMS.register_node_fee_chipbits
+    assert renew_reward_node_fee_chipbits(registered_reward_node_count=0, params=MAINNET_PARAMS) == MAINNET_PARAMS.renew_node_fee_chipbits
+    assert register_reward_node_fee_chipbits(registered_reward_node_count=20_000, params=MAINNET_PARAMS) == REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS
+    assert renew_reward_node_fee_chipbits(registered_reward_node_count=20_000, params=MAINNET_PARAMS) == REWARD_NODE_MIN_RENEW_FEE_CHIPBITS
+
+
+def test_reward_node_fee_schedule_decreases_monotonically_with_registry_growth() -> None:
+    checkpoints = [1, 2, 10, 100, 1_000, 10_000, 20_000]
+    register_fees = [register_reward_node_fee_chipbits(registered_reward_node_count=count, params=MAINNET_PARAMS) for count in checkpoints]
+    renew_fees = [renew_reward_node_fee_chipbits(registered_reward_node_count=count, params=MAINNET_PARAMS) for count in checkpoints]
+
+    assert register_fees == sorted(register_fees, reverse=True)
+    assert renew_fees == sorted(renew_fees, reverse=True)
