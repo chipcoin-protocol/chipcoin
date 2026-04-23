@@ -2353,7 +2353,8 @@ class NodeService:
             return []
 
         rows: list[dict[str, object]] = []
-        for height in range(tip.height + 1):
+        heights = range(tip.height, -1, -1) if descending else range(tip.height + 1)
+        for height in heights:
             block = self.get_block_by_height(height)
             if block is None or not block.transactions:
                 continue
@@ -2406,9 +2407,10 @@ class NodeService:
                     }
                 )
 
+            if descending and len(rows) >= limit:
+                return rows[:limit]
+
         rows.sort(key=lambda row: (row["block_height"], row["txid"], row["reward_type"]))
-        if descending:
-            rows.reverse()
         return rows[:limit]
 
     def _reward_node_eligibility_reason(
