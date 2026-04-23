@@ -13,7 +13,7 @@ from chipcoin.consensus.params import DEVNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.miner.config import MinerWorkerConfig
 from chipcoin.miner.worker import MinerWorker
-from chipcoin.node.runtime import NodeRuntime, OutboundPeer
+from chipcoin.node.runtime import NodeRuntime, OutboundPeer, RewardNodeAutomationConfig
 from chipcoin.node.service import NodeService
 from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import wallet_key
@@ -39,6 +39,7 @@ def _reward_params():
         DEVNET_PARAMS,
         coinbase_maturity=0,
         node_reward_activation_height=0,
+        reward_node_warmup_epochs=0,
         epoch_length_blocks=5,
         reward_check_windows_per_epoch=4,
         reward_target_checks_per_epoch=1,
@@ -156,6 +157,22 @@ def _build_attestation_bundle_transaction(
             ),
         },
     )
+
+
+def _write_wallet_file(path: Path, wallet) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "address": wallet.address,
+                "compressed": wallet.compressed,
+                "private_key_hex": wallet.private_key.hex(),
+                "public_key_hex": wallet.public_key.hex(),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 async def _wait_for_tip(service: NodeService, block_hash: str) -> None:
@@ -478,5 +495,120 @@ def test_native_reward_template_miner_restart_near_epoch_close_keeps_auto_settle
             finally:
                 await follower_runtime.stop()
                 await bootstrap_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_native_reward_runtime_auto_attests_and_settles_rewards() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            reward_a = wallet_key(0)
+            reward_b = wallet_key(1)
+            reward_a_path = _write_wallet_file(Path(tempdir) / "reward-a.json", reward_a)
+            reward_b_path = _write_wallet_file(Path(tempdir) / "reward-b.json", reward_b)
+            bootstrap_service = _make_reward_service(Path(tempdir) / "bootstrap.sqlite3", start_time=1_700_030_000)
+            follower_service = _make_reward_service(Path(tempdir) / "follower.sqlite3", start_time=1_700_031_000)
+            bootstrap_runtime = NodeRuntime(
+                service=bootstrap_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                ping_interval=0.2,
+                reward_automation=RewardNodeAutomationConfig(
+                    node_id="reward-node-a",
+                    owner_wallet_path=reward_a_path,
+                    attest_wallet_path=reward_a_path,
+                    poll_interval_seconds=0.05,
+                ),
+            )
+            await bootstrap_runtime.start()
+            follower_runtime = NodeRuntime(
+                service=follower_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", bootstrap_runtime.bound_port)],
+                connect_interval=0.1,
+                ping_interval=0.2,
+                reward_automation=RewardNodeAutomationConfig(
+                    node_id="reward-node-b",
+                    owner_wallet_path=reward_b_path,
+                    attest_wallet_path=reward_b_path,
+                    poll_interval_seconds=0.05,
+                ),
+            )
+            await follower_runtime.start()
+            try:
+                await _wait_until(lambda: bootstrap_runtime.connected_peer_count() == 1)
+                _register_reward_node(bootstrap_service, wallet=reward_a, node_id="reward-node-a", declared_port=bootstrap_runtime.bound_port)
+                _register_reward_node(bootstrap_service, wallet=reward_b, node_id="reward-node-b", declared_port=follower_runtime.bound_port)
+                first_block = await _mine_and_announce(bootstrap_runtime, bootstrap_service, reward_a.address)
+                await _wait_for_tip(follower_service, first_block.block_hash())
+                await _wait_until(
+                    lambda: any(
+                        tx.metadata.get("kind") == "reward_attestation_bundle"
+                        for tx in bootstrap_service.list_mempool_transactions()
+                    )
+                )
+
+                second_block = await _mine_and_announce(bootstrap_runtime, bootstrap_service, reward_a.address)
+                third_block = await _mine_and_announce(bootstrap_runtime, bootstrap_service, reward_a.address)
+                fourth_block = await _mine_and_announce(bootstrap_runtime, bootstrap_service, reward_a.address)
+                closing_block = await _mine_and_announce(bootstrap_runtime, bootstrap_service, reward_a.address)
+                for service in (follower_service,):
+                    await _wait_for_tip(service, closing_block.block_hash())
+
+                settlements = bootstrap_service.native_reward_settlement_diagnostics(epoch_index=0)
+                assert len(settlements) == 1
+                assert settlements[0]["distributed_node_reward_chipbits"] > 0
+                assert settlements[0]["rewarded_node_count"] >= 1
+                assert bootstrap_service.reward_attestations.list_bundles()
+                inspect = bootstrap_service.inspect_block(block_hash=closing_block.block_hash())
+                assert inspect is not None
+                assert inspect["node_reward_payouts"]
+            finally:
+                await follower_runtime.stop()
+                await bootstrap_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_native_reward_runtime_auto_renews_registered_node() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            reward_a = wallet_key(0)
+            reward_a_path = _write_wallet_file(Path(tempdir) / "reward-a.json", reward_a)
+            service = _make_reward_service(Path(tempdir) / "node.sqlite3", start_time=1_700_040_000)
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                ping_interval=0.2,
+                reward_automation=RewardNodeAutomationConfig(
+                    node_id="reward-node-a",
+                    owner_wallet_path=reward_a_path,
+                    attest_wallet_path=reward_a_path,
+                    auto_attest_enabled=False,
+                    poll_interval_seconds=0.05,
+                ),
+            )
+            await runtime.start()
+            try:
+                _register_reward_node(service, wallet=reward_a, node_id="reward-node-a", declared_port=runtime.bound_port)
+                await _mine_and_announce(runtime, service, reward_a.address)
+                await _mine_and_announce(runtime, service, reward_a.address)
+                await _mine_and_announce(runtime, service, reward_a.address)
+                await _mine_and_announce(runtime, service, reward_a.address)
+                await _wait_until(
+                    lambda: any(
+                        tx.metadata.get("kind") == "renew_reward_node"
+                        for tx in service.list_mempool_transactions()
+                    )
+                )
+                await _mine_and_announce(runtime, service, reward_a.address)
+
+                status = service.reward_node_status(node_id="reward-node-a", epoch_index=1)
+                assert status["last_renewal_epoch"] == 1
+                assert status["last_renewal_height"] == 5
+            finally:
+                await runtime.stop()
 
     asyncio.run(scenario())

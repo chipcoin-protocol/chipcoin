@@ -19,6 +19,7 @@ The wizard is now Docker-first:
 - it prepares the node database before the first `docker compose up`
 - it does not start services automatically
 - it ends by printing the exact commands the operator should run next
+- it can now prepare either a passive node or a reward-participating node
 
 By default, the generated runtime paths point to `/var/lib/chipcoin`. On a fresh Linux host, the wizard can prepare that runtime directory with `sudo` during setup when needed.
 
@@ -171,7 +172,19 @@ If you run `miner` or `both`, the wizard also offers:
 
 The wallet file is written to the configured runtime directory, not intended for version control.
 
-If you run `node` only, the wizard skips wallet setup because the current public node runtime does not consume a node wallet file.
+If you run `node` or `both`, the wizard now also asks whether the node should be:
+
+- a passive full node
+- a reward node that will later register on-chain
+
+If reward-node mode is selected, the wizard also:
+
+- creates or imports a reward-node wallet
+- writes `REWARD_NODE_AUTO_*` values into `.env`
+- asks for the declared reward-node host and port
+- reminds the operator that CHC is required only for reward registration and renewal, not for ordinary full-node operation
+- suggests the devnet faucet or another devnet funding source
+- prints a ready-to-run registration command for after the wallet is funded
 
 ## Output
 
@@ -180,6 +193,7 @@ The wizard writes:
 - `.env` in the repository root
 - runtime data file paths under the configured runtime directory
 - miner wallet file under the configured runtime directory when needed
+- reward-node wallet file under the configured runtime directory when reward-node mode is selected
 
 The wizard does not create:
 
@@ -274,6 +288,12 @@ docker compose up -d node
 docker compose logs -f node
 docker compose logs -f miner
 docker compose down
+```
+
+For a clean devnet restart that preserves wallets but resets chain state using the current `.env`, use:
+
+```bash
+bash scripts/runtime/reset-chain.sh
 ```
 
 Expected first-start logs:

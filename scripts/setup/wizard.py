@@ -9,6 +9,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,8 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from chipcoin.interfaces.cli import _load_snapshot_trusted_keys  # noqa: E402
+from chipcoin.config import get_network_config  # noqa: E402
+from chipcoin.consensus.economics import CHCBITS_PER_CHC, register_reward_node_fee_chipbits, renew_reward_node_fee_chipbits  # noqa: E402
 from chipcoin.crypto.keys import parse_private_key_hex  # noqa: E402
 from chipcoin.node.service import NodeService  # noqa: E402
 from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_private_key  # noqa: E402
@@ -34,6 +37,7 @@ RUNTIME_ROOT = Path("/var/lib/chipcoin")
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.snapshot")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
+REWARD_WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "reward-node-wallet.json")
 PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
 PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
 PUBLIC_DEVNET_BOOTSTRAP_URL = "http://chipcoinprotocol.com:28080"
@@ -68,6 +72,14 @@ DEFAULTS = {
     "CHIPCOIN_HTTP_ALLOWED_ORIGINS": "",
     "MINER_LOG_LEVEL": "INFO",
     "MINER_WALLET_FILE": WALLET_PATH,
+    "REWARD_NODE_AUTO_NODE_ID": "",
+    "REWARD_NODE_AUTO_OWNER_WALLET_FILE": "",
+    "REWARD_NODE_AUTO_ATTEST_WALLET_FILE": "",
+    "REWARD_NODE_AUTO_DECLARED_HOST": "",
+    "REWARD_NODE_AUTO_DECLARED_PORT": "",
+    "REWARD_NODE_AUTO_RENEW_ENABLED": "true",
+    "REWARD_NODE_AUTO_ATTEST_ENABLED": "true",
+    "REWARD_NODE_AUTO_POLL_INTERVAL_SECONDS": "5.0",
     "MINING_MIN_INTERVAL_SECONDS": "1.0",
     "MINING_NODE_URLS": "http://node:8081",
     "MINING_MINER_ID": "",
@@ -129,20 +141,22 @@ def main() -> int:
     _print_public_reachability_note()
     bootstrap_notes: list[str] = []
 
-    wallet_path: Path | None = None
-    wallet_address: str | None = None
-    wallet_private_key_hex: str | None = None
-    if role == "node":
-        print("Node-only Phase 1 runtime does not consume a wallet yet. Skipping wallet setup.")
-    else:
+    miner_wallet_path: Path | None = None
+    miner_wallet_address: str | None = None
+    miner_wallet_private_key_hex: str | None = None
+    reward_wallet_path: Path | None = None
+    reward_wallet_address: str | None = None
+    reward_wallet_private_key_hex: str | None = None
+    reward_node_enabled = False
+    if role in {"miner", "both"}:
         wallet_mode = _ask_choice(
-            "How should the wallet be handled?",
+            "How should the miner wallet be handled?",
             {"generate": "Generate new wallet", "import": "Import existing private key"},
             "generate",
         )
-        wallet_path = Path(WALLET_PATH)
-        _prepare_wallet_path(wallet_path)
-        wallet_address, wallet_private_key_hex = _handle_wallet(wallet_mode, wallet_path)
+        miner_wallet_path = Path(WALLET_PATH)
+        _prepare_wallet_path(miner_wallet_path)
+        miner_wallet_address, miner_wallet_private_key_hex = _handle_wallet(wallet_mode, miner_wallet_path)
 
     env_values = dict(DEFAULTS)
     env_values["CHIPCOIN_NETWORK"] = network
@@ -150,6 +164,19 @@ def main() -> int:
     if role in {"node", "both"}:
         _configure_node_discovery(env_values, setup_mode=setup_mode)
         _configure_node_bootstrap(env_values, setup_mode=setup_mode)
+        reward_node_enabled = _ask_choice(
+            "How should this node participate?",
+            {
+                "passive": "Passive full node only",
+                "reward": "Reward node that registers for protocol rewards",
+            },
+            "passive",
+        ) == "reward"
+        if reward_node_enabled:
+            reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex = _configure_reward_node(
+                env_values,
+                setup_mode=setup_mode,
+            )
     _preflight_validate(env_values, role=role)
     _prepare_runtime_files(env_values, role=role)
     if role in {"node", "both"}:
@@ -160,9 +187,13 @@ def main() -> int:
         role,
         network,
         runtime_mode,
-        wallet_path,
-        wallet_address,
-        wallet_private_key_hex,
+        miner_wallet_path,
+        miner_wallet_address,
+        miner_wallet_private_key_hex,
+        reward_wallet_path,
+        reward_wallet_address,
+        reward_wallet_private_key_hex,
+        reward_node_enabled,
         setup_mode,
         env_values,
         bootstrap_notes=bootstrap_notes,
@@ -261,6 +292,21 @@ def _ask_host(prompt: str, default: str) -> str:
         if _looks_public_host(answer):
             return answer
         print("Invalid public host. Use a real public DNS name or public IP address, not localhost or a private address.")
+
+
+def _ask_nonempty_host(prompt: str, default: str) -> str:
+    while True:
+        suffix = f" [{default}]" if default else ""
+        answer = input(f"{prompt}{suffix}: ").strip()
+        if not answer:
+            if default:
+                return default
+            print("Host must not be empty.")
+            continue
+        if any(character.isspace() for character in answer):
+            print("Host must not contain whitespace.")
+            continue
+        return answer
 
 
 def _ask_port(prompt: str, default: str) -> str:
@@ -400,6 +446,81 @@ def _primary_group_name() -> str:
         return grp.getgrgid(os.getgid()).gr_name
     except Exception:  # noqa: BLE001
         return getpass.getuser()
+
+
+def _default_reward_node_id() -> str:
+    raw = socket.gethostname().strip().lower()
+    normalized = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
+    if not normalized:
+        normalized = "local"
+    return f"reward-node-{normalized}"
+
+
+def _ask_reward_node_id(default: str) -> str:
+    while True:
+        answer = input(f"Enter reward node id [{default}]: ").strip()
+        if not answer:
+            answer = default
+        if re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{1,127}", answer):
+            return answer
+        print("Invalid node id. Use 2-128 characters from letters, digits, dot, underscore, or dash.")
+
+
+def _format_chipbits_as_chc(value: int) -> str:
+    major, minor = divmod(int(value), CHCBITS_PER_CHC)
+    text = f"{major}.{minor:08d}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def _reward_fee_guidance(network: str) -> tuple[str, str, str]:
+    params = get_network_config(network).params
+    register_fee = register_reward_node_fee_chipbits(registered_reward_node_count=0, params=params)
+    renew_fee = renew_reward_node_fee_chipbits(registered_reward_node_count=0, params=params)
+    suggested = register_fee + (2 * renew_fee)
+    return (
+        _format_chipbits_as_chc(register_fee),
+        _format_chipbits_as_chc(renew_fee),
+        _format_chipbits_as_chc(suggested),
+    )
+
+
+def _default_reward_registration_peer(env_values: dict[str, str]) -> str:
+    peers = [item.strip() for item in env_values.get("NODE_DIRECT_PEERS", "").split(",") if item.strip()]
+    if peers:
+        return peers[0]
+    bootstrap_peer = env_values.get("DEFAULT_BOOTSTRAP_PEER", "").strip()
+    if bootstrap_peer:
+        return bootstrap_peer
+    return "127.0.0.1:18444"
+
+
+def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tuple[Path, str, str]:
+    reward_wallet_mode = _ask_choice(
+        "How should the reward-node wallet be handled?",
+        {"generate": "Generate new wallet", "import": "Import existing private key"},
+        "generate",
+    )
+    reward_wallet_path = Path(REWARD_WALLET_PATH)
+    _prepare_wallet_path(reward_wallet_path)
+    reward_wallet_address, reward_wallet_private_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path)
+    env_values["REWARD_NODE_AUTO_NODE_ID"] = _ask_reward_node_id(_default_reward_node_id())
+    default_declared_host = (
+        env_values.get("NODE_PUBLIC_HOST", "").strip()
+        or (_default_public_host(env_values) if setup_mode != "local" else "127.0.0.1")
+    )
+    env_values["REWARD_NODE_AUTO_DECLARED_HOST"] = _ask_nonempty_host(
+        "Enter the reward-node declared host",
+        default_declared_host,
+    )
+    env_values["REWARD_NODE_AUTO_DECLARED_PORT"] = _ask_port(
+        "Enter the reward-node declared port",
+        env_values.get("NODE_PUBLIC_P2P_PORT", "") or env_values.get("NODE_P2P_BIND_PORT", "18444"),
+    )
+    env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] = str(reward_wallet_path)
+    env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] = str(reward_wallet_path)
+    env_values["REWARD_NODE_AUTO_RENEW_ENABLED"] = "true"
+    env_values["REWARD_NODE_AUTO_ATTEST_ENABLED"] = "true"
+    return reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex
 
 
 def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) -> None:
@@ -683,6 +804,24 @@ def _preflight_validate(env_values: dict[str, str], *, role: str) -> None:
                 _die("Snapshot trust mode 'enforce' requires NODE_SNAPSHOT_TRUSTED_KEYS_FILE.")
             if trusted_keys_file and not Path(trusted_keys_file).exists():
                 _die(f"Snapshot trusted keys file does not exist: {trusted_keys_file}")
+        reward_node_id = env_values.get("REWARD_NODE_AUTO_NODE_ID", "").strip()
+        if reward_node_id:
+            owner_wallet_path = env_values.get("REWARD_NODE_AUTO_OWNER_WALLET_FILE", "").strip()
+            attest_wallet_path = env_values.get("REWARD_NODE_AUTO_ATTEST_WALLET_FILE", "").strip() or owner_wallet_path
+            if not owner_wallet_path:
+                _die("Reward-node mode requires REWARD_NODE_AUTO_OWNER_WALLET_FILE.")
+            if not Path(owner_wallet_path).exists():
+                _die(f"Reward-node owner wallet file does not exist: {owner_wallet_path}")
+            if not attest_wallet_path:
+                _die("Reward-node mode requires REWARD_NODE_AUTO_ATTEST_WALLET_FILE or owner wallet fallback.")
+            if not Path(attest_wallet_path).exists():
+                _die(f"Reward-node attestation wallet file does not exist: {attest_wallet_path}")
+            declared_host = env_values.get("REWARD_NODE_AUTO_DECLARED_HOST", "").strip()
+            if not declared_host:
+                _die("Reward-node mode requires REWARD_NODE_AUTO_DECLARED_HOST.")
+            declared_port = env_values.get("REWARD_NODE_AUTO_DECLARED_PORT", "").strip()
+            if not declared_port.isdigit() or not (1 <= int(declared_port) <= 65535):
+                _die(f"REWARD_NODE_AUTO_DECLARED_PORT must be a valid TCP port: {declared_port}")
     if role in {"miner", "both"} and not env_values.get("MINING_NODE_URLS", "").strip():
         _die("Miner mode requires at least one mining node endpoint.")
 
@@ -890,9 +1029,13 @@ def _print_success(
     role: str,
     network: str,
     runtime_mode: str,
-    wallet_path: Path | None,
-    wallet_address: str | None,
-    wallet_private_key_hex: str | None,
+    miner_wallet_path: Path | None,
+    miner_wallet_address: str | None,
+    miner_wallet_private_key_hex: str | None,
+    reward_wallet_path: Path | None,
+    reward_wallet_address: str | None,
+    reward_wallet_private_key_hex: str | None,
+    reward_node_enabled: bool,
     setup_mode: str,
     env_values: dict[str, str],
     bootstrap_notes: list[str],
@@ -904,14 +1047,30 @@ def _print_success(
     print("Setup completed successfully.")
     print(f"Role: {role}")
     print(f"Network: {network}")
-    if wallet_path is not None and wallet_address is not None:
-        print(f"Wallet file: {wallet_path}")
-        print(f"Wallet address: {wallet_address}")
-        if wallet_private_key_hex is not None:
-            print(f"Wallet private key: {wallet_private_key_hex}")
+    if miner_wallet_path is not None and miner_wallet_address is not None:
+        print(f"Miner wallet file: {miner_wallet_path}")
+        print(f"Miner wallet address: {miner_wallet_address}")
+        if miner_wallet_private_key_hex is not None:
+            print(f"Miner wallet private key: {miner_wallet_private_key_hex}")
     else:
-        print("Wallet: not required for node-only Phase 1 runtime")
-        print("Note: node wallet support is reserved for future real node reward participation flows.")
+        print("Miner wallet: not configured")
+    if reward_node_enabled and reward_wallet_path is not None and reward_wallet_address is not None:
+        register_fee, renew_fee, suggested_total = _reward_fee_guidance(network)
+        print(f"Reward-node wallet file: {reward_wallet_path}")
+        print(f"Reward-node payout address: {reward_wallet_address}")
+        if reward_wallet_private_key_hex is not None:
+            print(f"Reward-node private key: {reward_wallet_private_key_hex}")
+        print(f"Reward-node id: {env_values['REWARD_NODE_AUTO_NODE_ID']}")
+        print(f"Reward-node declared host: {env_values['REWARD_NODE_AUTO_DECLARED_HOST']}")
+        print(f"Reward-node declared port: {env_values['REWARD_NODE_AUTO_DECLARED_PORT']}")
+        print(
+            "Reward-node funding guidance: "
+            f"registration currently starts at {register_fee} CHC, "
+            f"renewal at {renew_fee} CHC, and you should provision at least {suggested_total} CHC."
+        )
+        print("Devnet note: use the faucet or another devnet funding source before attempting registration.")
+    else:
+        print("Reward-node mode: passive full node")
     print(f"Runtime directory: {env_values['CHIPCOIN_RUNTIME_DIR']}")
     if role in {"node", "both"}:
         print(f"Node database: {env_values['NODE_DATA_PATH']}")
@@ -957,9 +1116,28 @@ def _print_success(
         print("Bootstrap notes:")
         for note in bootstrap_notes:
             print(f"  - {note}")
+    if reward_node_enabled and reward_wallet_path is not None and reward_wallet_address is not None:
+        registration_peer = _default_reward_registration_peer(env_values)
+        print()
+        print("Reward-node registration command:")
+        print(
+            "  docker compose run --rm --no-deps --entrypoint chipcoin "
+            f"-v \"{env_values['NODE_DATA_PATH']}:/runtime/node.sqlite3\" "
+            f"-v \"{reward_wallet_path}:/runtime/reward-node-wallet.json:ro\" "
+            "node "
+            f"--network {network} --data /runtime/node.sqlite3 "
+            "register-reward-node "
+            "--wallet-file /runtime/reward-node-wallet.json "
+            f"--node-id {env_values['REWARD_NODE_AUTO_NODE_ID']} "
+            f"--payout-address {reward_wallet_address} "
+            f"--declared-host {env_values['REWARD_NODE_AUTO_DECLARED_HOST']} "
+            f"--declared-port {env_values['REWARD_NODE_AUTO_DECLARED_PORT']} "
+            f"--connect {registration_peer}"
+        )
     print()
     print("Next commands:")
     print(f"  {compose_up_background}")
+    print("  bash scripts/runtime/reset-chain.sh")
     if role in {"node", "both"}:
         print("  docker compose logs -f node")
     if role in {"miner", "both"}:

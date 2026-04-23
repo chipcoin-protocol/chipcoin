@@ -385,6 +385,18 @@ If you want a guided setup instead of editing `.env` manually, use:
 python3 scripts/setup/wizard.py
 ```
 
+The wizard can now prepare:
+
+- a passive full node
+- a miner
+- a reward-participating node with prewired `REWARD_NODE_AUTO_*` env values
+
+For a clean devnet chain reset that preserves wallets and rereads paths from `.env`, use:
+
+```bash
+bash scripts/runtime/reset-chain.sh
+```
+
 Available modes:
 
 - `Quick start`

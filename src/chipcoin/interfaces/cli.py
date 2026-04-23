@@ -24,7 +24,7 @@ from ..miner.worker import MinerWorker
 from ..node.messages import MessageEnvelope, TransactionMessage
 from ..node.p2p.protocol import LocalPeerIdentity, PeerProtocol
 from ..node.service import NodeService
-from ..node.runtime import NodeRuntime, OutboundPeer
+from ..node.runtime import NodeRuntime, OutboundPeer, load_reward_node_automation_config_from_env
 from ..node.snapshots import (
     ed25519_public_key_hex_from_private_key,
     parse_ed25519_private_key_hex,
@@ -1093,6 +1093,7 @@ async def _run_runtime(service: NodeService, args) -> None:
         misbehavior_decay_step=getattr(args, "misbehavior_decay_step", 5),
         http_host=getattr(args, "http_host", None),
         http_port=getattr(args, "http_port", None),
+        reward_automation=load_reward_node_automation_config_from_env(),
         logger=None,
     )
     configured_peer_source = getattr(args, "peer_source", "manual")

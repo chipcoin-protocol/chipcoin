@@ -4,7 +4,12 @@
 
 The Chipcoin node maintains chain state, validates blocks and transactions, exposes the HTTP API, and participates in the P2P network.
 
-The current public release does not use a node wallet file at runtime.
+The node can run without any wallet material.
+
+If you enable reward-node automation, the runtime also consumes local wallet JSON files for:
+
+- reward-node renewal signing
+- reward attestation signing
 
 ## Role Boundaries
 
@@ -79,6 +84,14 @@ Relevant `.env` keys:
 - `PEER_MISBEHAVIOR_BAN_DURATION_SECONDS`
 - `PEER_MISBEHAVIOR_DECAY_INTERVAL_SECONDS`
 - `PEER_MISBEHAVIOR_DECAY_STEP`
+- `REWARD_NODE_AUTO_NODE_ID`
+- `REWARD_NODE_AUTO_OWNER_WALLET_FILE`
+- `REWARD_NODE_AUTO_ATTEST_WALLET_FILE`
+- `REWARD_NODE_AUTO_DECLARED_HOST`
+- `REWARD_NODE_AUTO_DECLARED_PORT`
+- `REWARD_NODE_AUTO_RENEW_ENABLED`
+- `REWARD_NODE_AUTO_ATTEST_ENABLED`
+- `REWARD_NODE_AUTO_POLL_INTERVAL_SECONDS`
 
 Snapshot bootstrap is installation-time and CLI-driven, not runtime environment-driven.
 
@@ -93,6 +106,13 @@ At runtime, the node relies only on:
 
 - the SQLite database mounted from `NODE_DATA_PATH`
 - normal node networking/runtime environment
+
+Optional reward-node automation also relies on:
+
+- one owner wallet JSON file matching the registered `owner_pubkey`
+- one attestation wallet JSON file matching the registered `node_pubkey`
+
+If `REWARD_NODE_AUTO_ATTEST_WALLET_FILE` is empty, the runtime reuses `REWARD_NODE_AUTO_OWNER_WALLET_FILE`.
 
 Re-bootstrap is therefore an installation or maintenance action, not a startup behavior:
 

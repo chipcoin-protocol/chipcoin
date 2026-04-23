@@ -4,18 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
+import os
 import secrets
 import socket
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from wsgiref.simple_server import make_server
 
 from .. import __version__
 from ..config import get_network_config
+from ..consensus.epoch_settlement import RewardAttestation
+from ..consensus.models import Transaction
+from ..consensus.nodes import current_epoch
+from ..crypto.keys import parse_private_key_hex
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..interfaces.http_api import HttpApiApp, ThreadingWSGIServer, load_allowed_origins_from_env
 from ..utils.logging import configure_logging
+from ..wallet.signer import TransactionSigner, wallet_key_from_private_key
 from .p2p.errors import (
     BlockRequestStalledError,
     DuplicateConnectionError,
@@ -76,6 +84,68 @@ class SessionHandle:
     addr_relay_entries_sent: int = 0
 
 
+@dataclass(frozen=True)
+class RewardNodeAutomationConfig:
+    """Local operator configuration for one auto-managed reward node."""
+
+    node_id: str
+    owner_wallet_path: Path
+    attest_wallet_path: Path
+    declared_host: str | None = None
+    declared_port: int | None = None
+    auto_renew_enabled: bool = True
+    auto_attest_enabled: bool = True
+    poll_interval_seconds: float = 5.0
+
+
+def _parse_bool_env(raw: str | None, *, default: bool) -> bool:
+    """Parse one shell-style boolean env value."""
+
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _load_wallet_key(path: Path):
+    """Load one minimal wallet JSON file from disk."""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return wallet_key_from_private_key(
+        parse_private_key_hex(str(payload["private_key_hex"])),
+        compressed=bool(payload.get("compressed", True)),
+    )
+
+
+def load_reward_node_automation_config_from_env() -> RewardNodeAutomationConfig | None:
+    """Load reward-node runtime automation config from environment."""
+
+    node_id = os.getenv("REWARD_NODE_AUTO_NODE_ID", "").strip()
+    if not node_id:
+        return None
+    owner_wallet = os.getenv("REWARD_NODE_AUTO_OWNER_WALLET_FILE", "").strip()
+    if not owner_wallet:
+        raise ValueError("REWARD_NODE_AUTO_OWNER_WALLET_FILE is required when REWARD_NODE_AUTO_NODE_ID is set.")
+    attest_wallet = os.getenv("REWARD_NODE_AUTO_ATTEST_WALLET_FILE", "").strip() or owner_wallet
+    declared_host = os.getenv("REWARD_NODE_AUTO_DECLARED_HOST", "").strip() or None
+    declared_port_raw = os.getenv("REWARD_NODE_AUTO_DECLARED_PORT", "").strip()
+    declared_port = None if not declared_port_raw else int(declared_port_raw)
+    return RewardNodeAutomationConfig(
+        node_id=node_id,
+        owner_wallet_path=Path(owner_wallet),
+        attest_wallet_path=Path(attest_wallet),
+        declared_host=declared_host,
+        declared_port=declared_port,
+        auto_renew_enabled=_parse_bool_env(os.getenv("REWARD_NODE_AUTO_RENEW_ENABLED"), default=True),
+        auto_attest_enabled=_parse_bool_env(os.getenv("REWARD_NODE_AUTO_ATTEST_ENABLED"), default=True),
+        poll_interval_seconds=max(1.0, float(os.getenv("REWARD_NODE_AUTO_POLL_INTERVAL_SECONDS", "5.0"))),
+    )
+
+
 class NodeRuntime:
     """Long-running TCP runtime coordinating peer sessions and sync."""
 
@@ -127,6 +197,7 @@ class NodeRuntime:
         misbehavior_decay_step: int = 5,
         http_host: str | None = None,
         http_port: int | None = None,
+        reward_automation: RewardNodeAutomationConfig | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.service = service
@@ -173,6 +244,7 @@ class NodeRuntime:
         self.misbehavior_decay_step = max(1, misbehavior_decay_step)
         self.http_host = http_host
         self.http_port = http_port
+        self.reward_automation = reward_automation
         self.logger = logger or logging.getLogger("chipcoin.node.runtime")
         self.sync_manager = SyncManager(node=service)
         self.sync_manager.max_headers = max_headers_per_message
@@ -196,6 +268,10 @@ class NodeRuntime:
         }
         self._relayed_mempool_txids: set[str] = set()
         self._last_logged_sync_phase: str | None = None
+        self._reward_owner_wallet = None if reward_automation is None else _load_wallet_key(reward_automation.owner_wallet_path)
+        self._reward_attest_wallet = None if reward_automation is None else _load_wallet_key(reward_automation.attest_wallet_path)
+        self._reward_submitted_renewal_epochs: set[int] = set()
+        self._reward_submitted_attestation_identities: set[tuple[int, int, str, str]] = set()
 
     @property
     def bound_port(self) -> int:
@@ -248,6 +324,8 @@ class NodeRuntime:
         self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop")
         if self.headers_sync_enabled:
             self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop")
+        if self.reward_automation is not None and (self.reward_automation.auto_renew_enabled or self.reward_automation.auto_attest_enabled):
+            self._spawn_task(self._reward_automation_loop(), "reward-automation-loop")
 
     async def stop(self) -> None:
         """Stop listener, background tasks, and active sessions."""
@@ -408,6 +486,167 @@ class NodeRuntime:
         self._relayed_mempool_txids.add(accepted.transaction.txid())
         await self._broadcast_inventory(InventoryVector(object_type="tx", object_hash=accepted.transaction.txid()))
         return {"accepted": True, "txid": accepted.transaction.txid(), "fee": accepted.fee}
+
+    async def _reward_automation_loop(self) -> None:
+        """Periodically auto-renew and auto-attest for one configured reward node."""
+
+        assert self.reward_automation is not None
+        while self._running:
+            try:
+                await self._run_reward_automation_once()
+            except Exception as exc:
+                self.logger.warning("reward automation loop failed node_id=%s error=%s", self.reward_automation.node_id, exc)
+            await asyncio.sleep(self.reward_automation.poll_interval_seconds)
+
+    async def _run_reward_automation_once(self) -> None:
+        """Run one idempotent reward automation pass."""
+
+        assert self.reward_automation is not None
+        current_epoch_index = self.service.next_block_epoch()
+        self._reward_submitted_renewal_epochs = {epoch for epoch in self._reward_submitted_renewal_epochs if epoch >= current_epoch_index}
+        self._reward_submitted_attestation_identities = {
+            identity for identity in self._reward_submitted_attestation_identities if identity[0] >= current_epoch_index
+        }
+        if self.reward_automation.auto_renew_enabled:
+            await self._maybe_auto_renew(current_epoch_index)
+        if self.reward_automation.auto_attest_enabled:
+            await self._maybe_auto_attest(current_epoch_index)
+
+    async def _maybe_auto_renew(self, current_epoch_index: int) -> None:
+        """Submit one renewal transaction when the configured reward node is stale."""
+
+        assert self.reward_automation is not None
+        assert self._reward_owner_wallet is not None
+        record = self.service.get_registered_node(self.reward_automation.node_id)
+        if record is None or not record.reward_registration:
+            return
+        if record.owner_pubkey != self._reward_owner_wallet.public_key:
+            raise ValueError(f"owner wallet does not match reward node owner for node_id={record.node_id}")
+        if current_epoch(record.last_renewed_height, self.service.params) == current_epoch_index:
+            return
+        if current_epoch_index in self._reward_submitted_renewal_epochs:
+            return
+        declared_host = self.reward_automation.declared_host or record.declared_host
+        declared_port = self.reward_automation.declared_port or record.declared_port
+        if not declared_host or declared_port is None:
+            raise ValueError(f"reward node declared endpoint is incomplete for node_id={record.node_id}")
+        transaction = TransactionSigner(self._reward_owner_wallet).build_renew_reward_node_transaction(
+            node_id=record.node_id,
+            renewal_epoch=current_epoch_index,
+            declared_host=declared_host,
+            declared_port=int(declared_port),
+            renewal_fee_chipbits=int(self.service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+        )
+        await self.submit_transaction(transaction)
+        self._reward_submitted_renewal_epochs.add(current_epoch_index)
+        self.logger.info("auto reward renewal submitted node_id=%s epoch=%s txid=%s", record.node_id, current_epoch_index, transaction.txid())
+
+    async def _maybe_auto_attest(self, current_epoch_index: int) -> None:
+        """Submit deterministic pass attestations for one configured verifier node."""
+
+        assert self.reward_automation is not None
+        assert self._reward_attest_wallet is not None
+        status = self.service.reward_node_status(node_id=self.reward_automation.node_id, epoch_index=current_epoch_index)
+        if not bool(status.get("selected_epoch_active")):
+            return
+        record = self.service.get_registered_node(self.reward_automation.node_id)
+        if record is None or record.node_pubkey is None:
+            return
+        if record.node_pubkey != self._reward_attest_wallet.public_key:
+            raise ValueError(f"attestation wallet does not match reward node node_pubkey for node_id={record.node_id}")
+        recorded_identities = self.service.reward_attestations.attestation_identities()
+        assignments = self.service.native_reward_assignments(epoch_index=current_epoch_index)
+        bundles_by_window: dict[int, list[RewardAttestation]] = {}
+        for assignment in assignments:
+            candidate_node_id = str(assignment["node_id"])
+            for window_index in assignment["candidate_check_windows"]:
+                committee = assignment["verifier_committees"].get(str(window_index), [])
+                identity = (current_epoch_index, int(window_index), candidate_node_id, self.reward_automation.node_id)
+                if self.reward_automation.node_id not in committee:
+                    continue
+                if identity in recorded_identities or identity in self._reward_submitted_attestation_identities:
+                    continue
+                endpoint_commitment = f"{assignment['declared_host']}:{assignment['declared_port']}"
+                attestation = TransactionSigner(self._reward_attest_wallet).sign_reward_attestation(
+                    RewardAttestation(
+                        epoch_index=current_epoch_index,
+                        check_window_index=int(window_index),
+                        candidate_node_id=candidate_node_id,
+                        verifier_node_id=self.reward_automation.node_id,
+                        result_code="pass",
+                        observed_sync_gap=0,
+                        endpoint_commitment=endpoint_commitment,
+                        concentration_key=f"unscoped:{candidate_node_id}",
+                        signature_hex="",
+                    )
+                )
+                bundles_by_window.setdefault(int(window_index), []).append(attestation)
+        for window_index, attestations in sorted(bundles_by_window.items()):
+            transaction = self._build_reward_attestation_bundle_transaction(
+                epoch_index=current_epoch_index,
+                bundle_window_index=window_index,
+                bundle_submitter_node_id=self.reward_automation.node_id,
+                attestations=attestations,
+            )
+            await self.submit_transaction(transaction)
+            for attestation in attestations:
+                self._reward_submitted_attestation_identities.add(
+                    (
+                        attestation.epoch_index,
+                        attestation.check_window_index,
+                        attestation.candidate_node_id,
+                        attestation.verifier_node_id,
+                    )
+                )
+            self.logger.info(
+                "auto reward attestation submitted node_id=%s epoch=%s window=%s attestation_count=%s txid=%s",
+                self.reward_automation.node_id,
+                current_epoch_index,
+                window_index,
+                len(attestations),
+                transaction.txid(),
+            )
+
+    def _build_reward_attestation_bundle_transaction(
+        self,
+        *,
+        epoch_index: int,
+        bundle_window_index: int,
+        bundle_submitter_node_id: str,
+        attestations: list[RewardAttestation],
+    ) -> Transaction:
+        """Build one native reward attestation bundle transaction."""
+
+        return Transaction(
+            version=1,
+            inputs=(),
+            outputs=(),
+            metadata={
+                "kind": "reward_attestation_bundle",
+                "epoch_index": str(epoch_index),
+                "bundle_window_index": str(bundle_window_index),
+                "bundle_submitter_node_id": str(bundle_submitter_node_id),
+                "attestation_count": str(len(attestations)),
+                "attestations_json": json.dumps(
+                    [
+                        {
+                            "epoch_index": attestation.epoch_index,
+                            "check_window_index": attestation.check_window_index,
+                            "candidate_node_id": attestation.candidate_node_id,
+                            "verifier_node_id": attestation.verifier_node_id,
+                            "result_code": attestation.result_code,
+                            "observed_sync_gap": attestation.observed_sync_gap,
+                            "endpoint_commitment": attestation.endpoint_commitment,
+                            "concentration_key": attestation.concentration_key,
+                            "signature_hex": attestation.signature_hex,
+                        }
+                        for attestation in attestations
+                    ],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            },
+        )
 
     def connected_peer_count(self) -> int:
         """Return the number of active handshaken peer sessions."""

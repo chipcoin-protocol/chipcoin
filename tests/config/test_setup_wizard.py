@@ -80,6 +80,11 @@ def test_env_examples_expose_service_specific_discovery_defaults() -> None:
         assert "NODE_PUBLIC_HOST=" in content
         assert "NODE_PUBLIC_P2P_PORT=" in content
         assert "MINING_NODE_URLS=" in content
+        assert "REWARD_NODE_AUTO_NODE_ID=" in content
+        assert "REWARD_NODE_AUTO_OWNER_WALLET_FILE=" in content
+        assert "REWARD_NODE_AUTO_ATTEST_WALLET_FILE=" in content
+        assert "REWARD_NODE_AUTO_DECLARED_HOST=" in content
+        assert "REWARD_NODE_AUTO_DECLARED_PORT=" in content
 
 
 def test_configure_node_discovery_defaults_to_bootstrap_and_public_standard_port(monkeypatch) -> None:
@@ -182,6 +187,55 @@ def test_prepare_runtime_files_creates_node_db_for_node_role() -> None:
         wizard._prepare_runtime_files(env_values, role="node")
 
         assert node_data_path.is_file()
+
+
+def test_configure_reward_node_sets_reward_automation_env_and_writes_wallet(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    with TemporaryDirectory() as tempdir:
+        reward_wallet_path = Path(tempdir) / "reward-node.json"
+        monkeypatch.setattr(wizard, "REWARD_WALLET_PATH", str(reward_wallet_path))
+        env_values = dict(wizard.DEFAULTS)
+        env_values["NODE_P2P_BIND_PORT"] = "18444"
+        answers = iter(
+            [
+                "generate",
+                "reward-node-test",
+                "reward-node.example.com",
+                "",
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+        wallet_path, wallet_address, wallet_private_key_hex = wizard._configure_reward_node(env_values, setup_mode="quick")
+
+        assert wallet_path == reward_wallet_path
+        assert reward_wallet_path.exists()
+        assert wallet_address.startswith("CHCC")
+        assert len(wallet_private_key_hex) == 64
+        assert env_values["REWARD_NODE_AUTO_NODE_ID"] == "reward-node-test"
+        assert env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] == str(reward_wallet_path)
+        assert env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] == str(reward_wallet_path)
+        assert env_values["REWARD_NODE_AUTO_DECLARED_HOST"] == "reward-node.example.com"
+        assert env_values["REWARD_NODE_AUTO_DECLARED_PORT"] == "18444"
+
+
+def test_preflight_rejects_reward_node_mode_without_wallet(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    with TemporaryDirectory() as tempdir:
+        temp_root = Path(tempdir)
+        env_values = dict(wizard.DEFAULTS)
+        env_values["NODE_DATA_PATH"] = str(temp_root / "node.sqlite3")
+        env_values["REWARD_NODE_AUTO_NODE_ID"] = "reward-node-test"
+        env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] = str(temp_root / "missing-wallet.json")
+        env_values["REWARD_NODE_AUTO_DECLARED_HOST"] = "reward-node.example.com"
+        env_values["REWARD_NODE_AUTO_DECLARED_PORT"] = "18444"
+
+        try:
+            wizard._preflight_validate(env_values, role="node")
+        except SystemExit as exc:
+            assert exc.code == 1
+        else:
+            raise AssertionError("Expected reward-node preflight validation to fail when the wallet file is missing.")
 
 
 def test_parse_snapshot_manifest_and_select_latest_compatible_snapshot() -> None:
