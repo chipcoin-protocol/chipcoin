@@ -10,6 +10,8 @@ from ..consensus.epoch_settlement import (
     REWARD_ATTESTATION_BUNDLE_KIND,
     REWARD_SETTLE_EPOCH_KIND,
     RewardSettlement,
+    attestation_identity,
+    parse_reward_attestation_bundle_metadata,
     parse_reward_settlement_metadata,
 )
 from ..consensus.merkle import merkle_root
@@ -183,6 +185,8 @@ class MiningCoordinator:
         included_entries: list[MempoolEntry] = []
         current_weight_units = 0
         included_attestation_bundle_count = 0
+        included_attestation_identities: set[tuple[int, int, str, str]] = set()
+        included_verifier_window_counts: dict[tuple[int, str], int] = {}
 
         while pending:
             progressed = False
@@ -201,12 +205,31 @@ class MiningCoordinator:
                     and included_attestation_bundle_count >= self.params.max_attestation_bundles_per_block
                 ):
                     continue
+                if selection.transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND:
+                    bundle = parse_reward_attestation_bundle_metadata(selection.transaction.metadata)
+                    bundle_identities = [attestation_identity(attestation) for attestation in bundle.attestations]
+                    if any(identity in included_attestation_identities for identity in bundle_identities):
+                        continue
+                    verifier_window_counts: dict[tuple[int, str], int] = {}
+                    for attestation in bundle.attestations:
+                        key = (attestation.check_window_index, attestation.verifier_node_id)
+                        verifier_window_counts[key] = verifier_window_counts.get(key, 0) + 1
+                    if any(
+                        included_verifier_window_counts.get(key, 0) + count
+                        > self.params.max_attestations_per_verifier_per_window
+                        for key, count in verifier_window_counts.items()
+                    ):
+                        continue
                 if current_weight_units + selection.weight_units > max_transaction_weight_units:
                     continue
                 included_entries.append(selection.entry)
                 included_txids.add(selection.transaction.txid())
                 current_weight_units += selection.weight_units
                 if selection.transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND:
+                    for identity in bundle_identities:
+                        included_attestation_identities.add(identity)
+                    for key, count in verifier_window_counts.items():
+                        included_verifier_window_counts[key] = included_verifier_window_counts.get(key, 0) + count
                     included_attestation_bundle_count += 1
                 progressed = True
             if not progressed:
