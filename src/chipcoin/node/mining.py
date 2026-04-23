@@ -6,7 +6,12 @@ from dataclasses import dataclass, replace
 from functools import cmp_to_key
 
 from ..consensus.economics import subsidy_split_chipbits
-from ..consensus.epoch_settlement import REWARD_SETTLE_EPOCH_KIND, RewardSettlement, parse_reward_settlement_metadata
+from ..consensus.epoch_settlement import (
+    REWARD_ATTESTATION_BUNDLE_KIND,
+    REWARD_SETTLE_EPOCH_KIND,
+    RewardSettlement,
+    parse_reward_settlement_metadata,
+)
 from ..consensus.merkle import merkle_root
 from ..consensus.models import Block, BlockHeader, Transaction, TxOutput
 from ..consensus.nodes import NodeRegistryView
@@ -177,6 +182,7 @@ class MiningCoordinator:
         included_txids: set[str] = set()
         included_entries: list[MempoolEntry] = []
         current_weight_units = 0
+        included_attestation_bundle_count = 0
 
         while pending:
             progressed = False
@@ -190,11 +196,18 @@ class MiningCoordinator:
                 ):
                     next_pending.append(selection)
                     continue
+                if (
+                    selection.transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND
+                    and included_attestation_bundle_count >= self.params.max_attestation_bundles_per_block
+                ):
+                    continue
                 if current_weight_units + selection.weight_units > max_transaction_weight_units:
                     continue
                 included_entries.append(selection.entry)
                 included_txids.add(selection.transaction.txid())
                 current_weight_units += selection.weight_units
+                if selection.transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND:
+                    included_attestation_bundle_count += 1
                 progressed = True
             if not progressed:
                 break
