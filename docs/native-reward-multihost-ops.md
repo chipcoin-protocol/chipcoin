@@ -2,6 +2,12 @@
 
 This is the operator-ready pack for the first real distributed devnet native reward test.
 
+Status note:
+
+- the original test plan in this document has now been validated on the public devnet
+- the final corrected runtime includes automatic reward renewal, automatic attestation, automatic epoch settlement, and mining-template filtering for attestation-bundle consensus limits
+- the live multi-host run closed consecutive epochs with fully automatic payouts to all three reward nodes
+
 It reflects the corrected topology:
 
 - `chipcom` = central bootstrap node, primary miner, reward node A, canonical comparison source, snapshot exporter
@@ -10,6 +16,43 @@ It reflects the corrected topology:
 - `extra VPS` = follower full node
 - `snapshot VPS` = snapshot-join node
 - `hermes` is not used in this test
+
+## Validated Outcome
+
+The public multi-host run proved the following behavior end to end:
+
+- `chipcom`, `tilt`, and `tobia` all remained registered reward nodes on-chain
+- after warmup and activation, the automation loop renewed each reward node at epoch boundaries
+- verifier nodes emitted reward attestation bundles on-chain during open epochs
+- epoch-closing settlements were stored automatically
+- payout outputs were materialized in the closing block coinbase and were visible through `reward-history`
+
+Observed stable result window:
+
+- closed epochs `3` through `11`
+- `rewarded_node_count = 3` on every closed epoch in that window
+- `distributed_node_reward_chipbits = 5000000000` on every closed epoch in that window
+
+The integer split rotated the remainder chipbits across the three payout addresses exactly as expected.
+
+## Offline Reward Node Behavior
+
+Reward-node registration is persistent on-chain.
+
+What happens if a reward node goes offline for hours and later returns:
+
+- the node remains registered
+- the node does not repeat warmup from genesis
+- the node can still sync back to the active chain tip
+- but it may miss one or more epoch renewals while offline
+- if it misses the renewal timing for the current epoch, it becomes `stale`
+- once back online, the automation loop can renew it again for the current epoch and restore active status after confirmation
+- missed epochs are not retroactively recovered
+
+Operational rule:
+
+- registration persists
+- epoch eligibility does not
 
 ## A. Exact Answer: Does `chipcom` need restart?
 

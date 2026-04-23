@@ -30,10 +30,15 @@ What works today:
 - persistent peerbook with bounded addr/getaddr discovery
 - headers-first initial sync with bounded multi-peer block download
 - snapshot-based fast bootstrap for nodes using a trusted chainstate snapshot plus post-anchor delta sync
+- public snapshot manifest/bootstrap path via `NODE_SNAPSHOT_MANIFEST_URLS`
 - HTTP API for status, blocks, transactions, peers, and address data
 - external template-based miner worker using a wallet file
 - browser wallet for Chrome and Firefox
 - Docker-based node and miner startup
+- reward-node registration, renewal, and deterministic epoch settlement
+- reward-node automation for on-chain renewal and attestation
+- automatic reward settlement inclusion at epoch close
+- public devnet bootstrap path for first CHC through the faucet flow used by the setup wizard
 
 What is intentionally limited today:
 
@@ -108,6 +113,27 @@ Design intent:
 Detailed monetary policy and constraints:
 
 - [docs/monetary-policy.md](/home/komarek/Documents/CODEX/Chipcoin-v2/docs/monetary-policy.md)
+
+## Proven On Public Devnet
+
+The current public devnet has already validated the full reward-node loop online across consecutive epochs.
+
+What has been observed on the public network:
+
+- reward nodes renew automatically at epoch boundaries
+- reward verifiers submit deterministic attestation bundles automatically
+- miners assemble valid blocks while respecting attestation-bundle consensus limits
+- epoch-closing `reward_settle_epoch` transactions are produced automatically
+- node reward payouts appear in `reward-history` for the configured payout addresses
+
+In the validated multi-host run:
+
+- three reward nodes stayed active across consecutive epochs
+- closed epochs from `3` through `11` all produced stored settlements
+- each closed epoch distributed the full `50 CHC` node reward pool (`5,000,000,000` chipbits)
+- each rewarded node received its deterministic integer split, with only remainder-chipbit rotation between nodes
+
+Operationally this means the public docs should now treat automatic reward operation as an implemented devnet capability, not a paper design target.
 
 ## System Requirements
 
@@ -243,6 +269,12 @@ chipcoin --data /runtime/node.sqlite3 run --snapshot-file /runtime/devnet.snapsh
 
 Use full sync when you want maximum assurance. Use snapshot bootstrap when you trust the snapshot publisher operationally and want a much faster first sync.
 
+Public devnet defaults already point at the hosted snapshot manifest service:
+
+- `NODE_SNAPSHOT_MANIFEST_URLS=https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json`
+
+If that manifest is healthy, a fresh node can bootstrap from the published snapshot set instead of replaying the full chain from genesis.
+
 Snapshot format notes:
 
 - `v2` is now the default export format
@@ -283,6 +315,12 @@ Shortest documented operator path:
 6. confirm the node HTTP API responds
 7. start `miner` only after the node path is understood
 8. add browser wallet or explorer after the node API is stable
+
+If you want to run a reward-participating node on the public devnet, add these practical steps after basic node health:
+
+9. obtain initial devnet CHC through the faucet or another funded devnet wallet
+10. register the reward node on-chain
+11. let the automation loop handle renewal and attestation afterward
 
 Practical order:
 
@@ -390,6 +428,8 @@ The wizard can now prepare:
 - a passive full node
 - a miner
 - a reward-participating node with prewired `REWARD_NODE_AUTO_*` env values
+
+For reward-node operators on the public devnet, the wizard assumes the bootstrap funding source is the faucet path or another funded devnet wallet. Registration still requires CHC because reward-node participation is an on-chain paid action.
 
 For a clean devnet chain reset that preserves wallets and rereads paths from `.env`, use:
 
