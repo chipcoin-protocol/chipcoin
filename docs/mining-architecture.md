@@ -27,6 +27,7 @@ The node remains authoritative for:
 
 - current best tip
 - difficulty/target
+- expected retarget boundaries and the next valid `bits` value
 - transaction selection
 - reward distribution
 - block validation and acceptance
@@ -63,4 +64,3 @@ The miner accepts multiple node URLs.
 - it prefers the first healthy endpoint
 - if that endpoint stops responding, it tries the next one
 - startup time no longer depends on historical chain height
-

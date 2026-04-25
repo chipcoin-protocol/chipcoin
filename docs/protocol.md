@@ -59,20 +59,36 @@ At genesis-era parameters:
 Epoch and reward parameters:
 
 - mainnet:
-  - epoch length: `1000` blocks
+  - epoch length: `100` blocks
   - retarget window: `1000` blocks
-  - target block time: `120` seconds
+  - target block time: `300` seconds
   - coinbase maturity: `100` blocks
-  - halving interval: `250000` blocks
+  - halving interval: `111000` blocks
   - max supply: `11000000 CHC`
 - devnet:
-  - epoch length: `1000` blocks
+  - epoch length: `100` blocks
   - retarget window: `200` blocks
-  - target block time: `30` seconds
+  - target block time: `300` seconds
   - coinbase maturity: `10` blocks
-  - halving interval: `250000` blocks
+  - halving interval: `111000` blocks
   - max supply: `11000000 CHC`
-- maximum rewarded nodes per block: `10`
+- maximum rewarded nodes per epoch:
+  - mainnet: `25`
+  - devnet: `10`
+
+Difficulty retarget rule:
+
+- `bits` stays unchanged between retarget boundaries
+- a retarget happens when `height % difficulty_adjustment_window == 0`
+- the target timespan is:
+  - `target_block_time_seconds * difficulty_adjustment_window`
+- the observed timespan is:
+  - `timestamp(last_block_in_window) - timestamp(first_block_in_window)`
+- the observed timespan is clamped to `[target_timespan / 4, target_timespan * 4]`
+- the next target is computed as:
+  - `next_target = previous_target * bounded_timespan / target_timespan`
+- the next target is then capped by the PoW limit derived from `genesis_bits`
+- the final compact `bits` value is the compact encoding of that capped target
 
 Terminal supply rule:
 
