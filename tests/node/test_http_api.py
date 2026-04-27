@@ -10,7 +10,8 @@ from tempfile import TemporaryDirectory
 from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, OutPoint, Transaction
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.config import TESTNET_CONFIG
+from chipcoin.consensus.params import MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_block, serialize_transaction
@@ -132,6 +133,27 @@ def test_http_api_health_status_and_tip() -> None:
         assert supply_body["remaining_supply_chipbits"] == 11_000_000 * 100_000_000
         assert tip_status == "200 OK"
         assert tip_body == {"height": None, "block_hash": None}
+
+
+def test_http_api_status_and_supply_report_testnet_network() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-testnet.sqlite3", network="testnet")
+        app = HttpApiApp(service)
+
+        health_status, _, health_body = _call_wsgi(app, method="GET", path="/v1/health")
+        status_status, _, status_body = _call_wsgi(app, method="GET", path="/v1/status")
+        supply_status, _, supply_body = _call_wsgi(app, method="GET", path="/v1/supply")
+
+        assert health_status == "200 OK"
+        assert health_body == {"status": "ok", "api_version": "v1", "network": "testnet"}
+        assert status_status == "200 OK"
+        assert status_body["network"] == "testnet"
+        assert status_body["network_magic_hex"] == TESTNET_CONFIG.magic.hex()
+        assert status_body["current_bits"] == TESTNET_PARAMS.genesis_bits
+        assert status_body["supply"]["network"] == "testnet"
+        assert supply_status == "200 OK"
+        assert supply_body["network"] == "testnet"
+        assert supply_body["max_supply_chipbits"] == TESTNET_PARAMS.max_money_chipbits
 
 
 def test_http_api_supply_matches_cli_and_status_on_same_tip() -> None:

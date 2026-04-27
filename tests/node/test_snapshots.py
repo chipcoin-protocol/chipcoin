@@ -81,6 +81,23 @@ def test_snapshot_export_import_roundtrip_preserves_anchor_and_utxo_state() -> N
         assert snapshot_path.read_bytes().startswith(b"CHCSNP2\n")
 
 
+def test_testnet_rejects_devnet_snapshot_import() -> None:
+    with TemporaryDirectory() as tempdir:
+        timestamps = iter(range(1_700_000_000, 1_700_000_200))
+        source = NodeService.open_sqlite(
+            Path(tempdir) / "source-devnet.sqlite3",
+            network="devnet",
+            time_provider=lambda: next(timestamps),
+        )
+        _mine_chain(source, 1, "CHCminer-source")
+        snapshot_path = Path(tempdir) / "devnet.snapshot"
+        source.export_snapshot_file(snapshot_path)
+        target = NodeService.open_sqlite(Path(tempdir) / "target-testnet.sqlite3", network="testnet")
+
+        with pytest.raises(ValueError, match="snapshot network does not match configured node network"):
+            target.import_snapshot_file(snapshot_path)
+
+
 def test_snapshot_v2_signed_import_roundtrip() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)

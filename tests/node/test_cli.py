@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from chipcoin.consensus.economics import register_reward_node_fee_chipbits, subsidy_split_chipbits
 from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.nodes import NodeRecord
-from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
+from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import serialize_transaction
@@ -236,6 +236,18 @@ def test_cli_start_uses_devnet_profile() -> None:
         assert payload["status"]["current_bits"] == DEVNET_PARAMS.genesis_bits
 
 
+def test_cli_start_uses_testnet_profile() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin-testnet.sqlite3"
+
+        code, payload = _run_cli(["--network", "testnet", "--data", str(db_path), "start"])
+
+        assert code == 0
+        assert payload["started"] is True
+        assert payload["status"]["network"] == "testnet"
+        assert payload["status"]["current_bits"] == TESTNET_PARAMS.genesis_bits
+
+
 def test_cli_uses_network_specific_default_data_path() -> None:
     with TemporaryDirectory() as tempdir:
         original_cwd = Path.cwd()
@@ -247,6 +259,22 @@ def test_cli_uses_network_specific_default_data_path() -> None:
             assert code == 0
             assert payload["status"]["network"] == "devnet"
             assert (Path(tempdir) / "chipcoin-devnet.sqlite3").exists()
+            assert not (Path(tempdir) / "chipcoin.sqlite3").exists()
+        finally:
+            os.chdir(original_cwd)
+
+
+def test_cli_uses_testnet_specific_default_data_path() -> None:
+    with TemporaryDirectory() as tempdir:
+        original_cwd = Path.cwd()
+        try:
+            import os
+
+            os.chdir(tempdir)
+            code, payload = _run_cli(["--network", "testnet", "start"])
+            assert code == 0
+            assert payload["status"]["network"] == "testnet"
+            assert (Path(tempdir) / "chipcoin-testnet.sqlite3").exists()
             assert not (Path(tempdir) / "chipcoin.sqlite3").exists()
         finally:
             os.chdir(original_cwd)

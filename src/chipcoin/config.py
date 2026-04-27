@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .consensus.params import ConsensusParams, DEVNET_PARAMS, MAINNET_PARAMS
+from .consensus.params import ConsensusParams, DEVNET_PARAMS, MAINNET_PARAMS, TESTNET_PARAMS
 
 
 @dataclass(frozen=True)
@@ -41,9 +41,19 @@ DEVNET_CONFIG = NetworkConfig(
     params=DEVNET_PARAMS,
 )
 
+TESTNET_CONFIG = NetworkConfig(
+    name="testnet",
+    magic=bytes.fromhex("FAB4C0DE"),
+    default_p2p_port=28444,
+    data_dir=Path("."),
+    default_data_file="chipcoin-testnet.sqlite3",
+    params=TESTNET_PARAMS,
+)
+
 NETWORK_CONFIGS = {
     MAINNET_CONFIG.name: MAINNET_CONFIG,
     DEVNET_CONFIG.name: DEVNET_CONFIG,
+    TESTNET_CONFIG.name: TESTNET_CONFIG,
 }
 
 
