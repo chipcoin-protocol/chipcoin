@@ -111,6 +111,8 @@ def test_http_api_health_status_and_tip() -> None:
         assert status_body["network"] == "mainnet"
         assert status_body["sync"]["mode"] == "idle"
         assert status_body["supply"]["minted_supply_chipbits"] == 0
+        assert status_body["supply"]["scheduled_supply_chipbits"] == 0
+        assert status_body["supply"]["materialized_supply_chipbits"] == 0
         assert status_body["supply"]["remaining_supply_chipbits"] == 11_000_000 * 100_000_000
         assert status_body["operator_summary"] == {
             "sync_state": "idle",
@@ -121,6 +123,9 @@ def test_http_api_health_status_and_tip() -> None:
         assert supply_status == "200 OK"
         assert supply_body["api_version"] == "v1"
         assert supply_body["network"] == "mainnet"
+        assert supply_body["scheduled_supply_chipbits"] == 0
+        assert supply_body["materialized_supply_chipbits"] == 0
+        assert supply_body["undistributed_node_reward_supply_chipbits"] == 0
         assert supply_body["minted_supply_chipbits"] == 0
         assert supply_body["miner_minted_supply_chipbits"] == 0
         assert supply_body["node_minted_supply_chipbits"] == 0

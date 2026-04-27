@@ -1629,6 +1629,9 @@ def test_cli_economy_summary_and_supply_diagnostics_with_zero_data() -> None:
         assert economy_payload["registered_nodes_count"] == 0
         assert economy_payload["active_nodes_count"] == 0
         assert economy_payload["minted_supply_chipbits"] == 0
+        assert economy_payload["scheduled_supply_chipbits"] == 0
+        assert economy_payload["materialized_supply_chipbits"] == 0
+        assert economy_payload["undistributed_node_reward_supply_chipbits"] == 0
         assert economy_payload["next_block_miner_subsidy_chipbits"] == 5_000_000_000
         assert economy_payload["next_block_node_reward_chipbits"] == 0
         assert economy_payload["next_block_epoch_closing"] is False
@@ -1637,6 +1640,8 @@ def test_cli_economy_summary_and_supply_diagnostics_with_zero_data() -> None:
         assert supply_code == 0
         assert supply_summary_code == 0
         assert supply_summary_payload["minted_supply_chipbits"] == 0
+        assert supply_summary_payload["scheduled_supply_chipbits"] == 0
+        assert supply_summary_payload["materialized_supply_chipbits"] == 0
         assert supply_payload["confirmed_unspent_supply_chipbits"] == 0
         assert supply_payload["total_utxo_count"] == 0
 
@@ -1700,11 +1705,43 @@ def test_cli_supply_diagnostics_reflects_immature_coinbase() -> None:
 
         assert economy_code == 0
         assert economy_payload["minted_supply_chipbits"] == 5_000_000_000
+        assert economy_payload["scheduled_supply_chipbits"] == 5_000_000_000
+        assert economy_payload["materialized_supply_chipbits"] == 5_000_000_000
         assert economy_payload["circulating_supply_chipbits"] == 0
         assert economy_payload["immature_supply_chipbits"] == 5_000_000_000
         assert supply_code == 0
         assert supply_payload["confirmed_unspent_supply_chipbits"] == 5_000_000_000
         assert supply_payload["immature_utxo_count"] == 1
+
+
+def test_cli_supply_excludes_undistributed_node_reward_from_materialized_supply() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        params = _native_reward_test_params()
+        service = NodeService.open_sqlite(db_path, params=params)
+        miner_address = wallet_key(0).address
+        for _height in range(params.epoch_length_blocks):
+            service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
+
+        expected_miner_supply = params.epoch_length_blocks * 5_000_000_000
+        expected_node_pool = subsidy_split_chipbits(params.epoch_length_blocks - 1, params)[1]
+
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            supply_code, supply_payload = _run_cli(["--data", str(db_path), "supply"])
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
+
+        assert supply_code == 0
+        assert expected_node_pool == 5_000_000_000
+        assert supply_payload["scheduled_supply_chipbits"] == expected_miner_supply + expected_node_pool
+        assert supply_payload["scheduled_node_reward_supply_chipbits"] == expected_node_pool
+        assert supply_payload["materialized_supply_chipbits"] == expected_miner_supply
+        assert supply_payload["materialized_node_reward_supply_chipbits"] == 0
+        assert supply_payload["undistributed_node_reward_supply_chipbits"] == expected_node_pool
+        assert supply_payload["minted_supply_chipbits"] == expected_miner_supply
+        assert supply_payload["node_minted_supply_chipbits"] == 0
 
 
 def test_cli_wallet_shortcuts_match_utxos_and_balance() -> None:

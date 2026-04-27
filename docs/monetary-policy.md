@@ -138,11 +138,13 @@ If future policy wants a different priority rule, it must be explicit and consen
 
 ## Unminted Node Reward Rule
 
-When an epoch closes and there are zero eligible nodes for that epoch:
+When an epoch closes and there are zero eligible nodes for that epoch, or when
+no candidate passes the reward policy:
 
 - the scheduled node epoch reward for that epoch remains unminted
 - `minted_supply` does not increase by that amount
 - `remaining_supply` stays higher by that amount
+- `undistributed_node_reward_supply` increases by that amount for diagnostics
 - no carry-forward is created in consensus state
 
 This rule keeps issuance deterministic and auditable while the eligibility system is still experimental.
@@ -154,6 +156,14 @@ The implementation must expose deterministic, reorg-safe counters.
 Required counters:
 
 - `max_supply`
+- `scheduled_supply`
+- `scheduled_miner_supply`
+- `scheduled_node_reward_supply`
+- `scheduled_remaining_supply`
+- `materialized_supply`
+- `materialized_miner_supply`
+- `materialized_node_reward_supply`
+- `undistributed_node_reward_supply`
 - `minted_supply`
 - `miner_minted_supply`
 - `node_minted_supply`
@@ -164,13 +174,22 @@ Required counters:
 
 Formula:
 
+- `scheduled_supply = scheduled_miner_supply + scheduled_node_reward_supply`
+- `materialized_supply = materialized_miner_supply + materialized_node_reward_supply`
+- `undistributed_node_reward_supply = scheduled_node_reward_supply - materialized_node_reward_supply`
 - `circulating_supply = minted_supply - burned_supply - immature_supply`
 
 Derived expectations:
 
+- `minted_supply` is an explorer-facing alias for `materialized_supply`
 - `minted_supply = miner_minted_supply + node_minted_supply`
 - `remaining_supply = max_supply - minted_supply`
 - all values are clamped to integer base units
+
+The `scheduled_*` counters describe the theoretical protocol budget through the
+active tip. The `materialized_*` counters describe actual coinbase outputs on the
+active chain. Public explorer supply should use `materialized_supply` and
+`circulating_supply`, not scheduled supply.
 
 ## Reorg Safety
 
@@ -194,6 +213,14 @@ Must return:
 - `network`
 - `height`
 - `max_supply`
+- `scheduled_supply`
+- `scheduled_miner_supply`
+- `scheduled_node_reward_supply`
+- `scheduled_remaining_supply`
+- `materialized_supply`
+- `materialized_miner_supply`
+- `materialized_node_reward_supply`
+- `undistributed_node_reward_supply`
 - `minted_supply`
 - `miner_minted_supply`
 - `node_minted_supply`
@@ -207,6 +234,8 @@ All values should be returned in base units, with optional CHC-formatted mirrors
 Must add a reduced summary:
 
 - `max_supply`
+- `materialized_supply`
+- `undistributed_node_reward_supply`
 - `minted_supply`
 - `circulating_supply`
 - `remaining_supply`

@@ -1280,6 +1280,14 @@ class NodeService:
                 "network": supply["network"],
                 "height": supply["height"],
                 "max_supply_chipbits": supply["max_supply_chipbits"],
+                "scheduled_supply_chipbits": supply["scheduled_supply_chipbits"],
+                "scheduled_miner_supply_chipbits": supply["scheduled_miner_supply_chipbits"],
+                "scheduled_node_reward_supply_chipbits": supply["scheduled_node_reward_supply_chipbits"],
+                "scheduled_remaining_supply_chipbits": supply["scheduled_remaining_supply_chipbits"],
+                "materialized_supply_chipbits": supply["materialized_supply_chipbits"],
+                "materialized_miner_supply_chipbits": supply["materialized_miner_supply_chipbits"],
+                "materialized_node_reward_supply_chipbits": supply["materialized_node_reward_supply_chipbits"],
+                "undistributed_node_reward_supply_chipbits": supply["undistributed_node_reward_supply_chipbits"],
                 "minted_supply_chipbits": supply["minted_supply_chipbits"],
                 "miner_minted_supply_chipbits": supply["miner_minted_supply_chipbits"],
                 "node_minted_supply_chipbits": supply["node_minted_supply_chipbits"],
@@ -2650,6 +2658,14 @@ class NodeService:
             "next_block_miner_subsidy_chipbits": next_block_miner_subsidy,
             "next_block_node_reward_chipbits": next_block_node_reward,
             "next_block_epoch_closing": is_epoch_reward_height(next_height, self.params),
+            "scheduled_supply_chipbits": supply["scheduled_supply_chipbits"],
+            "scheduled_miner_supply_chipbits": supply["scheduled_miner_supply_chipbits"],
+            "scheduled_node_reward_supply_chipbits": supply["scheduled_node_reward_supply_chipbits"],
+            "scheduled_remaining_supply_chipbits": supply["scheduled_remaining_supply_chipbits"],
+            "materialized_supply_chipbits": supply["materialized_supply_chipbits"],
+            "materialized_miner_supply_chipbits": supply["materialized_miner_supply_chipbits"],
+            "materialized_node_reward_supply_chipbits": supply["materialized_node_reward_supply_chipbits"],
+            "undistributed_node_reward_supply_chipbits": supply["undistributed_node_reward_supply_chipbits"],
             "minted_supply_chipbits": supply["minted_supply_chipbits"],
             "miner_minted_supply_chipbits": supply["miner_minted_supply_chipbits"],
             "node_minted_supply_chipbits": supply["node_minted_supply_chipbits"],
@@ -2660,32 +2676,57 @@ class NodeService:
         }
 
     def supply_snapshot(self) -> dict[str, int | str | None]:
-        """Return a protocol-oriented supply snapshot for the active chain."""
+        """Return a supply snapshot for the active chain.
+
+        Scheduled supply is the protocol budget through the tip height. Materialized
+        supply is what actually appeared in coinbase outputs; undistributed node
+        reward pools are intentionally excluded from public circulating supply.
+        """
 
         tip = self.chain_tip()
         height = None if tip is None else tip.height
-        minted_supply_chipbits = total_subsidy_through_height(-1 if tip is None else tip.height, self.params)
-        miner_minted_supply_chipbits = 0
-        node_minted_supply_chipbits = 0
+        scheduled_supply_chipbits = total_subsidy_through_height(-1 if tip is None else tip.height, self.params)
+        scheduled_miner_supply_chipbits = 0
+        scheduled_node_reward_supply_chipbits = 0
         if tip is not None:
             for block_height in range(tip.height + 1):
                 miner_subsidy_chipbits, node_reward_chipbits = subsidy_split_chipbits(block_height, self.params)
-                miner_minted_supply_chipbits += miner_subsidy_chipbits
-                node_minted_supply_chipbits += node_reward_chipbits
+                scheduled_miner_supply_chipbits += miner_subsidy_chipbits
+                scheduled_node_reward_supply_chipbits += node_reward_chipbits
+        materialized_supply = self._materialized_supply_snapshot()
         maturity_supply = self._supply_snapshot()
         burned_supply_chipbits = 0
-        circulating_supply_chipbits = minted_supply_chipbits - burned_supply_chipbits - maturity_supply["immature_supply_chipbits"]
+        circulating_supply_chipbits = (
+            materialized_supply["materialized_supply_chipbits"]
+            - burned_supply_chipbits
+            - maturity_supply["immature_supply_chipbits"]
+        )
+        undistributed_node_reward_supply_chipbits = max(
+            0,
+            scheduled_node_reward_supply_chipbits - materialized_supply["materialized_node_reward_supply_chipbits"],
+        )
         return {
             "network": self.network,
             "height": height,
             "max_supply_chipbits": self.params.max_money_chipbits,
-            "minted_supply_chipbits": minted_supply_chipbits,
-            "miner_minted_supply_chipbits": miner_minted_supply_chipbits,
-            "node_minted_supply_chipbits": node_minted_supply_chipbits,
+            "scheduled_supply_chipbits": scheduled_supply_chipbits,
+            "scheduled_miner_supply_chipbits": scheduled_miner_supply_chipbits,
+            "scheduled_node_reward_supply_chipbits": scheduled_node_reward_supply_chipbits,
+            "scheduled_remaining_supply_chipbits": max(0, self.params.max_money_chipbits - scheduled_supply_chipbits),
+            "materialized_supply_chipbits": materialized_supply["materialized_supply_chipbits"],
+            "materialized_miner_supply_chipbits": materialized_supply["materialized_miner_supply_chipbits"],
+            "materialized_node_reward_supply_chipbits": materialized_supply["materialized_node_reward_supply_chipbits"],
+            "undistributed_node_reward_supply_chipbits": undistributed_node_reward_supply_chipbits,
+            "minted_supply_chipbits": materialized_supply["materialized_supply_chipbits"],
+            "miner_minted_supply_chipbits": materialized_supply["materialized_miner_supply_chipbits"],
+            "node_minted_supply_chipbits": materialized_supply["materialized_node_reward_supply_chipbits"],
             "burned_supply_chipbits": burned_supply_chipbits,
             "immature_supply_chipbits": maturity_supply["immature_supply_chipbits"],
             "circulating_supply_chipbits": circulating_supply_chipbits,
-            "remaining_supply_chipbits": max(0, self.params.max_money_chipbits - minted_supply_chipbits),
+            "remaining_supply_chipbits": max(
+                0,
+                self.params.max_money_chipbits - materialized_supply["materialized_supply_chipbits"],
+            ),
         }
 
     def supply_diagnostics(self) -> dict[str, object]:
@@ -3084,6 +3125,29 @@ class NodeService:
             "spendable_utxo_count": spendable_utxo_count,
             "immature_utxo_count": immature_utxo_count,
             "total_utxo_count": total_utxo_count,
+        }
+
+    def _materialized_supply_snapshot(self) -> dict[str, int]:
+        """Return issued supply that actually exists in active-chain coinbases."""
+
+        tip = self.chain_tip()
+        materialized_miner_supply_chipbits = 0
+        materialized_node_reward_supply_chipbits = 0
+        if tip is not None:
+            for block_height in range(tip.height + 1):
+                block = self.get_block_by_height(block_height)
+                if block is None or not block.transactions or not block.transactions[0].outputs:
+                    continue
+                miner_subsidy, _node_pool = subsidy_split_chipbits(block_height, self.params)
+                materialized_miner_supply_chipbits += miner_subsidy
+                materialized_node_reward_supply_chipbits += sum(
+                    int(tx_output.value)
+                    for tx_output in block.transactions[0].outputs[1:]
+                )
+        return {
+            "materialized_supply_chipbits": materialized_miner_supply_chipbits + materialized_node_reward_supply_chipbits,
+            "materialized_miner_supply_chipbits": materialized_miner_supply_chipbits,
+            "materialized_node_reward_supply_chipbits": materialized_node_reward_supply_chipbits,
         }
 
     def _replay_chain_state_before_height(self, height: int) -> tuple[InMemoryUtxoView, InMemoryNodeRegistryView]:
