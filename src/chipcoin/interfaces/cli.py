@@ -6,8 +6,10 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import secrets
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from urllib import error, request
@@ -71,6 +73,22 @@ def main(argv: list[str] | None = None) -> int:
             service.start()
             _print_json({"started": True, "status": service.status()})
             return 0
+
+        if args.command == "operator-check":
+            assert service is not None
+            payload = service.operator_check(reward_node_id=args.reward_node_id)
+            _enrich_operator_check_payload(
+                payload,
+                node_url=args.node_url,
+                snapshot_manifest_urls=_operator_snapshot_manifest_urls(args.snapshot_manifest_url),
+                network=args.network,
+                timeout_seconds=args.request_timeout_seconds,
+            )
+            if args.json:
+                _print_json(payload)
+            else:
+                _print_operator_check(payload)
+            return 1 if payload["status"] == "fail" else 0
 
         if args.command == "run":
             assert service is not None
@@ -758,6 +776,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional local throttle between mined blocks. Does not change consensus.",
     )
     subparsers.add_parser("status")
+    operator_check = subparsers.add_parser("operator-check")
+    operator_check.add_argument("--data", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    operator_check.add_argument("--network", choices=sorted(NETWORK_CONFIGS), default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    operator_check.add_argument("--json", action="store_true", help="Emit stable machine-readable JSON.")
+    operator_check.add_argument("--reward-node-id", help="Require a specific reward node to be registered and eligible.")
+    operator_check.add_argument("--node-url", help="Optional HTTP node API URL for remote mining template checks.")
+    operator_check.add_argument("--snapshot-manifest-url", action="append", default=[], help="Optional snapshot manifest URL to verify. Defaults to NODE_SNAPSHOT_MANIFEST_URLS when set.")
+    operator_check.add_argument("--request-timeout-seconds", type=float, default=5.0)
     subparsers.add_parser("tip")
     mine_local_block = subparsers.add_parser("mine-local-block")
     mine_local_block.add_argument("--payout-address", required=True)
@@ -933,6 +959,234 @@ def _print_json(payload) -> None:
 
     json.dump(payload, sys.stdout, sort_keys=True)
     sys.stdout.write("\n")
+
+
+def _print_operator_check(payload: dict[str, object]) -> None:
+    """Print a compact human-readable operator readiness report."""
+
+    print(f"operator-check: {payload['status']} - {payload['message']}")
+    print(f"network: {payload['network']}")
+    sections = payload["sections"]
+    assert isinstance(sections, dict)
+    for name in ("chain", "peers", "sync", "supply", "rewards", "reward_node", "mining", "snapshot"):
+        section = sections[name]
+        assert isinstance(section, dict)
+        print(f"[{str(section['status']).upper()}] {name}: {section['message']}")
+        fields = section.get("fields", {})
+        if isinstance(fields, dict):
+            for key in sorted(fields):
+                value = fields[key]
+                if isinstance(value, (dict, list, tuple)):
+                    rendered = json.dumps(value, sort_keys=True)
+                else:
+                    rendered = str(value)
+                print(f"  {key}: {rendered}")
+
+
+def _operator_snapshot_manifest_urls(values: list[str]) -> list[str]:
+    """Return configured snapshot manifest URLs from CLI or environment."""
+
+    if values:
+        return values
+    raw = os.environ.get("NODE_SNAPSHOT_MANIFEST_URLS", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _enrich_operator_check_payload(
+    payload: dict[str, object],
+    *,
+    node_url: str | None,
+    snapshot_manifest_urls: list[str],
+    network: str,
+    timeout_seconds: float,
+) -> None:
+    """Add optional external checks and recompute aggregate status."""
+
+    sections = payload["sections"]
+    assert isinstance(sections, dict)
+    if node_url:
+        sections["mining"] = _operator_http_mining_section(node_url=node_url, timeout_seconds=timeout_seconds)
+    if snapshot_manifest_urls:
+        sections["snapshot"] = _operator_snapshot_manifest_section(
+            existing_section=sections["snapshot"],
+            manifest_urls=snapshot_manifest_urls,
+            network=network,
+            timeout_seconds=timeout_seconds,
+        )
+    payload["status"] = _operator_worst_status(str(section["status"]) for section in sections.values() if isinstance(section, dict))
+    payload["message"] = _operator_status_message(str(payload["status"]))
+
+
+def _operator_http_mining_section(*, node_url: str, timeout_seconds: float) -> dict[str, object]:
+    """Check remote mining status and template acquisition over HTTP."""
+
+    base_url = node_url.rstrip("/")
+    try:
+        status_payload = _operator_http_json(
+            f"{base_url}/mining/status",
+            method="GET",
+            timeout_seconds=timeout_seconds,
+        )
+        template_payload = _operator_http_json(
+            f"{base_url}/mining/get-block-template",
+            method="POST",
+            payload={
+                "payout_address": "operator-check",
+                "miner_id": "operator-check",
+                "template_mode": "header_and_coinbase_data",
+            },
+            timeout_seconds=timeout_seconds,
+        )
+        return {
+            "status": "ok",
+            "message": "HTTP mining status and template acquisition are available.",
+            "fields": {
+                "node_url": base_url,
+                "best_height": status_payload.get("best_height"),
+                "sync_phase": status_payload.get("sync_phase"),
+                "template_available": True,
+                "template_height": template_payload.get("height"),
+                "previous_block_hash": template_payload.get("previous_block_hash"),
+                "template_id_present": bool(template_payload.get("template_id")),
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "fail",
+            "message": f"HTTP mining template check failed: {exc}",
+            "fields": {
+                "node_url": base_url,
+                "template_available": False,
+                "error": str(exc),
+            },
+        }
+
+
+def _operator_snapshot_manifest_section(
+    *,
+    existing_section: object,
+    manifest_urls: list[str],
+    network: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    """Check configured snapshot manifests and preserve local snapshot fields."""
+
+    existing_fields = {}
+    existing_status = "ok"
+    if isinstance(existing_section, dict):
+        existing_status = str(existing_section.get("status", "ok"))
+        fields = existing_section.get("fields", {})
+        if isinstance(fields, dict):
+            existing_fields = dict(fields)
+    errors = []
+    selected = None
+    for manifest_url in manifest_urls:
+        try:
+            payload = _operator_http_json(manifest_url, method="GET", timeout_seconds=timeout_seconds)
+            entries = _operator_parse_snapshot_manifest(payload, manifest_url=manifest_url)
+            compatible = [entry for entry in entries if entry["network"] == network and int(entry["format_version"]) in {1, 2}]
+            if compatible:
+                compatible.sort(key=lambda entry: (int(entry["snapshot_height"]), int(entry["created_at"]), int(entry["format_version"])), reverse=True)
+                selected = compatible[0]
+                break
+            errors.append(f"{manifest_url}: no compatible snapshot entries")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{manifest_url}: {exc}")
+    if selected is None:
+        status = "warn" if existing_status != "fail" else "fail"
+        message = "Configured snapshot manifest is not readable or has no compatible entries."
+        manifest_fields = {
+            "manifest_urls": manifest_urls,
+            "manifest_readable": False,
+            "manifest_errors": errors,
+        }
+    else:
+        age_seconds = max(0, int(time.time()) - int(selected["created_at"]))
+        status = "warn" if age_seconds >= 7 * 24 * 60 * 60 else existing_status
+        message = "Snapshot manifest is readable and compatible."
+        if status == "warn":
+            message = "Snapshot manifest is readable but old."
+        manifest_fields = {
+            "manifest_urls": manifest_urls,
+            "manifest_readable": True,
+            "manifest_snapshot_url": selected["snapshot_url"],
+            "manifest_snapshot_height": selected["snapshot_height"],
+            "manifest_snapshot_block_hash": selected["snapshot_block_hash"],
+            "manifest_created_at": selected["created_at"],
+            "manifest_age_seconds": age_seconds,
+            "manifest_errors": errors,
+        }
+    return {
+        "status": status,
+        "message": message,
+        "fields": {**existing_fields, **manifest_fields},
+    }
+
+
+def _operator_parse_snapshot_manifest(payload: object, *, manifest_url: str) -> list[dict[str, object]]:
+    """Parse supported snapshot manifest shapes for operator-check."""
+
+    if isinstance(payload, dict):
+        raw_entries = payload.get("snapshots", [])
+    elif isinstance(payload, list):
+        raw_entries = payload
+    else:
+        raise ValueError(f"unsupported snapshot manifest format from {manifest_url}")
+    if not isinstance(raw_entries, list):
+        raise ValueError(f"snapshot manifest entries must be a list: {manifest_url}")
+    entries = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict):
+            raise ValueError(f"snapshot manifest entry must be an object: {manifest_url}")
+        entries.append(
+            {
+                "network": str(raw_entry["network"]),
+                "snapshot_url": str(raw_entry["snapshot_url"]),
+                "format_version": int(raw_entry["format_version"]),
+                "snapshot_height": int(raw_entry["snapshot_height"]),
+                "snapshot_block_hash": str(raw_entry["snapshot_block_hash"]),
+                "created_at": int(raw_entry["created_at"]),
+            }
+        )
+    return entries
+
+
+def _operator_http_json(
+    url: str,
+    *,
+    method: str,
+    timeout_seconds: float,
+    payload: dict[str, object] | None = None,
+) -> dict[str, object] | list[object]:
+    """Fetch one JSON payload for optional operator checks."""
+
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {} if payload is None else {"Content-Type": "application/json"}
+    req = request.Request(url, data=body, method=method, headers=headers)
+    with request.urlopen(req, timeout=timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _operator_worst_status(statuses) -> str:
+    """Return the most severe operator status."""
+
+    rank = {"ok": 0, "warn": 1, "fail": 2}
+    worst = "ok"
+    for status in statuses:
+        value = str(status)
+        if rank.get(value, 2) > rank[worst]:
+            worst = value if value in rank else "fail"
+    return worst
+
+
+def _operator_status_message(status: str) -> str:
+    """Return a concise operator-check status message."""
+
+    if status == "ok":
+        return "Node is ready for public testnet operation."
+    if status == "warn":
+        return "Node is operational but needs operator attention before public testnet use."
+    return "Node is not ready for public testnet operation."
 
 
 def _print_error(message: str) -> None:

@@ -352,11 +352,13 @@ def test_cli_register_reward_node_and_mine_local_block_persists_native_registry_
         assert registry_code == 0
         assert registry_payload == [
             {
-                "active": True,
+                "active": False,
                 "current_epoch": 0,
                 "declared_host": "127.0.0.1",
                 "declared_port": 18444,
-                "eligible_from_height": 1,
+                "eligibility_reason": "warming_up_until_height_200",
+                "eligibility_status": "warming_up",
+                "eligible_from_height": 200,
                 "epoch_status": "current",
                 "last_renewal_epoch": 0,
                 "last_renewal_height": 0,
@@ -366,6 +368,9 @@ def test_cli_register_reward_node_and_mine_local_block_persists_native_registry_
                 "payout_address": owner.address,
                 "registered_at_height": 0,
                 "reward_registration": True,
+                "warmup_complete": False,
+                "warmup_complete_epoch": 2,
+                "warmup_complete_height": 200,
             }
         ]
 
@@ -1742,6 +1747,209 @@ def test_cli_supply_excludes_undistributed_node_reward_from_materialized_supply(
         assert supply_payload["undistributed_node_reward_supply_chipbits"] == expected_node_pool
         assert supply_payload["minted_supply_chipbits"] == expected_miner_supply
         assert supply_payload["node_minted_supply_chipbits"] == 0
+
+
+def test_cli_operator_check_empty_database_fails() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+
+        code, payload = _run_cli(["--data", str(db_path), "operator-check", "--json"])
+
+        assert code == 1
+        assert payload["status"] == "fail"
+        assert set(payload["sections"]) == {
+            "chain",
+            "peers",
+            "sync",
+            "supply",
+            "rewards",
+            "reward_node",
+            "mining",
+            "snapshot",
+        }
+        for section in payload["sections"].values():
+            assert set(section) == {"fields", "message", "status"}
+        assert payload["sections"]["chain"]["status"] == "fail"
+
+
+def test_cli_operator_check_synced_without_handshaken_peer_warns() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        code, payload = _run_cli(["--data", str(db_path), "operator-check", "--json"])
+
+        assert code == 0
+        assert payload["status"] == "warn"
+        assert payload["sections"]["chain"]["status"] == "ok"
+        assert payload["sections"]["peers"]["status"] == "warn"
+        assert payload["sections"]["peers"]["fields"]["handshaken_peer_count"] == 0
+
+
+def test_cli_operator_check_accepts_command_first_global_options() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "node.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        code, payload = _run_cli(["operator-check", "--network", "devnet", "--data", str(db_path), "--json"])
+
+        assert code == 0
+        assert payload["network"] == "devnet"
+        assert payload["sections"]["chain"]["status"] == "ok"
+
+
+def test_cli_operator_check_non_synced_phase_warns(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        service.set_runtime_sync_status(
+            {
+                "mode": "headers",
+                "phase": "syncing_from_genesis",
+                "validated_tip_height": 0,
+                "best_header_height": 0,
+                "missing_block_count": 0,
+                "queued_block_count": 0,
+                "inflight_block_count": 0,
+            }
+        )
+        monkeypatch.setattr(cli_module.NodeService, "open_sqlite", lambda _path, **_kwargs: service)
+
+        code, payload = _run_cli(["--data", str(db_path), "operator-check", "--json"])
+
+        assert code == 0
+        assert payload["status"] == "warn"
+        assert payload["sections"]["sync"]["status"] == "warn"
+        assert payload["sections"]["sync"]["fields"]["sync_phase"] == "syncing_from_genesis"
+
+
+def test_cli_operator_check_fails_on_incoherent_supply(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        original_snapshot = service.supply_snapshot
+
+        def broken_supply_snapshot():
+            payload = dict(original_snapshot())
+            payload["circulating_supply_chipbits"] = int(payload["circulating_supply_chipbits"]) + 1
+            return payload
+
+        service.supply_snapshot = broken_supply_snapshot
+        monkeypatch.setattr(cli_module.NodeService, "open_sqlite", lambda _path, **_kwargs: service)
+
+        code, payload = _run_cli(["--data", str(db_path), "operator-check", "--json"])
+
+        assert code == 1
+        assert payload["status"] == "fail"
+        assert payload["sections"]["supply"]["status"] == "fail"
+        assert "circulating_supply_mismatch" in payload["sections"]["supply"]["fields"]["failures"]
+
+
+def test_cli_operator_check_missing_required_reward_node_fails() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        code, payload = _run_cli(
+            ["--data", str(db_path), "operator-check", "--json", "--reward-node-id", "missing-node"]
+        )
+
+        assert code == 1
+        assert payload["status"] == "fail"
+        assert payload["sections"]["reward_node"]["status"] == "fail"
+        assert payload["sections"]["reward_node"]["fields"]["requested_node_id"] == "missing-node"
+
+
+def test_cli_operator_check_global_status_matches_worst_section() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+
+        code, payload = _run_cli(["--data", str(db_path), "operator-check", "--json"])
+
+        rank = {"ok": 0, "warn": 1, "fail": 2}
+        section_statuses = [section["status"] for section in payload["sections"].values()]
+        worst_status = max(section_statuses, key=lambda status: rank[status])
+        assert code == 1
+        assert payload["status"] == worst_status
+        assert payload["status"] == "fail"
+
+
+def test_cli_operator_check_unreachable_snapshot_manifest_warns(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        def unreachable(*_args, **_kwargs):
+            raise OSError("network unreachable")
+
+        monkeypatch.setattr(cli_module.request, "urlopen", unreachable)
+
+        code, payload = _run_cli(
+            [
+                "--data",
+                str(db_path),
+                "operator-check",
+                "--json",
+                "--snapshot-manifest-url",
+                "https://example.invalid/snapshots.json",
+            ]
+        )
+
+        assert code == 0
+        assert payload["status"] == "warn"
+        assert payload["sections"]["snapshot"]["status"] == "warn"
+        assert payload["sections"]["snapshot"]["fields"]["manifest_readable"] is False
+
+
+def test_cli_operator_check_unreachable_node_url_fails_cleanly(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        def unreachable(*_args, **_kwargs):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(cli_module.request, "urlopen", unreachable)
+
+        code, payload = _run_cli(
+            [
+                "--data",
+                str(db_path),
+                "operator-check",
+                "--json",
+                "--node-url",
+                "http://127.0.0.1:65535",
+            ]
+        )
+
+        assert code == 1
+        assert payload["status"] == "fail"
+        assert payload["sections"]["mining"]["status"] == "fail"
+        assert payload["sections"]["mining"]["fields"]["template_available"] is False
+        assert "connection refused" in payload["sections"]["mining"]["fields"]["error"]
+
+
+def test_cli_operator_check_human_output_is_readable() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            code = main(["--data", str(db_path), "operator-check"])
+
+        assert code == 0
+        output = stdout.getvalue()
+        assert "operator-check: warn" in output
+        assert "[OK] chain:" in output
+        assert "[WARN] peers:" in output
 
 
 def test_cli_wallet_shortcuts_match_utxos_and_balance() -> None:

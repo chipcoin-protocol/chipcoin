@@ -138,6 +138,28 @@ def _disconnect_sort_key(peer: dict[str, object]) -> tuple[int, int, str, int]:
     return (disconnects, -score, str(peer["host"]), int(peer["port"]))
 
 
+def _worst_operator_status(statuses) -> str:
+    """Return the most severe operator-check status."""
+
+    rank = {"ok": 0, "warn": 1, "fail": 2}
+    worst = "ok"
+    for status in statuses:
+        value = str(status)
+        if rank.get(value, 2) > rank[worst]:
+            worst = value if value in rank else "fail"
+    return worst
+
+
+def _operator_status_message(status: str) -> str:
+    """Return a concise operator-check summary message."""
+
+    if status == "ok":
+        return "Node is ready for public testnet operation."
+    if status == "warn":
+        return "Node is operational but needs operator attention before public testnet use."
+    return "Node is not ready for public testnet operation."
+
+
 def _stable_digest(payload: object) -> str:
     """Return one deterministic digest for cross-node reward comparisons."""
 
@@ -1293,6 +1315,326 @@ class NodeService:
                 "node_minted_supply_chipbits": supply["node_minted_supply_chipbits"],
                 "circulating_supply_chipbits": supply["circulating_supply_chipbits"],
                 "remaining_supply_chipbits": supply["remaining_supply_chipbits"],
+            },
+        }
+
+    def operator_check(self, *, reward_node_id: str | None = None) -> dict[str, object]:
+        """Return a stable operator readiness report for public testnet use."""
+
+        status_payload = self.status()
+        peer_summary = self.peer_summary()
+        supply = self.supply_diagnostics()
+        tip_height = status_payload["height"]
+        current_epoch = None if tip_height is None else int(tip_height) // self.params.epoch_length_blocks
+        last_closed_epoch = None
+        if isinstance(tip_height, int):
+            last_closed_epoch = (int(tip_height) + 1) // self.params.epoch_length_blocks - 1
+            if last_closed_epoch < 0:
+                last_closed_epoch = None
+
+        sections = {
+            "chain": self._operator_check_chain_section(status_payload),
+            "peers": self._operator_check_peers_section(status_payload, peer_summary),
+            "sync": self._operator_check_sync_section(status_payload),
+            "supply": self._operator_check_supply_section(supply),
+            "rewards": self._operator_check_rewards_section(
+                current_epoch=current_epoch,
+                last_closed_epoch=last_closed_epoch,
+            ),
+            "reward_node": self._operator_check_reward_node_section(
+                reward_node_id=reward_node_id,
+                current_epoch=current_epoch,
+            ),
+            "mining": self._operator_check_mining_section(),
+            "snapshot": self._operator_check_snapshot_section(status_payload),
+        }
+        overall_status = _worst_operator_status(section["status"] for section in sections.values())
+        return {
+            "status": overall_status,
+            "message": _operator_status_message(overall_status),
+            "network": self.network,
+            "checked_at": self.time_provider(),
+            "sections": sections,
+        }
+
+    def _operator_check_chain_section(self, status_payload: dict[str, object]) -> dict[str, object]:
+        tip_height = status_payload["height"]
+        tip_hash = status_payload["tip_hash"]
+        if not isinstance(tip_height, int) or not isinstance(tip_hash, str):
+            status = "fail"
+            message = "No active chain tip is present."
+        else:
+            status = "ok"
+            message = "Active chain tip is present."
+        return {
+            "status": status,
+            "message": message,
+            "fields": {
+                "height": tip_height,
+                "tip_hash": tip_hash,
+                "current_bits": status_payload["current_bits"],
+                "current_difficulty_ratio": status_payload["current_difficulty_ratio"],
+                "cumulative_work": status_payload["cumulative_work"],
+            },
+        }
+
+    def _operator_check_peers_section(self, status_payload: dict[str, object], peer_summary: dict[str, object]) -> dict[str, object]:
+        peer_count = int(status_payload["peer_count"])
+        handshaken_peer_count = int(status_payload["handshaken_peer_count"])
+        banned_peer_count = int(status_payload["banned_peer_count"])
+        if handshaken_peer_count > 0:
+            status = "ok"
+            message = "At least one handshaken peer is available."
+        elif peer_count > 0:
+            status = "warn"
+            message = "Known peers exist, but none have completed handshake."
+        else:
+            status = "warn"
+            message = "No known peers are recorded."
+        return {
+            "status": status,
+            "message": message,
+            "fields": {
+                "peer_count": peer_count,
+                "handshaken_peer_count": handshaken_peer_count,
+                "banned_peer_count": banned_peer_count,
+                "peer_health": peer_summary["operator_summary"]["peer_health"],
+                "warnings": list(peer_summary["operator_summary"]["warnings"]),
+            },
+        }
+
+    def _operator_check_sync_section(self, status_payload: dict[str, object]) -> dict[str, object]:
+        sync = status_payload["sync"]
+        assert isinstance(sync, dict)
+        sync_phase = str(status_payload["sync_phase"])
+        validated_height = sync.get("validated_tip_height")
+        best_header_height = sync.get("best_header_height")
+        missing_block_count = int(sync.get("missing_block_count", 0) or 0)
+        queued_block_count = int(sync.get("queued_block_count", 0) or 0)
+        inflight_block_count = int(sync.get("inflight_block_count", 0) or 0)
+        if status_payload["height"] is None:
+            status = "fail"
+            message = "Sync cannot be healthy without an active tip."
+        elif sync_phase != "synced":
+            status = "warn"
+            message = "Node sync phase is not synced."
+        elif missing_block_count > 0:
+            status = "warn"
+            message = "Headers are ahead of validated blocks."
+        elif queued_block_count > 0 or inflight_block_count > 0:
+            status = "warn"
+            message = "Block sync work is still pending."
+        else:
+            status = "ok"
+            message = "Sync state is coherent with the validated tip."
+        return {
+            "status": status,
+            "message": message,
+            "fields": {
+                "sync_phase": sync_phase,
+                "mode": sync.get("mode"),
+                "validated_tip_height": validated_height,
+                "best_header_height": best_header_height,
+                "missing_block_count": missing_block_count,
+                "queued_block_count": queued_block_count,
+                "inflight_block_count": inflight_block_count,
+            },
+        }
+
+    def _operator_check_supply_section(self, supply: dict[str, object]) -> dict[str, object]:
+        max_supply = int(supply["max_supply_chipbits"])
+        scheduled_supply = int(supply["scheduled_supply_chipbits"])
+        scheduled_miner = int(supply["scheduled_miner_supply_chipbits"])
+        scheduled_node = int(supply["scheduled_node_reward_supply_chipbits"])
+        materialized_supply = int(supply["materialized_supply_chipbits"])
+        materialized_miner = int(supply["materialized_miner_supply_chipbits"])
+        materialized_node = int(supply["materialized_node_reward_supply_chipbits"])
+        undistributed_node = int(supply["undistributed_node_reward_supply_chipbits"])
+        minted_supply = int(supply["minted_supply_chipbits"])
+        miner_minted = int(supply["miner_minted_supply_chipbits"])
+        node_minted = int(supply["node_minted_supply_chipbits"])
+        burned = int(supply["burned_supply_chipbits"])
+        immature = int(supply["immature_supply_chipbits"])
+        circulating = int(supply["circulating_supply_chipbits"])
+        remaining = int(supply["remaining_supply_chipbits"])
+        failures = []
+        if scheduled_supply != scheduled_miner + scheduled_node:
+            failures.append("scheduled_supply_split_mismatch")
+        if materialized_supply != materialized_miner + materialized_node:
+            failures.append("materialized_supply_split_mismatch")
+        if minted_supply != materialized_supply:
+            failures.append("minted_supply_not_materialized_supply")
+        if miner_minted != materialized_miner or node_minted != materialized_node:
+            failures.append("legacy_minted_alias_mismatch")
+        if undistributed_node != max(0, scheduled_node - materialized_node):
+            failures.append("undistributed_node_reward_mismatch")
+        if circulating != minted_supply - burned - immature:
+            failures.append("circulating_supply_mismatch")
+        if remaining != max(0, max_supply - minted_supply):
+            failures.append("remaining_supply_mismatch")
+        if failures:
+            status = "fail"
+            message = "Supply counters are internally inconsistent."
+        else:
+            status = "ok"
+            message = "Supply counters are internally coherent."
+        return {
+            "status": status,
+            "message": message,
+            "fields": {
+                "height": supply["height"],
+                "max_supply_chipbits": max_supply,
+                "scheduled_supply_chipbits": scheduled_supply,
+                "materialized_supply_chipbits": materialized_supply,
+                "circulating_supply_chipbits": circulating,
+                "immature_supply_chipbits": immature,
+                "undistributed_node_reward_supply_chipbits": undistributed_node,
+                "remaining_supply_chipbits": remaining,
+                "confirmed_unspent_supply_chipbits": supply["confirmed_unspent_supply_chipbits"],
+                "failures": failures,
+            },
+        }
+
+    def _operator_check_rewards_section(self, *, current_epoch: int | None, last_closed_epoch: int | None) -> dict[str, object]:
+        checked_epochs = []
+        failures = []
+        if last_closed_epoch is not None:
+            start_epoch = max(0, last_closed_epoch - 1)
+            for epoch_index in range(start_epoch, last_closed_epoch + 1):
+                try:
+                    summary = self.reward_epoch_summary(epoch_index=epoch_index)
+                    checked_epochs.append(
+                        {
+                            "epoch_index": epoch_index,
+                            "settlement_status": summary["settlement_status"],
+                            "settlement_exists": summary["settlement_exists"],
+                            "rewarded_node_count": summary["rewarded_node_count"],
+                            "distributed_node_reward_chipbits": summary["payout_totals"].get("distributed_node_reward_chipbits"),
+                            "undistributed_node_reward_chipbits": summary["payout_totals"].get("undistributed_node_reward_chipbits"),
+                        }
+                    )
+                    if summary["settlement_status"] == "closed" and not summary["settlement_exists"]:
+                        failures.append(f"missing_settlement_epoch_{epoch_index}")
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(f"epoch_{epoch_index}_unreadable:{exc}")
+        if failures:
+            status = "fail"
+            message = "Recent reward epoch summaries are not coherent."
+        else:
+            status = "ok"
+            message = "Recent reward epoch summaries are readable."
+        return {
+            "status": status,
+            "message": message,
+            "fields": {
+                "current_epoch": current_epoch,
+                "last_closed_epoch": last_closed_epoch,
+                "checked_epochs": checked_epochs,
+                "failures": failures,
+            },
+        }
+
+    def _operator_check_reward_node_section(self, *, reward_node_id: str | None, current_epoch: int | None) -> dict[str, object]:
+        registry = self.node_registry_diagnostics()
+        reward_registry = [row for row in registry if row["reward_registration"]]
+        if reward_node_id is None:
+            return {
+                "status": "ok",
+                "message": "No reward node id was requested.",
+                "fields": {
+                    "requested_node_id": None,
+                    "registered_reward_node_count": len(reward_registry),
+                    "active_reward_node_count": sum(1 for row in reward_registry if row["active"]),
+                    "current_epoch": current_epoch,
+                },
+            }
+        try:
+            node_status = self.reward_node_status(node_id=reward_node_id)
+        except ValueError as exc:
+            return {
+                "status": "fail",
+                "message": str(exc),
+                "fields": {
+                    "requested_node_id": reward_node_id,
+                    "registered_reward_node_count": len(reward_registry),
+                    "current_epoch": current_epoch,
+                },
+            }
+        eligibility_status = str(node_status["eligibility_status"])
+        if node_status["active"] is True and eligibility_status == "active":
+            status = "ok"
+            message = "Requested reward node is active and eligible."
+        elif eligibility_status in {"warming_up", "pending_activation"}:
+            status = "warn"
+            message = "Requested reward node is registered but not yet eligible."
+        else:
+            status = "fail"
+            message = "Requested reward node is not eligible for rewards."
+        return {
+            "status": status,
+            "message": message,
+            "fields": {
+                "requested_node_id": reward_node_id,
+                "active": node_status["active"],
+                "eligibility_status": eligibility_status,
+                "eligibility_reason": node_status["eligibility_reason"],
+                "last_renewal_epoch": node_status["last_renewal_epoch"],
+                "last_renewal_height": node_status["last_renewal_height"],
+                "selected_epoch_active": node_status["selected_epoch_active"],
+                "selected_epoch_assigned": node_status["selected_epoch_assigned"],
+                "selected_epoch_exclusion_reason": node_status["selected_epoch_exclusion_reason"],
+            },
+        }
+
+    def _operator_check_mining_section(self) -> dict[str, object]:
+        try:
+            template = self.get_block_template(
+                payout_address="operator-check",
+                miner_id="operator-check",
+                template_mode="header_and_coinbase_data",
+            )
+            self.discard_mining_template(str(template["template_id"]))
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": "fail",
+                "message": f"Local mining template build failed: {exc}",
+                "fields": {
+                    "template_available": False,
+                    "error": str(exc),
+                },
+            }
+        return {
+            "status": "ok",
+            "message": "Local mining template is available.",
+            "fields": {
+                "template_available": True,
+                "template_height": template["height"],
+                "previous_block_hash": template["previous_block_hash"],
+                "bits": template["bits"],
+                "transaction_count": len(template["transactions"]),
+                "node_reward_total_chipbits": template["node_reward_total_chipbits"],
+            },
+        }
+
+    def _operator_check_snapshot_section(self, status_payload: dict[str, object]) -> dict[str, object]:
+        warnings = list(status_payload["snapshot_trust_warnings"])
+        if warnings:
+            status = "warn"
+            message = "Snapshot bootstrap has trust warnings."
+        else:
+            status = "ok"
+            message = "Snapshot bootstrap state is coherent."
+        return {
+            "status": status,
+            "message": message,
+            "fields": {
+                "bootstrap_mode": status_payload["bootstrap_mode"],
+                "snapshot_anchor_height": status_payload["snapshot_anchor_height"],
+                "snapshot_anchor_hash": status_payload["snapshot_anchor_hash"],
+                "snapshot_trust_mode": status_payload["snapshot_trust_mode"],
+                "snapshot_signature_verified": status_payload["snapshot_signature_verified"],
+                "accepted_snapshot_signer_count": len(status_payload["accepted_snapshot_signer_pubkeys"]),
+                "warnings": warnings,
             },
         }
 

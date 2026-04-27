@@ -570,6 +570,80 @@ If the local node advances while a slower peer is still connected, `final_local_
 
 ## Operator Checks
 
+Use `operator-check` as the first testnet-readiness gate. It aggregates chain,
+peer, sync, supply, reward, mining, and snapshot diagnostics into one stable
+report.
+
+Machine-readable form:
+
+```bash
+chipcoin operator-check --network devnet --data /path/to/node.sqlite3 --json
+```
+
+Reward-node-specific form:
+
+```bash
+chipcoin operator-check --network devnet --data /path/to/node.sqlite3 \
+  --reward-node-id reward-node-example \
+  --json
+```
+
+Optional HTTP mining and snapshot-manifest checks:
+
+```bash
+chipcoin operator-check --network devnet --data /path/to/node.sqlite3 \
+  --node-url http://127.0.0.1:8081 \
+  --snapshot-manifest-url https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json \
+  --json
+```
+
+Human-readable form:
+
+```bash
+chipcoin operator-check --network devnet --data /path/to/node.sqlite3
+```
+
+The top-level status is one of:
+
+- `ok`: the node is ready for public testnet operation
+- `warn`: the node is usable but needs operator attention
+- `fail`: the node is not ready
+
+`warn` exits with code `0` so scripts can distinguish degraded-but-running
+nodes from hard failures. `fail` exits with code `1`.
+
+The JSON shape is stable:
+
+```json
+{
+  "status": "warn",
+  "message": "Node is operational but needs operator attention before public testnet use.",
+  "network": "devnet",
+  "checked_at": 1777270000,
+  "sections": {
+    "chain": {"status": "ok", "message": "Active chain tip is present.", "fields": {}},
+    "peers": {"status": "warn", "message": "No known peers are recorded.", "fields": {}},
+    "sync": {"status": "ok", "message": "Sync state is coherent with the validated tip.", "fields": {}},
+    "supply": {"status": "ok", "message": "Supply counters are internally coherent.", "fields": {}},
+    "rewards": {"status": "ok", "message": "Recent reward epoch summaries are readable.", "fields": {}},
+    "reward_node": {"status": "ok", "message": "No reward node id was requested.", "fields": {}},
+    "mining": {"status": "ok", "message": "Local mining template is available.", "fields": {}},
+    "snapshot": {"status": "ok", "message": "Snapshot bootstrap state is coherent.", "fields": {}}
+  }
+}
+```
+
+Common failures:
+
+- `chain.status=fail`: the database has no active tip; bootstrap or sync has not produced a validated block yet
+- `peers.status=warn`: no handshaken peers; check `NODE_DIRECT_PEERS`, firewall, DNS, and port `18444`
+- `sync.status=warn`: `sync_phase` is not `synced`, headers or blocks are still pending; wait or inspect stalled peers
+- `supply.status=fail`: derived supply counters disagree; do not use the node as public source until investigated
+- `rewards.status=fail`: recent closed epoch summaries or settlements are unreadable or inconsistent
+- `reward_node.status=fail`: requested reward node is missing, stale, inactive, or not eligible
+- `mining.status=fail`: local template generation failed, or `--node-url` could not serve `/mining/status` and `/mining/get-block-template`; miner will not be able to produce valid blocks
+- `snapshot.status=warn`: snapshot trust warnings exist, manifest is stale, or configured `--snapshot-manifest-url` cannot be read
+
 Fast local checks:
 
 ```bash
