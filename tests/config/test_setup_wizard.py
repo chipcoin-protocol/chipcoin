@@ -39,6 +39,7 @@ def test_quick_mode_same_host_defaults_node_remote_miner_local_http() -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
 
+    wizard._apply_network_defaults(env_values, "devnet")
     wizard._apply_setup_mode(env_values, "quick", "both")
 
     assert env_values["NODE_DIRECT_PEERS"] == ""
@@ -52,6 +53,7 @@ def test_quick_mode_miner_only_defaults_to_remote_peer() -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
 
+    wizard._apply_network_defaults(env_values, "devnet")
     wizard._apply_setup_mode(env_values, "quick", "miner")
 
     assert env_values["NODE_DIRECT_PEERS"] == ""
@@ -63,12 +65,82 @@ def test_local_mode_same_host_keeps_node_isolated_and_miner_local_http() -> None
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
 
+    wizard._apply_network_defaults(env_values, "devnet")
     wizard._apply_setup_mode(env_values, "local", "both")
 
     assert env_values["NODE_DIRECT_PEERS"] == ""
     assert env_values["NODE_BOOTSTRAP_URL"] == ""
     assert env_values["MINING_NODE_URLS"] == "http://node:8081"
     assert env_values["DIRECT_PEERS"] == ""
+
+
+def test_testnet_network_defaults_are_separate_and_do_not_point_to_devnet_bootstrap() -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+
+    wizard._apply_network_defaults(env_values, "testnet")
+
+    assert env_values["CHIPCOIN_NETWORK"] == "testnet"
+    assert env_values["NODE_DATA_PATH"] == "/var/lib/chipcoin/data/node-testnet.sqlite3"
+    assert env_values["NODE_SNAPSHOT_FILE"] == "/var/lib/chipcoin/data/node-testnet.snapshot"
+    assert env_values["NODE_P2P_BIND_PORT"] == "28444"
+    assert env_values["NODE_PUBLIC_P2P_PORT"] == "28444"
+    assert env_values["NODE_HTTP_BIND_PORT"] == "28081"
+    assert env_values["DEFAULT_BOOTSTRAP_PEER"] == ""
+    assert env_values["NODE_BOOTSTRAP_URL"] == ""
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
+    assert "chipcoinprotocol.com:18444" not in ",".join(env_values.values())
+    assert "/snapshots/devnet/" not in ",".join(env_values.values())
+
+
+def test_testnet_quick_mode_stays_local_and_has_no_public_bootstrap_or_snapshot_defaults() -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+
+    wizard._apply_network_defaults(env_values, "testnet")
+    wizard._apply_setup_mode(env_values, "quick", "both", network="testnet")
+
+    assert env_values["DEFAULT_NODE_ENDPOINT"] == "http://127.0.0.1:28081"
+    assert env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] == "http://127.0.0.1:28081"
+    assert env_values["MINING_NODE_URLS"] == "http://node:28081"
+    assert env_values["DEFAULT_BOOTSTRAP_PEER"] == ""
+    assert env_values["NODE_BOOTSTRAP_URL"] == ""
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
+    assert env_values["DEFAULT_EXPLORER_URL"] == ""
+
+
+def test_testnet_discovery_defaults_to_isolated_when_no_bootstrap_exists(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "testnet")
+    answers = iter([
+        "",  # isolated default
+        "no",
+    ])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    wizard._configure_node_discovery(env_values, setup_mode="quick")
+
+    assert env_values["NODE_DIRECT_PEERS"] == ""
+    assert env_values["NODE_BOOTSTRAP_URL"] == ""
+    assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "false"
+    assert env_values["NODE_PUBLIC_P2P_PORT"] == "28444"
+
+
+def test_testnet_bootstrap_defaults_to_full_when_no_snapshot_manifest_exists(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "testnet")
+    answers = iter([
+        "",  # full default
+    ])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    wizard._configure_node_bootstrap(env_values, setup_mode="quick")
+
+    assert env_values["NODE_BOOTSTRAP_MODE"] == "full"
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
+    assert env_values["NODE_SNAPSHOT_TRUST_MODE"] == "off"
 
 
 def test_env_examples_expose_service_specific_discovery_defaults() -> None:
@@ -90,6 +162,7 @@ def test_env_examples_expose_service_specific_discovery_defaults() -> None:
 def test_configure_node_discovery_defaults_to_bootstrap_and_public_standard_port(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "devnet")
     answers = iter([
         "",  # bootstrap seed default
         "",  # default bootstrap URL
@@ -111,6 +184,7 @@ def test_configure_node_discovery_defaults_to_bootstrap_and_public_standard_port
 def test_configure_node_discovery_requires_explicit_public_host(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "devnet")
     monkeypatch.setattr(wizard, "_detect_public_ip", lambda: "")
     answers = iter([
         "",   # bootstrap seed default
@@ -131,6 +205,7 @@ def test_configure_node_discovery_requires_explicit_public_host(monkeypatch) -> 
 def test_configure_node_discovery_uses_detected_public_ip_as_default(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "devnet")
     monkeypatch.setattr(wizard, "_detect_public_ip", lambda: "198.51.100.10")
     answers = iter([
         "",   # bootstrap seed default
@@ -151,6 +226,7 @@ def test_configure_node_discovery_uses_detected_public_ip_as_default(monkeypatch
 def test_configure_node_discovery_manual_mode_disables_bootstrap_url(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "devnet")
     answers = iter([
         "manual",
         "",

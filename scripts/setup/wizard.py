@@ -36,6 +36,8 @@ ENV_EXAMPLE_PATH = REPO_ROOT / "config" / "env" / ".env.example"
 RUNTIME_ROOT = Path("/var/lib/chipcoin")
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.snapshot")
+TESTNET_NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-testnet.sqlite3")
+TESTNET_NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-testnet.snapshot")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
 REWARD_WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "reward-node-wallet.json")
 PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
@@ -43,6 +45,7 @@ PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
 PUBLIC_DEVNET_BOOTSTRAP_URL = "http://chipcoinprotocol.com:28080"
 PUBLIC_DEVNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com"
 PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json"
+TESTNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:28081"
 PUBLIC_IP_DETECT_URLS = (
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
@@ -136,9 +139,16 @@ def main() -> int:
         "quick",
     )
     role = _ask_choice("What do you want to run?", {"node": "Node", "miner": "Miner", "both": "Both"}, "both")
-    network = _ask_choice("Which network do you want to use?", {"devnet": "Devnet"}, "devnet")
+    network = _ask_choice(
+        "Which network do you want to use?",
+        {
+            "devnet": "Devnet",
+            "testnet": "Testnet dry-run (local/manual bootstrap only)",
+        },
+        "devnet",
+    )
     runtime_mode = _ask_choice("How should services run?", {"foreground": "Foreground", "background": "Background"}, "foreground")
-    _print_public_reachability_note()
+    _print_public_reachability_note(network=network)
     bootstrap_notes: list[str] = []
 
     miner_wallet_path: Path | None = None
@@ -159,8 +169,8 @@ def main() -> int:
         miner_wallet_address, miner_wallet_private_key_hex = _handle_wallet(wallet_mode, miner_wallet_path)
 
     env_values = dict(DEFAULTS)
-    env_values["CHIPCOIN_NETWORK"] = network
-    _apply_setup_mode(env_values, setup_mode, role)
+    _apply_network_defaults(env_values, network)
+    _apply_setup_mode(env_values, setup_mode, role, network=network)
     if role in {"node", "both"}:
         _configure_node_discovery(env_values, setup_mode=setup_mode)
         _configure_node_bootstrap(env_values, setup_mode=setup_mode)
@@ -491,7 +501,7 @@ def _default_reward_registration_peer(env_values: dict[str, str]) -> str:
     bootstrap_peer = env_values.get("DEFAULT_BOOTSTRAP_PEER", "").strip()
     if bootstrap_peer:
         return bootstrap_peer
-    return "127.0.0.1:18444"
+    return f"127.0.0.1:{env_values.get('NODE_P2P_BIND_PORT', '18444')}"
 
 
 def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tuple[Path, str, str]:
@@ -523,17 +533,60 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tu
     return reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex
 
 
-def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) -> None:
-    miner_node_default = PUBLIC_DEVNET_NODE_ENDPOINT if role == "miner" else "http://node:8081"
+def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
+    """Apply network-specific local paths and safe endpoint defaults."""
 
-    if setup_mode == "quick":
-        env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
+    env_values["CHIPCOIN_NETWORK"] = network
+    if network == "devnet":
+        env_values["NODE_DATA_PATH"] = NODE_DATA_PATH
+        env_values["NODE_SNAPSHOT_FILE"] = NODE_SNAPSHOT_PATH
+        env_values["NODE_P2P_BIND_PORT"] = "18444"
+        env_values["NODE_PUBLIC_P2P_PORT"] = "18444"
+        env_values["NODE_HTTP_BIND_PORT"] = "8081"
+        env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL
         env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
+        env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_DEVNET_BOOTSTRAP_URL
+        env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
         env_values["DEFAULT_EXPLORER_URL"] = PUBLIC_DEVNET_EXPLORER_URL
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
+        return
+    if network == "testnet":
+        env_values["NODE_DATA_PATH"] = TESTNET_NODE_DATA_PATH
+        env_values["NODE_SNAPSHOT_FILE"] = TESTNET_NODE_SNAPSHOT_PATH
+        env_values["NODE_P2P_BIND_PORT"] = "28444"
+        env_values["NODE_PUBLIC_P2P_PORT"] = "28444"
+        env_values["NODE_HTTP_BIND_PORT"] = "28081"
+        env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = ""
+        env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
+        env_values["NODE_BOOTSTRAP_URL"] = ""
+        env_values["DEFAULT_NODE_ENDPOINT"] = TESTNET_LOCAL_NODE_ENDPOINT
+        env_values["DEFAULT_EXPLORER_URL"] = ""
+        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = TESTNET_LOCAL_NODE_ENDPOINT
+        return
+    _die(f"Unsupported network selection: {network}")
+
+
+def _public_node_endpoint_for_network(network: str) -> str:
+    return PUBLIC_DEVNET_NODE_ENDPOINT if network == "devnet" else TESTNET_LOCAL_NODE_ENDPOINT
+
+
+def _same_compose_node_endpoint(env_values: dict[str, str]) -> str:
+    return f"http://node:{env_values.get('NODE_HTTP_BIND_PORT', '8081')}"
+
+
+def _local_node_endpoint(env_values: dict[str, str]) -> str:
+    return f"http://127.0.0.1:{env_values.get('NODE_HTTP_BIND_PORT', '8081')}"
+
+
+def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str, *, network: str = "devnet") -> None:
+    public_or_local_endpoint = _public_node_endpoint_for_network(network)
+    miner_node_default = public_or_local_endpoint if role == "miner" else _same_compose_node_endpoint(env_values)
+
+    if setup_mode == "quick":
+        env_values["DEFAULT_NODE_ENDPOINT"] = public_or_local_endpoint
+        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = public_or_local_endpoint
         env_values["NODE_DIRECT_PEERS"] = ""
         env_values["NODE_DIRECT_PEER"] = ""
-        env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_DEVNET_BOOTSTRAP_URL
         env_values["MINING_NODE_URLS"] = miner_node_default
         env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
@@ -541,33 +594,31 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
         return
 
     if setup_mode == "custom":
-        node_endpoint = _ask_http_url("Enter node endpoint", PUBLIC_DEVNET_NODE_ENDPOINT)
-        explorer_url = _ask_http_url("Enter explorer URL", PUBLIC_DEVNET_EXPLORER_URL)
+        node_endpoint = _ask_http_url("Enter node endpoint", public_or_local_endpoint)
+        explorer_url = _ask_http_url("Enter explorer URL", env_values.get("DEFAULT_EXPLORER_URL", ""))
         mining_node_urls = _ask_http_url(
             "Enter miner node endpoint",
-            node_endpoint if role == "miner" else "http://node:8081",
+            node_endpoint if role == "miner" else _same_compose_node_endpoint(env_values),
         )
         env_values["DEFAULT_NODE_ENDPOINT"] = node_endpoint
-        env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["DEFAULT_EXPLORER_URL"] = explorer_url
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = node_endpoint
         env_values["NODE_DIRECT_PEERS"] = ""
         env_values["NODE_DIRECT_PEER"] = ""
-        env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_DEVNET_BOOTSTRAP_URL
         env_values["MINING_NODE_URLS"] = mining_node_urls
         env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
         env_values["BOOTSTRAP_URL"] = ""
         return
 
-    env_values["DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
+    env_values["DEFAULT_NODE_ENDPOINT"] = _local_node_endpoint(env_values)
     env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
     env_values["DEFAULT_EXPLORER_URL"] = ""
-    env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = "http://127.0.0.1:8081"
+    env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = _local_node_endpoint(env_values)
     env_values["NODE_DIRECT_PEERS"] = ""
     env_values["NODE_DIRECT_PEER"] = ""
     env_values["NODE_BOOTSTRAP_URL"] = ""
-    env_values["MINING_NODE_URLS"] = "http://127.0.0.1:8081" if role == "miner" else "http://node:8081"
+    env_values["MINING_NODE_URLS"] = _local_node_endpoint(env_values) if role == "miner" else _same_compose_node_endpoint(env_values)
     env_values["DIRECT_PEERS"] = ""
     env_values["DIRECT_PEER"] = ""
     env_values["BOOTSTRAP_URL"] = ""
@@ -576,7 +627,10 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str) ->
 def _configure_node_discovery(env_values: dict[str, str], *, setup_mode: str) -> None:
     """Prompt for node peer discovery and optional bootstrap announce settings."""
 
-    default_discovery = "isolated" if setup_mode == "local" else "bootstrap"
+    has_bootstrap_defaults = bool(env_values.get("NODE_BOOTSTRAP_URL", "").strip() or env_values.get("DEFAULT_BOOTSTRAP_PEER", "").strip())
+    default_discovery = "isolated" if setup_mode == "local" or not has_bootstrap_defaults else "bootstrap"
+    default_bootstrap_url = env_values.get("NODE_BOOTSTRAP_URL", "")
+    default_startup_peer = env_values.get("DEFAULT_BOOTSTRAP_PEER", "")
     discovery_mode = _ask_choice(
         "How should the node find its first peers?",
         {
@@ -594,12 +648,12 @@ def _configure_node_discovery(env_values: dict[str, str], *, setup_mode: str) ->
     if discovery_mode == "bootstrap":
         env_values["NODE_BOOTSTRAP_URL"] = _ask_http_url(
             "Enter bootstrap seed URL",
-            PUBLIC_DEVNET_BOOTSTRAP_URL,
+            default_bootstrap_url,
         )
     elif discovery_mode == "manual":
         env_values["NODE_DIRECT_PEERS"] = _ask_direct_peers(
             "Enter startup peer(s)",
-            PUBLIC_DEVNET_BOOTSTRAP_PEER,
+            default_startup_peer,
         )
 
     publicly_reachable = _ask_choice(
@@ -630,7 +684,8 @@ def _configure_node_discovery(env_values: dict[str, str], *, setup_mode: str) ->
 def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) -> None:
     """Prompt for node bootstrap settings."""
 
-    default_mode = "full" if setup_mode == "local" else "auto"
+    has_snapshot_manifest = bool(env_values.get("NODE_SNAPSHOT_MANIFEST_URLS", "").strip())
+    default_mode = "full" if setup_mode == "local" or not has_snapshot_manifest else "auto"
     bootstrap_mode = _ask_choice(
         "How should the node bootstrap?",
         {
@@ -647,11 +702,7 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
         env_values["NODE_SNAPSHOT_TRUSTED_KEYS_FILE"] = ""
         return
 
-    default_manifest_urls = (
-        PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL
-        if setup_mode in {"quick", "custom"}
-        else env_values.get("NODE_SNAPSHOT_MANIFEST_URLS", "")
-    )
+    default_manifest_urls = env_values.get("NODE_SNAPSHOT_MANIFEST_URLS", "")
     env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = _ask_optional_http_urls(
         "Enter snapshot manifest URL(s)",
         default_manifest_urls,
@@ -672,12 +723,13 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
         env_values["NODE_SNAPSHOT_TRUSTED_KEYS_FILE"] = trusted_keys_file
 
 
-def _print_public_reachability_note() -> None:
+def _print_public_reachability_note(*, network: str = "devnet") -> None:
+    default_port = get_network_config(network).default_p2p_port
     print()
     print("Public reachability note:")
     print("  - outbound-only nodes can still connect and sync")
     print("  - publicly reachable nodes are strongly preferred for network health")
-    print("  - when possible, open and forward TCP 18444 for the node P2P listener")
+    print(f"  - when possible, open and forward TCP {default_port} for the node P2P listener")
     print("  - for clean installs, prefer multiple startup peers when available")
     print()
 

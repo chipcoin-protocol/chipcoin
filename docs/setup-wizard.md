@@ -41,7 +41,7 @@ Prefer the manual setup flow from `README.md` when:
 
 ### Quick Start
 
-This mode uses the public devnet defaults:
+This mode uses the public devnet defaults when `devnet` is selected:
 
 - node endpoint: `https://api.chipcoinprotocol.com`
 - bootstrap peer: `chipcoinprotocol.com:18444`
@@ -50,6 +50,17 @@ This mode uses the public devnet defaults:
 This is the shortest path if you want to connect quickly to the public devnet environment.
 
 Public devnet endpoints are provided for convenience and may change or become unavailable.
+
+When `testnet` is selected, quick mode is intentionally local/manual only:
+
+- node endpoint: `http://127.0.0.1:28081`
+- P2P port: `28444`
+- bootstrap peer: empty
+- snapshot manifest URL: empty
+- explorer URL: empty
+
+There is no public testnet bootstrap, snapshot publisher, faucet, or explorer in
+this repository step. See `docs/testnet-launch.md` for the manual dry-run flow.
 
 ### Custom Configuration
 
@@ -77,7 +88,8 @@ After you choose your node setup, keep this practical distinction in mind:
 
 - outbound-only nodes can still connect to the network and sync
 - publicly reachable nodes are strongly preferred for network health
-- when possible, open and forward `TCP 18444` so other peers can reach your node
+- when possible, open and forward the selected network P2P port so other peers can reach your node
+- devnet uses `TCP 18444`; testnet dry-runs use `TCP 28444`
 
 The wizard does not require public exposure, but public reachability is the main way an operator contributes an additional resilient peer to the mesh.
 
@@ -101,6 +113,10 @@ When the wizard configures a node, it now asks how the node should bootstrap:
 For public devnet setups, the default manifest is:
 
 - `https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json`
+
+For testnet dry-runs, the wizard leaves snapshot manifest URLs empty and defaults
+to full sync unless the operator explicitly provides a compatible testnet
+manifest.
 
 The user can:
 
@@ -214,6 +230,9 @@ Wizard defaults by operator mode:
 - `node` + `miner` on one host
   - node uses the public devnet peer
   - miner uses `http://node:8081`
+- testnet dry-run
+  - node starts isolated unless manual peers are provided
+  - miner uses `http://node:28081` inside the same Compose project
 - miner-only host
   - miner uses `https://api.chipcoinprotocol.com`
 - local/self-hosted node + miner
