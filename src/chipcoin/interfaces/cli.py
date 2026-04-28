@@ -20,6 +20,7 @@ from ..consensus.epoch_settlement import RewardAttestation
 from ..consensus.models import Transaction
 from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
+from ..crypto.addresses import is_valid_address
 from ..crypto.keys import parse_private_key_hex, serialize_private_key_hex, serialize_public_key_hex
 from ..miner.config import MinerWorkerConfig
 from ..miner.worker import MinerWorker
@@ -83,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
                 snapshot_manifest_urls=_operator_snapshot_manifest_urls(args.snapshot_manifest_url),
                 network=args.network,
                 timeout_seconds=args.request_timeout_seconds,
+                miner_payout_address=args.miner_payout_address,
             )
             if args.json:
                 _print_json(payload)
@@ -782,6 +784,7 @@ def _build_parser() -> argparse.ArgumentParser:
     operator_check.add_argument("--json", action="store_true", help="Emit stable machine-readable JSON.")
     operator_check.add_argument("--reward-node-id", help="Require a specific reward node to be registered and eligible.")
     operator_check.add_argument("--node-url", help="Optional HTTP node API URL for remote mining template checks.")
+    operator_check.add_argument("--miner-payout-address", help="Optional payout address used for mining template checks.")
     operator_check.add_argument("--snapshot-manifest-url", action="append", default=[], help="Optional snapshot manifest URL to verify. Defaults to NODE_SNAPSHOT_MANIFEST_URLS when set.")
     operator_check.add_argument("--request-timeout-seconds", type=float, default=5.0)
     subparsers.add_parser("tip")
@@ -999,13 +1002,18 @@ def _enrich_operator_check_payload(
     snapshot_manifest_urls: list[str],
     network: str,
     timeout_seconds: float,
+    miner_payout_address: str | None,
 ) -> None:
     """Add optional external checks and recompute aggregate status."""
 
     sections = payload["sections"]
     assert isinstance(sections, dict)
     if node_url:
-        sections["mining"] = _operator_http_mining_section(node_url=node_url, timeout_seconds=timeout_seconds)
+        sections["mining"] = _operator_http_mining_section(
+            node_url=node_url,
+            timeout_seconds=timeout_seconds,
+            miner_payout_address=miner_payout_address,
+        )
     if snapshot_manifest_urls:
         sections["snapshot"] = _operator_snapshot_manifest_section(
             existing_section=sections["snapshot"],
@@ -1017,21 +1025,52 @@ def _enrich_operator_check_payload(
     payload["message"] = _operator_status_message(str(payload["status"]))
 
 
-def _operator_http_mining_section(*, node_url: str, timeout_seconds: float) -> dict[str, object]:
+def _operator_http_mining_section(
+    *,
+    node_url: str,
+    timeout_seconds: float,
+    miner_payout_address: str | None,
+) -> dict[str, object]:
     """Check remote mining status and template acquisition over HTTP."""
 
     base_url = node_url.rstrip("/")
+    if miner_payout_address is not None and not is_valid_address(miner_payout_address):
+        return {
+            "status": "fail",
+            "message": "mining template check failed: invalid --miner-payout-address",
+            "fields": {
+                "node_url": base_url,
+                "miner_payout_address": miner_payout_address,
+                "status_available": None,
+                "template_available": False,
+                "error": "invalid --miner-payout-address",
+            },
+        }
     try:
         status_payload = _operator_http_json(
             f"{base_url}/mining/status",
             method="GET",
             timeout_seconds=timeout_seconds,
         )
+        if miner_payout_address is None:
+            return {
+                "status": "warn",
+                "message": "mining template check skipped: missing --miner-payout-address",
+                "fields": {
+                    "node_url": base_url,
+                    "best_height": status_payload.get("best_height"),
+                    "sync_phase": status_payload.get("sync_phase"),
+                    "status_available": True,
+                    "template_available": None,
+                    "template_check_skipped": True,
+                    "skip_reason": "missing --miner-payout-address",
+                },
+            }
         template_payload = _operator_http_json(
             f"{base_url}/mining/get-block-template",
             method="POST",
             payload={
-                "payout_address": "operator-check",
+                "payout_address": miner_payout_address,
                 "miner_id": "operator-check",
                 "template_mode": "header_and_coinbase_data",
             },
@@ -1042,8 +1081,10 @@ def _operator_http_mining_section(*, node_url: str, timeout_seconds: float) -> d
             "message": "HTTP mining status and template acquisition are available.",
             "fields": {
                 "node_url": base_url,
+                "miner_payout_address": miner_payout_address,
                 "best_height": status_payload.get("best_height"),
                 "sync_phase": status_payload.get("sync_phase"),
+                "status_available": True,
                 "template_available": True,
                 "template_height": template_payload.get("height"),
                 "previous_block_hash": template_payload.get("previous_block_hash"),
@@ -1056,6 +1097,8 @@ def _operator_http_mining_section(*, node_url: str, timeout_seconds: float) -> d
             "message": f"HTTP mining template check failed: {exc}",
             "fields": {
                 "node_url": base_url,
+                "miner_payout_address": miner_payout_address,
+                "status_available": False,
                 "template_available": False,
                 "error": str(exc),
             },

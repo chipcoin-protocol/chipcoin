@@ -1964,6 +1964,150 @@ def test_cli_operator_check_unreachable_node_url_fails_cleanly(monkeypatch) -> N
         assert "connection refused" in payload["sections"]["mining"]["fields"]["error"]
 
 
+def test_cli_operator_check_node_url_without_payout_checks_status_only(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        requested_urls: list[str] = []
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({"best_height": 10, "sync_phase": "synced"}).encode("utf-8")
+
+        def fake_urlopen(req, timeout):
+            requested_urls.append(req.full_url)
+            assert req.full_url.endswith("/mining/status")
+            return _Response()
+
+        monkeypatch.setattr(cli_module.request, "urlopen", fake_urlopen)
+
+        code, payload = _run_cli(
+            [
+                "--data",
+                str(db_path),
+                "operator-check",
+                "--json",
+                "--node-url",
+                "http://127.0.0.1:8081",
+            ]
+        )
+
+        assert code == 0
+        assert payload["status"] == "warn"
+        assert requested_urls == ["http://127.0.0.1:8081/mining/status"]
+        mining = payload["sections"]["mining"]
+        assert mining["status"] == "warn"
+        assert mining["message"] == "mining template check skipped: missing --miner-payout-address"
+        assert mining["fields"]["status_available"] is True
+        assert mining["fields"]["template_available"] is None
+        assert mining["fields"]["template_check_skipped"] is True
+
+
+def test_cli_operator_check_node_url_with_valid_payout_checks_template(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+        requested_urls: list[str] = []
+        bodies: list[dict[str, object]] = []
+        payout_address = wallet_key(0).address
+
+        class _Response:
+            def __init__(self, payload: dict[str, object]):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(req, timeout):
+            requested_urls.append(req.full_url)
+            if req.full_url.endswith("/mining/status"):
+                return _Response({"best_height": 10, "sync_phase": "synced"})
+            if req.full_url.endswith("/mining/get-block-template"):
+                bodies.append(json.loads(req.data.decode("utf-8")))
+                return _Response(
+                    {
+                        "height": 11,
+                        "previous_block_hash": "aa" * 32,
+                        "template_id": "template-1",
+                    }
+                )
+            raise AssertionError(req.full_url)
+
+        monkeypatch.setattr(cli_module.request, "urlopen", fake_urlopen)
+
+        code, payload = _run_cli(
+            [
+                "--data",
+                str(db_path),
+                "operator-check",
+                "--json",
+                "--node-url",
+                "http://127.0.0.1:8081",
+                "--miner-payout-address",
+                payout_address,
+            ]
+        )
+
+        assert code == 0
+        assert requested_urls == [
+            "http://127.0.0.1:8081/mining/status",
+            "http://127.0.0.1:8081/mining/get-block-template",
+        ]
+        assert bodies[0]["payout_address"] == payout_address
+        mining = payload["sections"]["mining"]
+        assert mining["status"] == "ok"
+        assert mining["fields"]["template_available"] is True
+        assert mining["fields"]["template_id_present"] is True
+        assert mining["fields"]["miner_payout_address"] == payout_address
+
+
+def test_cli_operator_check_invalid_miner_payout_address_fails_without_http(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        def unexpected_urlopen(*_args, **_kwargs):
+            raise AssertionError("operator-check should validate payout address before HTTP calls")
+
+        monkeypatch.setattr(cli_module.request, "urlopen", unexpected_urlopen)
+
+        code, payload = _run_cli(
+            [
+                "--data",
+                str(db_path),
+                "operator-check",
+                "--json",
+                "--node-url",
+                "http://127.0.0.1:8081",
+                "--miner-payout-address",
+                "not-a-valid-address",
+            ]
+        )
+
+        assert code == 1
+        assert payload["status"] == "fail"
+        mining = payload["sections"]["mining"]
+        assert mining["status"] == "fail"
+        assert mining["message"] == "mining template check failed: invalid --miner-payout-address"
+        assert mining["fields"]["template_available"] is False
+        assert mining["fields"]["error"] == "invalid --miner-payout-address"
+
+
 def test_cli_operator_check_human_output_is_readable() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
