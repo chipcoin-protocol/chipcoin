@@ -194,6 +194,23 @@ def _peer_state(peer: PeerInfo, *, now: int) -> str:
     return peer.source or "discovered"
 
 
+def _is_benign_peer_error(error: object) -> bool:
+    """Return whether one peer error should not degrade operator health by itself."""
+
+    if error is None:
+        return True
+    if not isinstance(error, str):
+        return False
+    return error == "Duplicate peer connection." or "Transaction is already present in the mempool" in error
+
+
+def _is_fresh_peer_record(peer: dict[str, object], *, tip_height: int) -> bool:
+    """Return whether a peer record is close enough to the freshest observed peer height."""
+
+    height = peer.get("last_known_height")
+    return isinstance(height, int) and (tip_height <= 0 or height >= tip_height - 20)
+
+
 def _remaining_seconds(target: int | None, *, now: int) -> int:
     """Return non-negative remaining seconds until a timestamp expires."""
 
@@ -960,6 +977,47 @@ class NodeService:
                 return self._peer_diagnostics_payload(peer)
         return None
 
+    def _operational_peer_records(self, peers: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Return one best operational record per remote node id."""
+
+        tip_height = max((peer["last_known_height"] for peer in peers if isinstance(peer["last_known_height"], int)), default=0)
+        groups: dict[str, list[dict[str, object]]] = {}
+        for peer in peers:
+            node_id = peer["node_id"]
+            if isinstance(node_id, str):
+                groups.setdefault(node_id, []).append(peer)
+
+        default_port = get_network_config(self.network).default_p2p_port
+
+        def rank(peer: dict[str, object]) -> tuple[int, int, int, int, int, int, int]:
+            last_seen = peer["last_seen"] if isinstance(peer["last_seen"], int) else 0
+            height = peer["last_known_height"] if isinstance(peer["last_known_height"], int) else 0
+            return (
+                1 if peer["port"] == default_port else 0,
+                1 if peer["handshake_complete"] is True else 0,
+                1 if peer["peer_state"] == "good" else 0,
+                1 if peer["banned"] is not True else 0,
+                1 if _is_benign_peer_error(peer["last_error"]) else 0,
+                height,
+                last_seen,
+            )
+
+        operational: list[dict[str, object]] = []
+        for records in groups.values():
+            if not (
+                any(peer["port"] == default_port and _is_fresh_peer_record(peer, tip_height=tip_height) for peer in records)
+                or any(
+                    peer["handshake_complete"] is True
+                    and peer["peer_state"] == "good"
+                    and _is_fresh_peer_record(peer, tip_height=tip_height)
+                    for peer in records
+                )
+            ):
+                continue
+            canonical_records = [peer for peer in records if peer["port"] == default_port]
+            operational.append(max(canonical_records or records, key=rank))
+        return sorted(operational, key=lambda peer: (str(peer["host"]), int(peer["port"])))
+
     def peer_summary(self) -> dict[str, object]:
         """Return aggregated peer error and connectivity diagnostics."""
 
@@ -1003,7 +1061,7 @@ class NodeService:
                 by_handshake_status["incomplete"] += 1
             else:
                 by_handshake_status["unknown"] += 1
-            if isinstance(peer["backoff_until"], int) and peer["backoff_until"] > 0:
+            if isinstance(peer["backoff_remaining_seconds"], int) and peer["backoff_remaining_seconds"] > 0:
                 backoff_peers.append(peer)
             if peer["last_error_at"] is not None:
                 recent_errors.append(peer)
@@ -1030,6 +1088,18 @@ class NodeService:
         manual_peer_count = by_source.get("manual", 0)
         seed_peer_count = by_source.get("seed", 0)
         discovered_peer_count = by_source.get("discovered", 0)
+        operational_peers = self._operational_peer_records(peers)
+        operational_node_ids = {
+            peer["node_id"]
+            for peer in operational_peers
+            if isinstance(peer["node_id"], str)
+        }
+        active_backoff_peers = [
+            peer
+            for peer in backoff_peers
+            if not (isinstance(peer["node_id"], str) and peer["node_id"] in operational_node_ids)
+        ]
+        canonical_peer_count = sum(1 for peer in operational_peers if peer["port"] == get_network_config(self.network).default_p2p_port)
         peer_warnings: list[str] = []
         if not peers:
             peer_health = "empty"
@@ -1037,10 +1107,10 @@ class NodeService:
         elif non_banned_peer_count == 0:
             peer_health = "all_banned"
             peer_warnings.append("all_known_peers_banned")
-        elif backoff_peers:
+        elif active_backoff_peers:
             peer_health = "degraded"
             peer_warnings.append("backoff_peers_present")
-        elif questionable_peer_count > 0 and good_peer_count == 0:
+        elif not operational_peers and questionable_peer_count > 0 and good_peer_count == 0:
             peer_health = "degraded"
             peer_warnings.append("only_questionable_peers_visible")
         else:
@@ -1059,6 +1129,8 @@ class NodeService:
             "seed_peer_count": seed_peer_count,
             "discovered_peer_count": discovered_peer_count,
             "non_banned_peer_count": non_banned_peer_count,
+            "operational_peer_count": len(operational_peers),
+            "canonical_peer_count": canonical_peer_count,
             "backoff_peer_count": len(backoff_peers),
             "banned_peer_count": banned_peer_count,
             "backoff_peers": backoff_peers,
@@ -1066,11 +1138,14 @@ class NodeService:
             "highest_misbehavior_peer": highest_misbehavior_peer,
             "most_disconnected_peer": most_disconnected_peer,
             "most_recent_error_peer": None if not recent_errors else recent_errors[0],
+            "peer_record_count": len(peers),
             "peer_count": len(peers),
             "operator_summary": {
                 "peer_health": peer_health,
                 "non_banned_peer_count": non_banned_peer_count,
-                "active_backoff_peer_count": len(backoff_peers),
+                "operational_peer_count": len(operational_peers),
+                "canonical_peer_count": canonical_peer_count,
+                "active_backoff_peer_count": len(active_backoff_peers),
                 "active_ban_count": banned_peer_count,
                 "warnings": tuple(peer_warnings),
             },
@@ -1264,6 +1339,9 @@ class NodeService:
         reward_node_fees = self.reward_node_fee_schedule()
         handshaken_peer_count = sum(1 for peer in peers if peer.handshake_complete)
         banned_peer_count = sum(1 for peer in peers if peer.ban_until is not None and peer.ban_until > self.time_provider())
+        peer_summary = self.peer_summary()
+        operational_peer_count = int(peer_summary["operational_peer_count"])
+        canonical_peer_count = int(peer_summary["canonical_peer_count"])
         sync_status = self.sync_status()
         snapshot_anchor = self.snapshot_anchor()
         accepted_signer_pubkeys_raw = self._get_chain_meta("snapshot_accepted_signer_pubkeys")
@@ -1290,12 +1368,15 @@ class NodeService:
             "expected_next_target": self._format_target(self.expected_next_bits()),
             "cumulative_work": None if record is None else record.cumulative_work,
             "mempool_size": len(self.mempool.list_transactions()),
+            "peer_record_count": len(peers),
             "peer_count": len(peers),
+            "operational_peer_count": operational_peer_count,
+            "canonical_peer_count": canonical_peer_count,
             "handshaken_peer_count": handshaken_peer_count,
             "banned_peer_count": banned_peer_count,
             "sync": sync_status,
             "operator_summary": self._operator_status_summary(
-                peer_count=len(peers),
+                peer_count=operational_peer_count,
                 handshaken_peer_count=handshaken_peer_count,
                 banned_peer_count=banned_peer_count,
                 sync_status=sync_status,

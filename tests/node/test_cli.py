@@ -778,7 +778,7 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
             node_id="peer-a",
             score=-25,
             reconnect_attempts=2,
-            backoff_until=1_700_000_123,
+            backoff_until=9_999_999_999,
             last_error="Unexpected network magic.",
             last_error_at=1_700_000_124,
             protocol_error_class="wrong_network_magic",
@@ -830,6 +830,8 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
         assert payload["seed_peer_count"] == 0
         assert payload["discovered_peer_count"] == 0
         assert payload["non_banned_peer_count"] == 1
+        assert payload["operational_peer_count"] == 0
+        assert payload["canonical_peer_count"] == 0
         assert payload["backoff_peer_count"] == 1
         assert payload["banned_peer_count"] == 1
         assert payload["penalty_reason_counts"] == {
@@ -839,6 +841,8 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
         assert payload["operator_summary"] == {
             "peer_health": "degraded",
             "non_banned_peer_count": 1,
+            "operational_peer_count": 0,
+            "canonical_peer_count": 0,
             "active_backoff_peer_count": 1,
             "active_ban_count": 1,
             "warnings": ["backoff_peers_present"],
@@ -847,6 +851,62 @@ def test_cli_peer_summary_aggregates_error_classes_and_worst_peers() -> None:
         assert payload["worst_score_peer"]["node_id"] == "peer-a"
         assert payload["most_disconnected_peer"]["node_id"] == "peer-b"
         assert payload["most_recent_error_peer"]["node_id"] == "peer-b"
+
+
+def test_cli_peer_summary_ignores_backoff_alias_when_node_has_operational_record() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=8333,
+            source="discovered",
+            direction="outbound",
+            handshake_complete=True,
+            node_id="peer-a",
+            last_success=1_700_000_100,
+            success_count=3,
+            last_failure=1_700_000_120,
+            failure_count=5,
+            score=-100,
+            reconnect_attempts=5,
+            backoff_until=9_999_999_999,
+            last_error="Duplicate peer connection.",
+            last_error_at=1_700_000_120,
+            protocol_error_class="duplicate_connection",
+            last_known_height=3024,
+        )
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=35700,
+            source="discovered",
+            direction="inbound",
+            handshake_complete=True,
+            node_id="peer-a",
+            last_success=1_700_000_130,
+            success_count=1,
+            score=1,
+            backoff_until=0,
+            last_known_height=3024,
+        )
+
+        code, payload = _run_cli(["--data", str(db_path), "peer-summary"])
+
+        assert code == 0
+        assert payload["peer_count"] == 2
+        assert payload["peer_record_count"] == 2
+        assert payload["operational_peer_count"] == 1
+        assert payload["canonical_peer_count"] == 1
+        assert payload["backoff_peer_count"] == 1
+        assert payload["operator_summary"] == {
+            "peer_health": "ok",
+            "non_banned_peer_count": 2,
+            "operational_peer_count": 1,
+            "canonical_peer_count": 1,
+            "active_backoff_peer_count": 0,
+            "active_ban_count": 0,
+            "warnings": [],
+        }
 
 
 def test_cli_run_emits_warning_for_empty_peerbook_and_no_peers(caplog) -> None:

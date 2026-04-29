@@ -895,9 +895,13 @@ def test_http_api_peers_and_peers_summary() -> None:
         assert summary_body["peer_count_by_state"] == {"manual": 1}
         assert summary_body["good_peer_count"] == 0
         assert summary_body["non_banned_peer_count"] == 1
+        assert summary_body["operational_peer_count"] == 0
+        assert summary_body["canonical_peer_count"] == 0
         assert summary_body["operator_summary"] == {
             "peer_health": "ok",
             "non_banned_peer_count": 1,
+            "operational_peer_count": 0,
+            "canonical_peer_count": 0,
             "active_backoff_peer_count": 0,
             "active_ban_count": 0,
             "warnings": [],
