@@ -291,12 +291,14 @@ def apply_special_node_transaction(
 
     if is_register_reward_node_transaction(transaction):
         owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+        existing = registry_view.get_by_node_id(transaction.metadata["node_id"])
+        registered_height = height if existing is None else existing.registered_height
         registry_view.upsert(
             NodeRecord(
                 node_id=transaction.metadata["node_id"],
                 payout_address=transaction.metadata["payout_address"],
                 owner_pubkey=owner_pubkey,
-                registered_height=height,
+                registered_height=registered_height,
                 last_renewed_height=height,
                 node_pubkey=parse_public_key_hex(transaction.metadata["node_pubkey_hex"]),
                 declared_host=transaction.metadata["declared_host"],

@@ -519,6 +519,29 @@ def test_validate_transaction_accepts_register_reward_node_with_matching_fee_par
     assert validate_transaction(transaction, context) == 0
 
 
+def test_validate_transaction_accepts_register_reward_node_upgrade_for_same_legacy_owner() -> None:
+    owner = wallet_key(0)
+    transaction = _register_reward_node_transaction(node_id="reward-node-legacy", owner_index=0)
+    registry = InMemoryNodeRegistryView.from_records([
+        NodeRecord(
+            node_id="reward-node-legacy",
+            payout_address=owner.address,
+            owner_pubkey=owner.public_key,
+            registered_height=55,
+            last_renewed_height=2953,
+        )
+    ])
+    context = ValidationContext(
+        height=3053,
+        median_time_past=0,
+        params=MAINNET_PARAMS,
+        utxo_view=InMemoryUtxoView(),
+        node_registry_view=registry,
+    )
+
+    assert validate_transaction(transaction, context) == 0
+
+
 def test_validate_transaction_rejects_register_reward_node_with_wrong_fee_param() -> None:
     transaction = _register_reward_node_transaction(node_id="reward-node-2", fee_chipbits=123)
     context = ValidationContext(

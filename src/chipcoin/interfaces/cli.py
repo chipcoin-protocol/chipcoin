@@ -1537,9 +1537,11 @@ def _build_register_reward_node_transaction(service: NodeService, wallet_key: Wa
     """Build a signed native `register_reward_node` transaction."""
 
     signer = TransactionSigner(wallet_key)
-    if service.get_registered_node(args.node_id) is not None:
+    existing = service.get_registered_node(args.node_id)
+    if existing is not None and (existing.reward_registration or existing.owner_pubkey != wallet_key.public_key):
         raise ValueError("Node id is already registered.")
-    if service.get_registered_node_by_owner(wallet_key.public_key) is not None:
+    existing_owner = service.get_registered_node_by_owner(wallet_key.public_key)
+    if existing_owner is not None and existing_owner.node_id != args.node_id:
         raise ValueError("This wallet owner is already registered to a node.")
     return signer.build_register_reward_node_transaction(
         node_id=args.node_id,

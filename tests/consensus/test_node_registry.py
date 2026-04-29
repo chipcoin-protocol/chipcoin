@@ -193,6 +193,24 @@ def test_register_reward_node_transaction_is_special_and_updates_reward_registry
     assert record.declared_port == 18444
 
 
+def test_register_reward_node_transaction_upgrades_legacy_node_registration() -> None:
+    registry = InMemoryNodeRegistryView()
+    legacy_transaction = _register_node_transaction(node_id="reward-node-legacy")
+    apply_special_node_transaction(legacy_transaction, height=55, registry_view=registry)
+    reward_transaction = _register_reward_node_transaction(node_id="reward-node-legacy")
+
+    apply_special_node_transaction(reward_transaction, height=3053, registry_view=registry)
+
+    record = registry.get_by_node_id("reward-node-legacy")
+    assert record is not None
+    assert record.registered_height == 55
+    assert record.last_renewed_height == 3053
+    assert record.reward_registration is True
+    assert record.node_pubkey is not None
+    assert record.declared_host == "reward-node-legacy.example"
+    assert record.declared_port == 18444
+
+
 def test_renew_reward_node_transaction_preserves_reward_registration_and_updates_endpoint() -> None:
     registry = InMemoryNodeRegistryView()
     register_transaction = _register_reward_node_transaction(node_id="reward-node-2")

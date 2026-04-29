@@ -417,12 +417,15 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
 
     if is_register_reward_node_transaction(transaction):
         node_id = transaction.metadata["node_id"]
-        if context.node_registry_view.get_by_node_id(node_id) is not None:
+        existing_node = context.node_registry_view.get_by_node_id(node_id)
+        if existing_node is not None and (existing_node.reward_registration or existing_node.owner_pubkey != owner_pubkey):
             raise ContextualValidationError("register_reward_node transaction reuses an existing node_id.")
-        if context.node_registry_view.get_by_owner_pubkey(owner_pubkey) is not None:
+        existing_owner = context.node_registry_view.get_by_owner_pubkey(owner_pubkey)
+        if existing_owner is not None and existing_owner.node_id != node_id:
             raise ContextualValidationError("register_reward_node transaction reuses an existing owner_pubkey.")
         node_pubkey = bytes.fromhex(transaction.metadata["node_pubkey_hex"])
-        if _find_registry_record_by_node_pubkey(context.node_registry_view, node_pubkey) is not None:
+        existing_node_pubkey = _find_registry_record_by_node_pubkey(context.node_registry_view, node_pubkey)
+        if existing_node_pubkey is not None and existing_node_pubkey.node_id != node_id:
             raise ContextualValidationError("register_reward_node transaction reuses an existing node_pubkey.")
         expected_fee = register_reward_node_fee_chipbits(
             registered_reward_node_count=fee_registry_count,
