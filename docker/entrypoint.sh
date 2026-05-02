@@ -346,6 +346,8 @@ run_node() {
     --read-timeout-seconds "${P2P_READ_TIMEOUT_SECONDS:-15.0}" \
     --write-timeout-seconds "${P2P_WRITE_TIMEOUT_SECONDS:-15.0}" \
     --handshake-timeout-seconds "${P2P_HANDSHAKE_TIMEOUT_SECONDS:-5.0}" \
+    --mempool-relay-interval-seconds "${MEMPOOL_RELAY_INTERVAL_SECONDS:-1.0}" \
+    --sync-scheduler-interval-seconds "${SYNC_SCHEDULER_INTERVAL_SECONDS:-1.0}" \
     --peer-discovery-enabled "${PEER_DISCOVERY_ENABLED:-true}" \
     --peerbook-max-size "${PEERBOOK_MAX_SIZE:-1024}" \
     --peer-addr-max-per-message "${PEER_ADDR_MAX_PER_MESSAGE:-250}" \

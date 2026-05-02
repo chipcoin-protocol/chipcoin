@@ -153,7 +153,7 @@ class NodeRuntime:
     """Long-running TCP runtime coordinating peer sessions and sync."""
 
     _SYNC_PROGRESS_LOG_INTERVAL = 100
-    _SYNC_SCHEDULER_INTERVAL = 0.25
+    _SYNC_SCHEDULER_INTERVAL = 1.0
     _INITIAL_SYNC_STALL_GRACE_MULTIPLIER = 2.0
     _SEVERE_MISBEHAVIOR_DELTA = 100
     _BLOCK_STALL_DISCONNECT_THRESHOLD = 2
@@ -170,7 +170,8 @@ class NodeRuntime:
         read_timeout: float = 15.0,
         write_timeout: float = 15.0,
         handshake_timeout: float = 5.0,
-        mempool_relay_interval: float = 0.25,
+        mempool_relay_interval: float = 1.0,
+        sync_scheduler_interval: float = 1.0,
         max_connect_backoff_seconds: float = 30.0,
         max_consecutive_ping_failures: int = 3,
         max_inventory_items: int = 500,
@@ -215,7 +216,8 @@ class NodeRuntime:
         self.write_timeout = write_timeout
         self.handshake_timeout = handshake_timeout
         self.ping_interval = ping_interval if ping_interval < read_timeout else max(0.5, read_timeout / 2)
-        self.mempool_relay_interval = max(0.05, mempool_relay_interval)
+        self.mempool_relay_interval = max(0.1, mempool_relay_interval)
+        self.sync_scheduler_interval = max(0.1, sync_scheduler_interval)
         self.max_connect_backoff_seconds = max(1.0, max_connect_backoff_seconds)
         self.max_consecutive_ping_failures = max(1, max_consecutive_ping_failures)
         self.max_inventory_items = max_inventory_items
@@ -1228,6 +1230,14 @@ class NodeRuntime:
             try:
                 accepted = self.service.receive_transaction(message.payload.transaction)
             except ValidationError as exc:
+                if self._is_benign_tx_relay_error(exc):
+                    self.logger.debug(
+                        "tx relay ignored peer=%s txid=%s reason=%s",
+                        self._format_peer_for_logs(session),
+                        message.payload.transaction.txid(),
+                        exc,
+                    )
+                    return
                 self._apply_session_penalty(session, error=InvalidTxError(f"invalid tx: {exc}"), penalty=5)
                 return
             self.logger.info(
@@ -1340,7 +1350,7 @@ class NodeRuntime:
             except Exception as exc:  # noqa: BLE001
                 self.logger.debug("sync scheduler loop failed: %s", exc)
             self._update_sync_status()
-            await asyncio.sleep(self._SYNC_SCHEDULER_INTERVAL)
+            await asyncio.sleep(self.sync_scheduler_interval)
 
     async def _drive_header_sync(self) -> None:
         """Request headers from a bounded set of suitable peers."""
@@ -2628,6 +2638,15 @@ class NodeRuntime:
         count = handle.announced_inventory_counts.get(key, 0) + 1
         handle.announced_inventory_counts[key] = count
         return count > self.duplicate_inventory_limit
+
+    def _is_benign_tx_relay_error(self, error: Exception | str) -> bool:
+        """Return whether a relayed transaction failed only because it was already known."""
+
+        text = str(error)
+        return (
+            "Transaction is already present in the mempool" in text
+            or "reward_attestation_bundle replays an attestation already recorded on chain" in text
+        )
 
     def _next_backoff_state(self, info) -> tuple[int, int]:
         """Return reconnect attempts and absolute backoff deadline for one peer."""

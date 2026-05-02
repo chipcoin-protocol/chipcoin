@@ -20,7 +20,7 @@ from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
-from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress
+from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress, TransactionMessage
 from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
 from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
@@ -1802,6 +1802,47 @@ def test_runtime_rejects_invalid_headers_message(monkeypatch) -> None:
             assert dropped == [session]
 
     close_calls: list[tuple[str | None, Exception | None]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_ignores_duplicate_mempool_transaction_relay(monkeypatch) -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 1})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = False
+        state = _FakeSessionState()
+        transport = None
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            funding_outpoint = OutPoint(txid="12" * 32, index=0)
+            put_wallet_utxo(service, funding_outpoint, value=100, owner=wallet_key(0))
+            transaction = _spend_transaction(funding_outpoint, input_value=100, output_value=90)
+            service.receive_transaction(transaction)
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(
+                protocol=session,  # type: ignore[arg-type]
+                outbound=True,
+                endpoint=OutboundPeer("node-a", 18444),
+            )
+            penalties: list[int] = []
+            runtime._apply_session_penalty = lambda _session, *, error, penalty: penalties.append(penalty)  # type: ignore[method-assign]
+
+            await runtime._on_peer_message(
+                session,  # type: ignore[arg-type]
+                MessageEnvelope(command="tx", payload=TransactionMessage(transaction=transaction)),
+            )
+
+            assert penalties == []
+            assert service.list_mempool_transactions() == [transaction]
+
     asyncio.run(scenario())
 
 
