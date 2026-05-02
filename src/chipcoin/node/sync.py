@@ -109,11 +109,17 @@ class SyncManager:
         record = self.best_header_record()
         return None if record is None else record.block_hash
 
+    def has_pending_block_downloads(self) -> bool:
+        """Return whether block download scheduling can advance the active chain."""
+
+        best_tip = self.best_header_record()
+        return best_tip is not None and self._best_header_needs_blocks(best_tip)
+
     def missing_blocks_for_best_tip(self) -> tuple[str, ...]:
         """Return missing blocks for the strongest known header tip."""
 
         best_tip = self.best_header_record()
-        if best_tip is None:
+        if best_tip is None or not self._best_header_needs_blocks(best_tip):
             return ()
         return self.missing_blocks_for_tip(best_tip.block_hash)
 
@@ -122,7 +128,7 @@ class SyncManager:
 
         validated_tip = self.node.chain_tip()
         best_header = self.best_header_record()
-        missing = self.missing_blocks_for_best_tip()
+        missing = () if best_header is None or not self._best_header_needs_blocks(best_header) else self.missing_blocks_for_tip(best_header.block_hash)
         queued_missing = tuple(block_hash for block_hash in missing if block_hash not in self._inflight_blocks)
         snapshot_anchor = self.node.snapshot_anchor()
         local_height = None if validated_tip is None else validated_tip.height
@@ -283,7 +289,10 @@ class SyncManager:
 
         if not peer_ids:
             return ()
-        missing_blocks = self.missing_blocks_for_best_tip()
+        best_tip = self.best_header_record()
+        if best_tip is None or not self._best_header_needs_blocks(best_tip):
+            return ()
+        missing_blocks = self.missing_blocks_for_tip(best_tip.block_hash)
         if not missing_blocks:
             return ()
         max_window_size = max(1, max_window_size)
@@ -340,7 +349,10 @@ class SyncManager:
     def block_download_window_end_height(self, *, max_window_size: int) -> int | None:
         """Return the highest header height inside the current block download window."""
 
-        missing_blocks = self.missing_blocks_for_best_tip()
+        best_tip = self.best_header_record()
+        if best_tip is None or not self._best_header_needs_blocks(best_tip):
+            return None
+        missing_blocks = self.missing_blocks_for_tip(best_tip.block_hash)
         if not missing_blocks:
             return None
         window_hashes = missing_blocks[: max(1, max_window_size)]
@@ -348,6 +360,17 @@ class SyncManager:
             return None
         last_record = self.node.headers.get_record(window_hashes[-1])
         return None if last_record is None else int(last_record.height)
+
+    def _best_header_needs_blocks(self, best_tip) -> bool:
+        """Return whether the best header chain can improve the active chain."""
+
+        current_tip = self.node.chain_tip()
+        if current_tip is None:
+            return True
+        current_record = self.node.headers.get_record(current_tip.block_hash)
+        current_work = 0 if current_record is None or current_record.cumulative_work is None else current_record.cumulative_work
+        best_work = 0 if best_tip.cumulative_work is None else best_tip.cumulative_work
+        return best_work > current_work
 
     def expire_block_requests(self, *, now: float) -> tuple[BlockRequestState, ...]:
         """Expire overdue block requests so they can be reassigned."""

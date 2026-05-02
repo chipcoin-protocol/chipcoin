@@ -1400,6 +1400,11 @@ def test_runtime_dispatches_block_downloads_across_multiple_peers(monkeypatch) -
             )
             monkeypatch.setattr(
                 runtime.sync_manager,
+                "has_pending_block_downloads",
+                lambda: True,
+            )
+            monkeypatch.setattr(
+                runtime.sync_manager,
                 "reserve_block_downloads",
                 lambda **_kwargs: (
                     BlockDownloadAssignment(block_hash="aa" * 32, peer_id="peer-a", deadline_at=10.0, attempt=1),

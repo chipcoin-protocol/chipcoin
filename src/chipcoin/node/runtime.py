@@ -1407,11 +1407,13 @@ class NodeRuntime:
     async def _dispatch_block_downloads(self) -> None:
         """Assign block downloads across multiple healthy peers."""
 
+        now = asyncio.get_running_loop().time()
+        if not self.sync_manager.has_pending_block_downloads():
+            return
         sessions = self._eligible_block_download_sessions()
         if not sessions:
             return
         peer_ids = tuple(self._sync_peer_id(session) for session in sessions)
-        now = asyncio.get_running_loop().time()
         assignments = self.sync_manager.reserve_block_downloads(
             peer_ids=peer_ids,
             max_window_size=self.block_download_window_size,

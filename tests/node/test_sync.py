@@ -198,6 +198,32 @@ def test_sync_manager_schedules_parallel_block_download_window() -> None:
         assert sum(1 for assignment in assignments if assignment.peer_id == "peer-b") == 2
 
 
+def test_sync_manager_skips_missing_block_scan_when_best_header_is_active_tip(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "node.sqlite3", start_time=1_700_000_000)
+        _mine_chain(service, 3, "CHCminer-source")
+        manager = SyncManager(node=service)
+
+        def fail_path_to_root(_tip_hash: str):
+            raise AssertionError("synced scheduler must not scan the active chain path")
+
+        monkeypatch.setattr(service.headers, "path_to_root", fail_path_to_root)
+
+        status = manager.sync_status()
+        assignments = manager.reserve_block_downloads(
+            peer_ids=("peer-a",),
+            max_window_size=4,
+            max_inflight_per_peer=2,
+            timeout_seconds=5.0,
+            now=100.0,
+        )
+
+        assert status["mode"] == "synced"
+        assert status["missing_block_count"] == 0
+        assert manager.block_download_window_end_height(max_window_size=4) is None
+        assert assignments == ()
+
+
 def test_sync_manager_reassigns_expired_block_requests() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
