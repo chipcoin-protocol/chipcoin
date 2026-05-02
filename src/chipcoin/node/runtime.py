@@ -17,9 +17,9 @@ from wsgiref.simple_server import make_server
 
 from .. import __version__
 from ..config import get_network_config
-from ..consensus.epoch_settlement import RewardAttestation
+from ..consensus.epoch_settlement import RewardAttestation, attestation_identity, parse_reward_attestation_bundle_metadata
 from ..consensus.models import Transaction
-from ..consensus.nodes import current_epoch
+from ..consensus.nodes import current_epoch, reward_node_is_active
 from ..crypto.keys import parse_private_key_hex
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..interfaces.http_api import HttpApiApp, ThreadingWSGIServer, load_allowed_origins_from_env
@@ -564,15 +564,14 @@ class NodeRuntime:
         next_height = 0 if tip is None else tip.height + 1
         if next_height < self.service.params.node_reward_activation_height:
             return
-        status = self.service.reward_node_status(node_id=self.reward_automation.node_id, epoch_index=current_epoch_index)
-        if not bool(status.get("selected_epoch_active")):
-            return
         record = self.service.get_registered_node(self.reward_automation.node_id)
-        if record is None or record.node_pubkey is None:
+        if record is None or not record.reward_registration or record.node_pubkey is None:
+            return
+        if not reward_node_is_active(record, height=next_height, params=self.service.params):
             return
         if record.node_pubkey != self._reward_attest_wallet.public_key:
             raise ValueError(f"attestation wallet does not match reward node node_pubkey for node_id={record.node_id}")
-        recorded_identities = self.service.reward_attestations.attestation_identities()
+        recorded_identities = self._known_reward_attestation_identities(current_epoch_index)
         assignments = self.service.native_reward_assignments(epoch_index=current_epoch_index)
         selected_candidates_by_window: dict[int, str] = {}
         for assignment in assignments:
@@ -652,6 +651,27 @@ class NodeRuntime:
                 transaction.txid(),
             )
             return
+
+    def _known_reward_attestation_identities(self, epoch_index: int) -> set[tuple[int, int, str, str]]:
+        """Return attestation identities already stored on-chain or staged in mempool."""
+
+        identities = {
+            identity
+            for identity in self.service.reward_attestations.attestation_identities()
+            if identity[0] == epoch_index
+        }
+        for transaction in self.service.list_mempool_transactions():
+            if transaction.metadata.get("kind") != "reward_attestation_bundle":
+                continue
+            try:
+                bundle = parse_reward_attestation_bundle_metadata(transaction.metadata)
+            except ValueError:
+                continue
+            for attestation in bundle.attestations:
+                identity = attestation_identity(attestation)
+                if identity[0] == epoch_index:
+                    identities.add(identity)
+        return identities
 
     def _build_reward_attestation_bundle_transaction(
         self,

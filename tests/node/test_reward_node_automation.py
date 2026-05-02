@@ -166,3 +166,51 @@ def test_reward_node_automation_auto_attests_and_enables_settlement() -> None:
         inspect = service.inspect_block(block_hash=closing_block.block_hash())
         assert inspect is not None
         assert inspect["node_reward_payouts"]
+
+
+def test_reward_node_automation_skips_attestations_already_staged_in_mempool() -> None:
+    with TemporaryDirectory() as tempdir:
+        reward_a = wallet_key(0)
+        reward_b = wallet_key(1)
+        service = _make_reward_service(Path(tempdir) / "node.sqlite3", start_time=1_700_070_000)
+        reward_a_path = _write_wallet_file(Path(tempdir) / "reward-a.json", reward_a)
+
+        _register_reward_node(service, wallet=reward_a, node_id="reward-node-a", declared_port=18444)
+        _register_reward_node(service, wallet=reward_b, node_id="reward-node-b", declared_port=18445)
+        _apply_candidate_block(service, reward_a.address)
+
+        first_runtime = NodeRuntime(
+            service=service,
+            reward_automation=RewardNodeAutomationConfig(
+                node_id="reward-node-a",
+                owner_wallet_path=reward_a_path,
+                attest_wallet_path=reward_a_path,
+                poll_interval_seconds=0.05,
+            ),
+        )
+        asyncio.run(first_runtime._run_reward_automation_once())
+        first_attestation_txs = [
+            tx for tx in service.list_mempool_transactions() if tx.metadata.get("kind") == "reward_attestation_bundle"
+        ]
+        assert first_attestation_txs
+
+        restarted_runtime = NodeRuntime(
+            service=service,
+            reward_automation=RewardNodeAutomationConfig(
+                node_id="reward-node-a",
+                owner_wallet_path=reward_a_path,
+                attest_wallet_path=reward_a_path,
+                poll_interval_seconds=0.05,
+            ),
+        )
+
+        def fail_reward_status(*_args, **_kwargs):
+            raise AssertionError("auto-attest should not build full reward node status")
+
+        service.reward_node_status = fail_reward_status  # type: ignore[method-assign]
+        asyncio.run(restarted_runtime._run_reward_automation_once())
+
+        attestation_txs = [
+            tx for tx in service.list_mempool_transactions() if tx.metadata.get("kind") == "reward_attestation_bundle"
+        ]
+        assert [tx.txid() for tx in attestation_txs] == [tx.txid() for tx in first_attestation_txs]
