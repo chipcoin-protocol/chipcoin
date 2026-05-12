@@ -3370,18 +3370,9 @@ class NodeService:
         return None
 
     def _known_confirmed_transaction_ids(self) -> set[str]:
-        """Return transaction ids known to be available from chain history or current UTXOs."""
+        """Return confirmed parent txids that can still back mempool inputs."""
 
-        txids: set[str] = set()
-        tip = self.chain_tip()
-        if tip is not None:
-            for height in range(tip.height + 1):
-                block = self.get_block_by_height(height)
-                if block is None:
-                    continue
-                txids.update(transaction.txid() for transaction in block.transactions)
-        txids.update(outpoint.txid for outpoint, _entry in self.chainstate.list_utxos())
-        return txids
+        return {outpoint.txid for outpoint, _entry in self.chainstate.list_utxos()}
 
     def _expected_bits_for_height(self, height: int) -> int:
         """Return the required compact target for a candidate block height."""
