@@ -899,7 +899,7 @@ Required for public peer reachability:
 
 Optional operator interfaces:
 
-- `TCP 8081` for the HTTP API
+- `TCP 8081` for the HTTP API; Docker Compose binds it to `127.0.0.1` by default, so publish it through a reverse proxy if it must be public.
 - `TCP 4173` for an explorer, if you run one
 
 Nodes that do not expose `TCP 18444` can still make outbound connections and sync normally, but they contribute less to peer discovery and network resilience because other peers cannot reliably initiate sessions back to them.

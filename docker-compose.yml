@@ -68,7 +68,7 @@ services:
       BOOTSTRAP_URL: ${BOOTSTRAP_URL-__CHIPCOIN_UNSET__}
     ports:
       - "${NODE_P2P_BIND_PORT}:${NODE_P2P_BIND_PORT}"
-      - "${NODE_HTTP_BIND_PORT}:${NODE_HTTP_BIND_PORT}"
+      - "${NODE_HTTP_PUBLISH_HOST:-127.0.0.1}:${NODE_HTTP_BIND_PORT}:${NODE_HTTP_BIND_PORT}"
     volumes:
       - type: bind
         source: ${CHIPCOIN_RUNTIME_DIR}

@@ -64,7 +64,7 @@ For public peer reachability and better network resilience, the important port i
 
 Optional ports:
 
-- `TCP 8081` for the HTTP API
+- `TCP 8081` for the HTTP API; keep it localhost-only unless it is protected by a reverse proxy
 - `TCP 4173` for an explorer, if you run one
 
 Opening `TCP 18444` is strongly recommended for operators who want to contribute a publicly reachable peer, but it is not mandatory for every user. Home setups may require both firewall allowance and router port forwarding, and some NAT environments may still prevent reliable inbound reachability.

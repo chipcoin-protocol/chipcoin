@@ -482,6 +482,7 @@ For best network health, operators should:
 - ensure the announced endpoint is publicly reachable from outside the local network
 
 The HTTP/API port (`8081`) and explorer port (`4173`) are optional operator interfaces. They are not required for basic P2P participation.
+In the default Docker Compose stack, the HTTP/API port is published on `127.0.0.1` only; expose it publicly through a reverse proxy such as Apache/Nginx if needed.
 
 ### Create A Miner Wallet
 
@@ -671,7 +672,7 @@ services:
   node:
     ports:
       - "18444:18444"
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
 
   miner:
     ports:
