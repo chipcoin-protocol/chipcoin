@@ -467,7 +467,7 @@ class SyncManager:
                 block_hash=block_hash,
                 activated_tip=activation.activated_tip,
                 reorged=activation.reorged,
-                accepted_blocks=1 + accepted_blocks,
+                accepted_blocks=accepted_blocks,
                 reorg_depth=activation.reorg_depth,
                 old_tip=activation.old_tip,
                 new_tip=activation.new_tip,

@@ -270,6 +270,46 @@ def test_sync_manager_activates_best_contiguous_prefix_before_full_tip_is_availa
         assert target.chain_tip().block_hash == blocks[1].block_hash()
 
 
+def test_sync_manager_duplicate_known_block_does_not_count_as_newly_accepted() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        block = _mine_chain(source, 1, "CHCminer-source")[0]
+        manager = SyncManager(node=target)
+
+        first = manager.receive_block(block)
+        duplicate = manager.receive_block(block)
+
+        assert first.accepted_blocks == 1
+        assert duplicate.accepted_blocks == 0
+        assert duplicate.activated_tip == block.block_hash()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == block.block_hash()
+
+
+def test_sync_manager_stores_competing_same_height_block_without_activating_tip() -> None:
+    with TemporaryDirectory() as tempdir:
+        node_a = _make_service(Path(tempdir) / "node-a.sqlite3", start_time=1_700_000_000)
+        node_b = _make_service(Path(tempdir) / "node-b.sqlite3", start_time=1_700_001_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_002_000)
+        main_block = _mine_chain(node_a, 1, "CHCminer-main")[0]
+        side_block = _mine_chain(node_b, 1, "CHCminer-side")[0]
+        assert main_block.header.previous_block_hash == side_block.header.previous_block_hash
+        assert main_block.block_hash() != side_block.block_hash()
+        manager = SyncManager(node=target)
+
+        main_result = manager.receive_block(main_block)
+        side_result = manager.receive_block(side_block)
+
+        assert main_result.activated_tip == main_block.block_hash()
+        assert side_result.accepted_blocks == 1
+        assert side_result.activated_tip == main_block.block_hash()
+        assert side_result.reorged is False
+        assert target.get_block_by_hash(side_block.block_hash()) == side_block
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == main_block.block_hash()
+
+
 def test_service_retargets_difficulty_every_thousand_blocks() -> None:
     with TemporaryDirectory() as tempdir:
         timestamps = iter(range(1_700_000_000, 1_700_010_500))

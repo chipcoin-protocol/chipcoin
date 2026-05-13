@@ -2393,27 +2393,37 @@ class NodeRuntime:
 
         local_tip = self.service.chain_tip()
         local_height = None if local_tip is None else local_tip.height
+        if reorged:
+            event = "reorg applied"
+        elif result.accepted_blocks == 0:
+            event = "block already known"
+        elif result.block_hash == result.activated_tip:
+            event = "block applied"
+        else:
+            event = "side branch stored"
         if self._sync_in_progress(session):
             self.logger.debug(
-                "%s peer=%s height=%s block=%s activated_tip=%s accepted_blocks=%s",
-                "reorg applied" if reorged else "block applied",
+                "%s peer=%s height=%s block=%s activated_tip=%s accepted_blocks=%s reorged=%s",
+                event,
                 self._format_peer_for_logs(session),
                 local_height,
                 result.block_hash,
                 result.activated_tip,
                 result.accepted_blocks,
+                result.reorged,
             )
             self._log_sync_progress(session)
             return
 
         self.logger.info(
-            "%s peer=%s height=%s block=%s activated_tip=%s accepted_blocks=%s",
-            "reorg applied" if reorged else "block applied",
+            "%s peer=%s height=%s block=%s activated_tip=%s accepted_blocks=%s reorged=%s",
+            event,
             self._format_peer_for_logs(session),
             local_height,
             result.block_hash,
             result.activated_tip,
             result.accepted_blocks,
+            result.reorged,
         )
         self._log_sync_progress(session, force=True)
 

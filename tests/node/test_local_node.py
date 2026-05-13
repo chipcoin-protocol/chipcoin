@@ -1706,6 +1706,40 @@ def test_runtime_logs_applied_block_height(caplog) -> None:
         assert "block applied peer=127.0.0.1:18444/peer-a height=0" in caplog.text
 
 
+def test_runtime_logs_side_branch_stored_distinctly(caplog) -> None:
+    class _FakeSessionState:
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 0})()
+
+    class _FakeSession:
+        state = _FakeSessionState()
+
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service)
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("127.0.0.1", 18444),
+        )
+        main_block = _mine_block(service.build_candidate_block("miner-main").block)
+        service.apply_block(main_block)
+        side_result = BlockIngestResult(
+            block_hash="11" * 32,
+            activated_tip=main_block.block_hash(),
+            reorged=False,
+            accepted_blocks=1,
+        )
+
+        with caplog.at_level(logging.INFO):
+            runtime._log_block_application(session, side_result, reorged=False)
+
+        assert "side branch stored peer=127.0.0.1:18444/peer-a height=0" in caplog.text
+        assert f"activated_tip={main_block.block_hash()}" in caplog.text
+        assert "accepted_blocks=1" in caplog.text
+        assert "reorged=False" in caplog.text
+
+
 def test_runtime_does_not_classify_post_handshake_timeouts_as_misbehavior() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
