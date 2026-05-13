@@ -1089,6 +1089,11 @@ class NodeRuntime:
                 )
                 await self._request_headers(session)
                 return
+            observed_header_height = None
+            if message.payload.headers:
+                header_record = self.service.headers.get_record(message.payload.headers[-1].block_hash())
+                observed_header_height = None if header_record is None else int(header_record.height)
+            self._record_session_known_height(session, observed_header_height)
             if ingest.missing_block_hashes:
                 self._begin_sync_tracking(
                     session,
@@ -1161,6 +1166,13 @@ class NodeRuntime:
                 return
             block_requests = [item.object_hash for item in message.payload.items if item.object_type == "block"]
             tx_requests = sum(1 for item in message.payload.items if item.object_type == "tx")
+            requested_heights = [
+                int(record.height)
+                for block_hash in block_requests
+                for record in [self.service.headers.get_record(block_hash)]
+                if record is not None
+            ]
+            self._record_session_known_height(session, max(requested_heights, default=None))
             served_blocks = 0
             served_txs = 0
             for item in message.payload.items:
@@ -1203,6 +1215,8 @@ class NodeRuntime:
                 await session.close(reason=str(typed_error), error=typed_error)
                 await self._drop_session(session)
                 return
+            record = self.service.headers.get_record(result.block_hash)
+            self._record_session_known_height(session, None if record is None else int(record.height))
             self._clear_inflight_block_hash(result.block_hash)
             handle = self._sessions.get(session)
             if handle is not None:
@@ -2538,6 +2552,43 @@ class NodeRuntime:
         existing = self._known_peer_info(host, port)
         current = 0 if existing is None or existing.score is None else existing.score
         return max(-100, min(100, current + delta))
+
+    def _record_session_known_height(self, session: PeerProtocol, height: int | None) -> None:
+        """Persist the best height recently observed for an active peer session."""
+
+        if height is None or height < 0:
+            return
+        handle = self._sessions.get(session)
+        endpoint = self._session_endpoint(session, handle)
+        if endpoint is None:
+            return
+        info = self._known_peer_info(endpoint.host, endpoint.port)
+        existing_height = None if info is None else info.last_known_height
+        if isinstance(existing_height, int) and existing_height >= height:
+            return
+        remote = session.state.remote_version
+        now = self.service.time_provider()
+        self.service.record_peer_observation(
+            host=endpoint.host,
+            port=endpoint.port,
+            source=None if info is None else info.source,
+            direction=None if handle is None else ("outbound" if handle.outbound else "inbound"),
+            handshake_complete=True if session.state.handshake_complete else session.state.handshake_complete,
+            last_success=now if session.state.handshake_complete else None,
+            success_count=None if info is None else info.success_count,
+            last_known_height=height,
+            node_id=(remote.node_id if remote is not None else (None if info is None else info.node_id)),
+            score=None if info is None else info.score,
+            reconnect_attempts=None if info is None else info.reconnect_attempts,
+            backoff_until=0 if session.state.handshake_complete else (None if info is None else info.backoff_until),
+            disconnect_count=None if info is None else info.disconnect_count,
+            session_started_at=None if info is None else info.session_started_at,
+            misbehavior_score=None if info is None else info.misbehavior_score,
+            misbehavior_last_updated_at=None if info is None else info.misbehavior_last_updated_at,
+            ban_until=None if info is None else info.ban_until,
+            last_penalty_reason=None if info is None else info.last_penalty_reason,
+            last_penalty_at=None if info is None else info.last_penalty_at,
+        )
 
     def _is_backoff_active(self, peer: OutboundPeer) -> bool:
         """Return whether an outbound peer is still under reconnect backoff."""

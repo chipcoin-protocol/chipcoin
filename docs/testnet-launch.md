@@ -1,15 +1,19 @@
-# Testnet Dry-Run
+# Testnet Launch Notes
 
-This page documents the current testnet boundary only. It is not a public
-testnet launch runbook yet.
+This page documents the current testnet boundary. Devnet remains active as the
+fallback public environment until testnet operations and diagnostics are refined.
 
 The repository now contains a separate `testnet` network profile with:
 
-- P2P port `28444`
-- suggested local HTTP port `28081`
+- public P2P port `28444`
+- local-only HTTP port `28081`
 - data file `chipcoin-testnet.sqlite3`
 - distinct network magic bytes
 - consensus params separate from devnet
+
+The node HTTP API must remain bound to `127.0.0.1`; expose it externally only
+through an intentional reverse proxy. Public firewall/router rules should expose
+only the testnet P2P port `28444/tcp`.
 
 No public testnet bootstrap peer, snapshot manifest, explorer, faucet, or
 snapshot publisher is configured yet.
@@ -37,6 +41,7 @@ CHIPCOIN_NETWORK=testnet
 NODE_DATA_PATH=/var/lib/chipcoin/data/node-testnet.sqlite3
 NODE_P2P_BIND_PORT=28444
 NODE_HTTP_BIND_PORT=28081
+NODE_HTTP_PUBLISH_HOST=127.0.0.1
 NODE_DIRECT_PEERS=
 NODE_BOOTSTRAP_URL=
 NODE_SNAPSHOT_MANIFEST_URLS=
@@ -63,7 +68,14 @@ inside the same Compose project:
 
 ```dotenv
 MINING_NODE_URLS=http://node:28081
+MINING_MIN_INTERVAL_SECONDS=10.0
+MINING_NONCE_BATCH_SIZE=50000
 ```
+
+These miner defaults are intentionally conservative for public multi-node
+testnet operation. Avoid one-to-two-second block production in normal testnet
+runs because it creates avoidable fork churn and slower convergence on weaker
+nodes.
 
 Then run:
 
@@ -79,6 +91,8 @@ other node's explicit testnet P2P endpoint:
 ```dotenv
 CHIPCOIN_NETWORK=testnet
 NODE_P2P_BIND_PORT=28444
+NODE_HTTP_BIND_PORT=28081
+NODE_HTTP_PUBLISH_HOST=127.0.0.1
 NODE_DIRECT_PEERS=other-testnet-host.example:28444
 NODE_BOOTSTRAP_URL=
 NODE_SNAPSHOT_MANIFEST_URLS=

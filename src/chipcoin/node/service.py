@@ -218,6 +218,22 @@ def _is_fresh_peer_record(peer: dict[str, object], *, tip_height: int) -> bool:
     return isinstance(height, int) and (tip_height <= 0 or height >= tip_height - 20)
 
 
+def _has_active_sync_debt(sync_status: dict[str, object]) -> bool:
+    """Return whether sync state still has work that stalled peers can affect."""
+
+    validated_tip_height = sync_status.get("validated_tip_height")
+    best_header_height = sync_status.get("best_header_height")
+    missing_block_count = sync_status.get("missing_block_count")
+    queued_block_count = sync_status.get("queued_block_count")
+    inflight_block_count = sync_status.get("inflight_block_count")
+    if isinstance(best_header_height, int) and isinstance(validated_tip_height, int) and best_header_height > validated_tip_height:
+        return True
+    return any(
+        isinstance(value, int) and value > 0
+        for value in (missing_block_count, queued_block_count, inflight_block_count)
+    )
+
+
 def _remaining_seconds(target: int | None, *, now: int) -> int:
     """Return non-negative remaining seconds until a timestamp expires."""
 
@@ -1837,7 +1853,7 @@ class NodeService:
             warnings.append("header_tip_ahead_of_validated_tip")
         if isinstance(missing_block_count, int) and missing_block_count > 0:
             warnings.append("missing_blocks_for_best_header")
-        if isinstance(stalled_peers, tuple) and stalled_peers:
+        if isinstance(stalled_peers, tuple) and stalled_peers and _has_active_sync_debt(sync_status):
             warnings.append("stalled_peers_present")
         warnings.extend(snapshot_trust_warnings)
         return {

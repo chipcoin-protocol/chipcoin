@@ -55,9 +55,12 @@ When `testnet` is selected, quick mode is intentionally local/manual only:
 
 - node endpoint: `http://127.0.0.1:28081`
 - P2P port: `28444`
+- HTTP port: `28081`, published on `127.0.0.1` only
 - bootstrap peer: empty
 - snapshot manifest URL: empty
 - explorer URL: empty
+- miner minimum block interval: `10.0` seconds
+- miner nonce batch size: `50000`
 
 There is no public testnet bootstrap, snapshot publisher, faucet, or explorer in
 this repository step. See `docs/testnet-launch.md` for the manual dry-run flow.
@@ -90,6 +93,7 @@ After you choose your node setup, keep this practical distinction in mind:
 - publicly reachable nodes are strongly preferred for network health
 - when possible, open and forward the selected network P2P port so other peers can reach your node
 - devnet uses `TCP 18444`; testnet dry-runs use `TCP 28444`
+- do not expose the HTTP API port directly; keep it bound to `127.0.0.1` and use a reverse proxy only when intentional
 
 The wizard does not require public exposure, but public reachability is the main way an operator contributes an additional resilient peer to the mesh.
 
@@ -233,6 +237,7 @@ Wizard defaults by operator mode:
 - testnet dry-run
   - node starts isolated unless manual peers are provided
   - miner uses `http://node:28081` inside the same Compose project
+  - miner uses conservative public-testnet defaults to avoid one-to-two-second block production
 - miner-only host
   - miner uses `https://api.chipcoinprotocol.com`
 - local/self-hosted node + miner

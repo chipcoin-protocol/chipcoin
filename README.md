@@ -484,6 +484,10 @@ For best network health, operators should:
 The HTTP/API port (`8081`) and explorer port (`4173`) are optional operator interfaces. They are not required for basic P2P participation.
 In the default Docker Compose stack, the HTTP/API port is published on `127.0.0.1` only; expose it publicly through a reverse proxy such as Apache/Nginx if needed.
 
+Testnet uses a separate public P2P port, `TCP 28444`, and local-only HTTP port
+`28081`. Keep testnet HTTP bound to `127.0.0.1`; public firewall rules should
+open only the P2P port unless you intentionally add a reverse proxy.
+
 ### Create A Miner Wallet
 
 ```bash

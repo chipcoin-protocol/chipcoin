@@ -21,7 +21,7 @@ from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
-from chipcoin.node.messages import AddrMessage, HeadersMessage, MessageEnvelope, PeerAddress, TransactionMessage
+from chipcoin.node.messages import AddrMessage, GetDataMessage, HeadersMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
 from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
 from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
@@ -81,6 +81,83 @@ def test_node_service_opens_devnet_with_devnet_params() -> None:
 
         assert service.network == "devnet"
         assert service.params == DEVNET_PARAMS
+
+
+def test_status_ignores_harmless_stalled_peers_when_synced() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.record_peer_observation(
+            host="node-a",
+            port=8333,
+            source="manual",
+            direction="outbound",
+            handshake_complete=True,
+            node_id="peer-a",
+            last_success=1_700_000_010,
+            success_count=1,
+            score=1,
+            last_known_height=999,
+        )
+        service.set_runtime_sync_status(
+            {
+                "mode": "synced",
+                "phase": "synced",
+                "local_height": 999,
+                "remote_height": 999,
+                "validated_tip_height": 999,
+                "validated_tip_hash": "aa" * 32,
+                "best_header_height": 999,
+                "best_header_hash": "aa" * 32,
+                "missing_block_count": 0,
+                "queued_block_count": 0,
+                "inflight_block_count": 0,
+                "stalled_peers": ({"peer_id": "peer-b", "stall_count": 2},),
+            }
+        )
+
+        summary = service.status()["operator_summary"]
+
+        assert summary["connectivity_state"] == "connected"
+        assert "stalled_peers_present" not in summary["warnings"]
+        assert summary["peer_attention"] is False
+
+
+def test_status_warns_for_stalled_peers_when_sync_debt_remains() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.record_peer_observation(
+            host="node-a",
+            port=8333,
+            source="manual",
+            direction="outbound",
+            handshake_complete=True,
+            node_id="peer-a",
+            last_success=1_700_000_010,
+            success_count=1,
+            score=1,
+            last_known_height=1000,
+        )
+        service.set_runtime_sync_status(
+            {
+                "mode": "blocks",
+                "phase": "syncing_from_genesis",
+                "local_height": 990,
+                "remote_height": 1000,
+                "validated_tip_height": 990,
+                "validated_tip_hash": "aa" * 32,
+                "best_header_height": 1000,
+                "best_header_hash": "bb" * 32,
+                "missing_block_count": 10,
+                "queued_block_count": 8,
+                "inflight_block_count": 2,
+                "stalled_peers": ({"peer_id": "peer-a", "stall_count": 2},),
+            }
+        )
+
+        warnings = service.status()["operator_summary"]["warnings"]
+
+        assert "stalled_peers_present" in warnings
+        assert "missing_blocks_for_best_header" in warnings
 
 
 def test_runtime_does_not_redial_or_advertise_inbound_ephemeral_peers() -> None:
@@ -1861,6 +1938,66 @@ def test_runtime_rejects_invalid_headers_message(monkeypatch) -> None:
             assert dropped == [session]
 
     close_calls: list[tuple[str | None, Exception | None]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_updates_peer_height_from_getdata_requests() -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 0})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = True
+        state = _FakeSessionState()
+        transport = None
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            sent_messages.append(message)
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            first = _mine_block(service.build_candidate_block("CHCtest").block)
+            service.apply_block(first)
+            second = _mine_block(service.build_candidate_block("CHCtest").block)
+            service.apply_block(second)
+            second_hash = second.block_hash()
+            service.record_peer_observation(
+                host="node-a",
+                port=18444,
+                source="manual",
+                direction="inbound",
+                handshake_complete=True,
+                node_id="peer-a",
+                last_success=1_700_000_010,
+                success_count=1,
+                last_known_height=0,
+            )
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(  # type: ignore[arg-type]
+                protocol=session,  # type: ignore[arg-type]
+                outbound=False,
+                endpoint=OutboundPeer("node-a", 18444),
+                opened_at=1.0,
+            )
+
+            await runtime._on_peer_message(
+                session,  # type: ignore[arg-type]
+                MessageEnvelope(
+                    command="getdata",
+                    payload=GetDataMessage(items=(InventoryVector(object_type="block", object_hash=second_hash),)),
+                ),
+            )
+
+            peer = next(peer for peer in service.list_peers() if peer.node_id == "peer-a")
+            assert peer.last_known_height == 1
+            assert sent_messages
+
+    sent_messages: list[MessageEnvelope] = []
     asyncio.run(scenario())
 
 

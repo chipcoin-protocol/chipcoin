@@ -72,6 +72,7 @@ DEFAULTS = {
     "NODE_LOG_LEVEL": "INFO",
     "NODE_P2P_BIND_PORT": "18444",
     "NODE_HTTP_BIND_PORT": "8081",
+    "NODE_HTTP_PUBLISH_HOST": "127.0.0.1",
     "CHIPCOIN_HTTP_ALLOWED_ORIGINS": "",
     "MINER_LOG_LEVEL": "INFO",
     "MINER_WALLET_FILE": WALLET_PATH,
@@ -543,12 +544,15 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["NODE_P2P_BIND_PORT"] = "18444"
         env_values["NODE_PUBLIC_P2P_PORT"] = "18444"
         env_values["NODE_HTTP_BIND_PORT"] = "8081"
+        env_values["NODE_HTTP_PUBLISH_HOST"] = "127.0.0.1"
         env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL
         env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_DEVNET_BOOTSTRAP_URL
         env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
         env_values["DEFAULT_EXPLORER_URL"] = PUBLIC_DEVNET_EXPLORER_URL
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
+        env_values["MINING_MIN_INTERVAL_SECONDS"] = "1.0"
+        env_values["MINING_NONCE_BATCH_SIZE"] = "250000"
         return
     if network == "testnet":
         env_values["NODE_DATA_PATH"] = TESTNET_NODE_DATA_PATH
@@ -556,12 +560,15 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["NODE_P2P_BIND_PORT"] = "28444"
         env_values["NODE_PUBLIC_P2P_PORT"] = "28444"
         env_values["NODE_HTTP_BIND_PORT"] = "28081"
+        env_values["NODE_HTTP_PUBLISH_HOST"] = "127.0.0.1"
         env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = ""
         env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
         env_values["NODE_BOOTSTRAP_URL"] = ""
         env_values["DEFAULT_NODE_ENDPOINT"] = TESTNET_LOCAL_NODE_ENDPOINT
         env_values["DEFAULT_EXPLORER_URL"] = ""
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = TESTNET_LOCAL_NODE_ENDPOINT
+        env_values["MINING_MIN_INTERVAL_SECONDS"] = "10.0"
+        env_values["MINING_NONCE_BATCH_SIZE"] = "50000"
         return
     _die(f"Unsupported network selection: {network}")
 
