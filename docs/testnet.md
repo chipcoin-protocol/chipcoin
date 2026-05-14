@@ -79,6 +79,181 @@ Watch logs:
 docker compose --env-file .env.testnet -p chipcoin-testnet logs -f node
 ```
 
+## Optional Testnet Snapshot Bootstrap
+
+Full sync from genesis remains supported. A testnet snapshot is an optional
+onboarding shortcut for operators who trust the published snapshot source.
+
+Official Phase 1 manifest target:
+
+```text
+https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json
+```
+
+To opt in during wizard setup, choose `snapshot` or `auto` bootstrap and use
+that manifest URL. The wizard downloads the snapshot, checks the file SHA-256
+from the manifest, imports it into `NODE_DATA_PATH`, and then the node delta
+syncs from the snapshot anchor to the live tip.
+
+Manual restore into a fresh local database:
+
+```bash
+curl -fsSL https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json \
+  -o /tmp/chipcoin-testnet-latest.manifest.json
+SNAPSHOT_URL="$(jq -r '.snapshots[0].snapshot_url' /tmp/chipcoin-testnet-latest.manifest.json)"
+SNAPSHOT_SHA256="$(jq -r '.snapshots[0].checksum_sha256' /tmp/chipcoin-testnet-latest.manifest.json)"
+curl -fsSL "$SNAPSHOT_URL" -o /tmp/chipcoin-testnet.snapshot
+printf '%s  %s\n' "$SNAPSHOT_SHA256" /tmp/chipcoin-testnet.snapshot | sha256sum -c -
+chipcoin --network testnet --data /var/lib/chipcoin/data/node-testnet.sqlite3 \
+  snapshot-import --snapshot-file /tmp/chipcoin-testnet.snapshot --snapshot-reset
+```
+
+Verify after restore and node start:
+
+```bash
+curl -s http://127.0.0.1:28081/v1/status \
+  | jq '{network,height,tip_hash,sync_phase}'
+curl -s https://explorer.chipcoinprotocol.com/api/testnet/v1/status \
+  | jq '{network,height,tip_hash,sync_phase}'
+```
+
+Safety notes:
+
+- keep `28081/tcp` bound to `127.0.0.1`
+- do not publish node HTTP directly
+- snapshots do not change consensus and are not required for joining testnet
+- a network mismatch is rejected during import
+- Phase 1 requires SHA-256 file checksum verification
+- chipcom publishes signed snapshots; consumers may still use checksum-only
+  restore or enforce the known Ed25519 signer explicitly
+
+## Publish A Testnet Snapshot
+
+This is operator-driven Phase 1 publishing. Do not run it from an unsynced node.
+The current chipcom production model uses a signed publisher script plus a
+systemd timer, with devnet and testnet isolated.
+
+Verified chipcom units:
+
+```text
+chipcoin-snapshot.service
+chipcoin-snapshot.timer
+chipcoin-testnet-snapshot.service
+chipcoin-testnet-snapshot.timer
+```
+
+The devnet publisher writes:
+
+```text
+/var/www/chipcoin-central/website/downloads/snapshots/devnet/latest.manifest.json
+/var/www/chipcoin-central/website/downloads/snapshots/devnet/latest.snapshot
+```
+
+The testnet publisher writes:
+
+```text
+/var/www/chipcoin-central/website/downloads/snapshots/testnet/latest.manifest.json
+/var/www/chipcoin-central/website/downloads/snapshots/testnet/latest.snapshot
+```
+
+Both publishers sign snapshots with the configured local Ed25519 snapshot key
+and copy the signed snapshot out of the node container with `docker compose cp`.
+Do not rely on an implicit `/snapshots` bind mount.
+
+The expected testnet service settings are:
+
+```bash
+NETWORK="testnet"
+BASE_URL="https://chipcoinprotocol.com/downloads/snapshots/testnet"
+COMPOSE_CMD="docker compose -f /opt/chipcoin/docker-compose.yml --env-file /opt/chipcoin/.env.testnet -p chipcoin-testnet"
+STATUS_URL="http://127.0.0.1:28081/v1/status"
+```
+
+Manual fallback host CLI flow:
+
+```bash
+CHIPCOIN_NETWORK=testnet \
+CHIPCOIN_DATA=/var/lib/chipcoin/data/node-testnet.sqlite3 \
+SNAPSHOT_OUTPUT_DIR=/tmp/chipcoin-testnet-snapshot \
+SNAPSHOT_SOURCE_NODE=chipcom \
+SNAPSHOT_SIGNING_KEY_FILE=/home/komarek/.config/chipcoin/snapshot_signing.key \
+scripts/ops/build-testnet-snapshot.sh
+```
+
+If no signing key is configured, the same script still builds a checksum-only
+manifest suitable for manual testing:
+
+```bash
+CHIPCOIN_NETWORK=testnet \
+CHIPCOIN_DATA=/var/lib/chipcoin/data/node-testnet.sqlite3 \
+SNAPSHOT_OUTPUT_DIR=/tmp/chipcoin-testnet-snapshot \
+SNAPSHOT_SOURCE_NODE=chipcom \
+scripts/ops/build-testnet-snapshot.sh
+```
+
+Systemd verification on chipcom:
+
+```bash
+systemctl list-timers | grep chipcoin
+systemctl status chipcoin-testnet-snapshot.timer --no-pager
+systemctl status chipcoin-testnet-snapshot.service --no-pager
+journalctl -u chipcoin-testnet-snapshot.service -n 80 --no-pager
+```
+
+Public verification:
+
+```bash
+curl -fsS https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json \
+  | jq '.snapshots[0] | {network,snapshot_height,snapshot_block_hash,checksum_sha256,signer_pubkeys,snapshot_url}'
+curl -fsSI https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.snapshot
+```
+
+Keep these public files:
+
+- `latest.snapshot`
+- `latest.manifest.json`
+- `archive/chipcoin-testnet-<timestamp>-<height>.snapshot`
+- `archive/chipcoin-testnet-<timestamp>-<height>.manifest.json`
+
+Manifest schema for Phase 1:
+
+```json
+{
+  "network": "testnet",
+  "height": 1801,
+  "tip_hash": "00002087b2dfc6ee2d89c013e9a78f8b26454f9372882f2d61de604b04522847",
+  "created_at": 1778788432,
+  "file_name": "testnet-snapshot-height-1801.snapshot",
+  "snapshot_url": "https://chipcoinprotocol.com/downloads/snapshots/testnet/testnet-snapshot-height-1801.snapshot",
+  "sha256": "<file_sha256>",
+  "checksum_sha256": "<file_sha256>",
+  "size_bytes": 123456,
+  "source_node": "chipcom",
+  "format_version": 2,
+  "snapshots": [
+    {
+      "network": "testnet",
+      "snapshot_url": "https://chipcoinprotocol.com/downloads/snapshots/testnet/testnet-snapshot-height-1801.snapshot",
+      "format_version": 2,
+      "snapshot_height": 1801,
+      "snapshot_block_hash": "00002087b2dfc6ee2d89c013e9a78f8b26454f9372882f2d61de604b04522847",
+      "created_at": 1778788432,
+      "checksum_sha256": "<file_sha256>",
+      "file_name": "testnet-snapshot-height-1801.snapshot",
+      "size_bytes": 123456,
+      "source_node": "chipcom",
+      "signer_pubkeys": [
+        "147ce2ece1046008f465cb471ffe6f6a12ebd3c63ba39d8fd4dc9cd290816b0c"
+      ],
+      "snapshot_trust_mode": "signed"
+    }
+  ]
+}
+```
+
+The top-level fields are for humans/operators. The `snapshots[]` entry is the
+wizard-compatible schema.
+
 ## Run A Testnet Miner
 
 The miner requires a wallet file configured by `MINER_WALLET_FILE`.

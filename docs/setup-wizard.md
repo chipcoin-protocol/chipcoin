@@ -60,14 +60,15 @@ When `testnet` is selected, quick mode uses public testnet candidate defaults:
 - P2P port: `28444`
 - HTTP port: `28081`, published on `127.0.0.1` only
 - bootstrap peer: empty
-- snapshot manifest URL: empty
+- snapshot manifest URL: empty by default; operators may opt into the public
+  testnet manifest when published
 - explorer URL: empty
 - miner minimum block interval: `10.0` seconds
 - miner nonce batch size: `50000`
 
 See `docs/testnet.md` for the public testnet candidate runbook. Official
-bootstrap, snapshot, faucet, and explorer endpoints are still separate follow-up
-items.
+bootstrap and explorer endpoints are available separately. Snapshot bootstrap
+is optional and faucet support remains a separate follow-up item.
 
 ### Custom Configuration
 
@@ -122,9 +123,16 @@ For public devnet setups, the default manifest is:
 
 - `https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json`
 
-For testnet, the wizard leaves snapshot manifest URLs empty and defaults
-to full sync unless the operator explicitly provides a compatible testnet
-manifest.
+For testnet, the wizard leaves snapshot manifest URLs empty and defaults to
+full sync unless the operator explicitly provides a compatible testnet manifest.
+The current public testnet manifest target is:
+
+- `https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json`
+
+The public testnet manifest may advertise a signed snapshot. In that case the
+wizard records the signer metadata and applies the selected trust mode. Operators
+who want signer enforcement must provide a trusted keys file and choose
+`enforce`; otherwise checksum verification still runs before import.
 
 The user can:
 

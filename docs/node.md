@@ -344,6 +344,30 @@ Current limitations of snapshot nodes:
 - diagnostics that depend on full historical raw block bodies may be partial for pre-anchor heights
 - reorgs that would invalidate the trusted anchor are rejected instead of replayed
 
+Public snapshot manifests are separate from snapshot files. The setup wizard
+expects a manifest with a `snapshots` array. Each entry must include:
+
+- `network`
+- `snapshot_url`
+- `format_version`
+- `snapshot_height`
+- `snapshot_block_hash`
+- `created_at`
+- `checksum_sha256`
+
+Signed public manifests should also include:
+
+- `signer_pubkeys`
+- `snapshot_trust_mode`
+
+The testnet Phase 1 operator script writes both a human-readable top-level
+summary and this wizard-compatible entry. When a signing key is configured, it
+also signs the snapshot and adds the signer metadata:
+
+```bash
+scripts/ops/build-testnet-snapshot.sh
+```
+
 Why node-registry state is currently included:
 
 - the node registry is consensus-visible state
