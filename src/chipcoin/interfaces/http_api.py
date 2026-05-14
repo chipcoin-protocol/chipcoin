@@ -202,6 +202,9 @@ class HttpApiApp:
         if method == "GET" and path == "/v1/peers/summary":
             return self.service.peer_summary()
 
+        if method == "GET" and path == "/v1/peers/public":
+            return self.service.public_peers()
+
         if method == "GET" and path.startswith("/v1/address/"):
             return self._handle_address(method=method, path=path, environ=environ)
 

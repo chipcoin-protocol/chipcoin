@@ -697,6 +697,47 @@ def test_cli_add_peer_and_list_peers() -> None:
         assert peer["banned"] is False
 
 
+def test_cli_public_peers_returns_public_bootstrap_directory() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "node.sqlite3"
+        service = NodeService.open_sqlite(db_path, network="testnet")
+        service.record_peer_observation(
+            host="95.111.224.46",
+            port=28444,
+            direction="outbound",
+            handshake_complete=True,
+            last_success=1_700_000_000,
+            success_count=1,
+            last_known_height=1801,
+        )
+        service.record_peer_observation(
+            host="127.0.0.1",
+            port=28444,
+            direction="outbound",
+            handshake_complete=True,
+            last_success=1_700_000_001,
+            success_count=1,
+            last_known_height=1801,
+        )
+
+        code, payload = _run_cli(["--network", "testnet", "--data", str(db_path), "public-peers"])
+
+        assert code == 0
+        assert payload == {
+            "network": "testnet",
+            "count": 1,
+            "peers": [
+                {
+                    "host": "95.111.224.46",
+                    "port": 28444,
+                    "address": "95.111.224.46:28444",
+                    "state": "good",
+                    "last_known_height": 1801,
+                }
+            ],
+        }
+
+
 def test_cli_list_peers_and_peer_detail_show_protocol_error_class() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"

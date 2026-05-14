@@ -908,6 +908,146 @@ def test_http_api_peers_and_peers_summary() -> None:
         }
 
 
+def test_http_api_public_peers_filters_private_and_unhealthy_records() -> None:
+    with TemporaryDirectory() as tempdir:
+        timestamps = iter(range(1_700_000_000, 1_700_000_100))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            network="testnet",
+            time_provider=lambda: next(timestamps),
+        )
+        service.record_peer_observation(
+            host="95.111.224.46",
+            port=28444,
+            direction="outbound",
+            source="manual",
+            handshake_complete=True,
+            last_success=1_700_000_001,
+            success_count=2,
+            last_known_height=1801,
+        )
+        service.record_peer_observation(
+            host="chipcoinprotocol.com",
+            port=28444,
+            direction="outbound",
+            source="seed",
+            handshake_complete=True,
+            last_success=1_700_000_002,
+            success_count=1,
+            last_known_height=1800,
+        )
+        for host in ("127.0.0.1", "192.168.1.10", "10.0.0.5", "172.16.0.7"):
+            service.record_peer_observation(
+                host=host,
+                port=28444,
+                direction="outbound",
+                handshake_complete=True,
+                last_success=1_700_000_003,
+                success_count=1,
+            )
+        service.record_peer_observation(
+            host="93.184.216.34",
+            port=28444,
+            direction="outbound",
+            handshake_complete=False,
+            last_failure=1_700_000_004,
+            failure_count=2,
+        )
+        service.record_peer_observation(
+            host="8.8.8.8",
+            port=28444,
+            direction="outbound",
+            handshake_complete=True,
+            last_success=1_700_000_005,
+            success_count=1,
+            backoff_until=1_700_000_050,
+        )
+        service.record_peer_observation(
+            host="1.1.1.1",
+            port=28444,
+            direction="outbound",
+            handshake_complete=True,
+            last_success=1_700_000_006,
+            success_count=1,
+            ban_until=1_700_000_050,
+        )
+        service.record_peer_observation(
+            host="95.111.224.46",
+            port=53826,
+            direction="inbound",
+            handshake_complete=True,
+            last_success=1_700_000_007,
+            success_count=1,
+        )
+        app = HttpApiApp(service)
+
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/peers/public")
+
+        assert status == "200 OK"
+        assert body == {
+            "network": "testnet",
+            "count": 2,
+            "peers": [
+                {
+                    "host": "95.111.224.46",
+                    "port": 28444,
+                    "address": "95.111.224.46:28444",
+                    "state": "good",
+                    "last_known_height": 1801,
+                },
+                {
+                    "host": "chipcoinprotocol.com",
+                    "port": 28444,
+                    "address": "chipcoinprotocol.com:28444",
+                    "state": "good",
+                    "last_known_height": 1800,
+                },
+            ],
+        }
+        assert all("last_error" not in peer and "node_id" not in peer for peer in body["peers"])
+
+
+def test_http_api_public_peers_uses_network_canonical_port() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="devnet")
+        service.record_peer_observation(
+            host="95.111.224.46",
+            port=18444,
+            direction="outbound",
+            handshake_complete=True,
+            last_success=1_700_000_001,
+            success_count=1,
+            last_known_height=6539,
+        )
+        service.record_peer_observation(
+            host="95.111.224.47",
+            port=28444,
+            direction="outbound",
+            handshake_complete=True,
+            last_success=1_700_000_002,
+            success_count=1,
+            last_known_height=6539,
+        )
+        app = HttpApiApp(service)
+
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/peers/public")
+
+        assert status == "200 OK"
+        assert body == {
+            "network": "devnet",
+            "count": 1,
+            "peers": [
+                {
+                    "host": "95.111.224.46",
+                    "port": 18444,
+                    "address": "95.111.224.46:18444",
+                    "state": "good",
+                    "last_known_height": 6539,
+                }
+            ],
+        }
+
+
 def test_http_api_and_cli_surfaces_are_consistent_for_status_and_peer_summary() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"

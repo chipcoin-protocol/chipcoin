@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_DOWN
 from dataclasses import dataclass, replace
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import secrets
@@ -192,6 +193,18 @@ def _peer_state(peer: PeerInfo, *, now: int) -> str:
     if (peer.failure_count or 0) > 0 or (peer.backoff_until or 0) > now or (peer.score or 0) < 0:
         return "questionable"
     return peer.source or "discovered"
+
+
+def _is_public_peer_host(host: str) -> bool:
+    """Return whether a host is suitable for publishing as a bootstrap peer."""
+
+    normalized = host.strip().lower().rstrip(".")
+    if not normalized or normalized == "localhost" or normalized.endswith(".localhost") or normalized.endswith(".local"):
+        return False
+    try:
+        return ipaddress.ip_address(normalized).is_global
+    except ValueError:
+        return True
 
 
 def _is_benign_peer_error(error: object) -> bool:
@@ -1006,6 +1019,34 @@ class NodeService:
             if peer.node_id == node_id:
                 return self._peer_diagnostics_payload(peer)
         return None
+
+    def public_peers(self) -> dict[str, object]:
+        """Return public bootstrap peers without raw peerbook diagnostics."""
+
+        now = self.time_provider()
+        default_port = get_network_config(self.network).default_p2p_port
+        public_peers = []
+        for peer in self.list_peers():
+            if peer.port != default_port:
+                continue
+            if peer.handshake_complete is not True or _peer_state(peer, now=now) != "good":
+                continue
+            if (peer.backoff_until or 0) > now or (peer.ban_until or 0) > now:
+                continue
+            if not _is_public_peer_host(peer.host):
+                continue
+            payload: dict[str, object] = {
+                "host": peer.host,
+                "port": peer.port,
+                "address": f"{peer.host}:{peer.port}",
+                "state": "good",
+            }
+            if peer.last_known_height is not None:
+                payload["last_known_height"] = peer.last_known_height
+            public_peers.append(payload)
+
+        public_peers.sort(key=lambda peer: (str(peer["host"]), int(peer["port"])))
+        return {"network": self.network, "peers": public_peers, "count": len(public_peers)}
 
     def _operational_peer_records(self, peers: list[dict[str, object]]) -> list[dict[str, object]]:
         """Return one best operational record per remote node id."""
