@@ -1781,6 +1781,61 @@ def test_runtime_does_not_classify_post_handshake_timeouts_as_misbehavior() -> N
         assert events == []
 
 
+def test_runtime_treats_premature_reward_relay_as_benign_during_sync() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.set_runtime_sync_status(
+            {
+                "mode": "blocks",
+                "phase": "syncing_from_genesis",
+                "local_height": 75,
+                "remote_height": 1801,
+                "validated_tip_height": 75,
+                "validated_tip_hash": "aa" * 32,
+                "best_header_height": 1801,
+                "best_header_hash": "bb" * 32,
+                "missing_block_count": 1726,
+                "queued_block_count": 1718,
+                "inflight_block_count": 8,
+            }
+        )
+        runtime = NodeRuntime(service=service)
+
+        assert runtime._has_sync_debt() is True
+        assert runtime._is_benign_tx_relay_error(
+            "reward_attestation_bundle transactions are not active before node_reward_activation_height."
+        ) is True
+        assert runtime._is_benign_tx_relay_error(
+            "reward_settle_epoch transactions are not active before node_reward_activation_height."
+        ) is True
+
+
+def test_runtime_penalizes_premature_reward_relay_when_synced() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.set_runtime_sync_status(
+            {
+                "mode": "synced",
+                "phase": "synced",
+                "local_height": 75,
+                "remote_height": 75,
+                "validated_tip_height": 75,
+                "validated_tip_hash": "aa" * 32,
+                "best_header_height": 75,
+                "best_header_hash": "aa" * 32,
+                "missing_block_count": 0,
+                "queued_block_count": 0,
+                "inflight_block_count": 0,
+            }
+        )
+        runtime = NodeRuntime(service=service)
+
+        assert runtime._has_sync_debt() is False
+        assert runtime._is_benign_tx_relay_error(
+            "reward_attestation_bundle transactions are not active before node_reward_activation_height."
+        ) is False
+
+
 def test_connect_loop_does_not_overlap_outbound_dials() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:

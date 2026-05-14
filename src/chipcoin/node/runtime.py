@@ -2739,10 +2739,36 @@ class NodeRuntime:
         """Return whether a relayed transaction failed only because it was already known."""
 
         text = str(error)
-        return (
+        if (
             "Transaction is already present in the mempool" in text
             or "reward_attestation_bundle replays an attestation already recorded on chain" in text
+        ):
+            return True
+        if self._has_sync_debt() and (
+            "reward_attestation_bundle transactions are not active before node_reward_activation_height" in text
+            or "reward_settle_epoch transactions are not active before node_reward_activation_height" in text
+        ):
+            return True
+        return False
+
+    def _has_sync_debt(self) -> bool:
+        """Return whether local validation is still behind known remote/header work."""
+
+        sync_status = self.service.sync_status()
+        height_pairs = (
+            ("remote_height", "local_height"),
+            ("best_header_height", "validated_tip_height"),
         )
+        for ahead_key, local_key in height_pairs:
+            ahead = sync_status.get(ahead_key)
+            local = sync_status.get(local_key)
+            if isinstance(ahead, int) and isinstance(local, int) and ahead > local:
+                return True
+        for key in ("missing_block_count", "queued_block_count", "inflight_block_count"):
+            value = sync_status.get(key)
+            if isinstance(value, int) and value > 0:
+                return True
+        return False
 
     def _next_backoff_state(self, info) -> tuple[int, int]:
         """Return reconnect attempts and absolute backoff deadline for one peer."""
