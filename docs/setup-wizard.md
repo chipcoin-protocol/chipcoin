@@ -11,6 +11,8 @@ python3 scripts/setup/wizard.py
 ```
 
 The wizard writes a local `.env` in the repository root. It does not change the protocol, and it does not modify public defaults in the repository.
+When `testnet` is selected, the recommended output is `.env.testnet` so the
+operator can run devnet and testnet as separate Compose projects.
 
 The wizard is now Docker-first:
 
@@ -20,6 +22,7 @@ The wizard is now Docker-first:
 - it does not start services automatically
 - it ends by printing the exact commands the operator should run next
 - it can now prepare either a passive node or a reward-participating node
+- it offers explicit roles for full node, miner, and reward node
 
 By default, the generated runtime paths point to `/var/lib/chipcoin`. On a fresh Linux host, the wizard can prepare that runtime directory with `sudo` during setup when needed.
 
@@ -51,7 +54,7 @@ This is the shortest path if you want to connect quickly to the public devnet en
 
 Public devnet endpoints are provided for convenience and may change or become unavailable.
 
-When `testnet` is selected, quick mode is intentionally local/manual only:
+When `testnet` is selected, quick mode uses public testnet candidate defaults:
 
 - node endpoint: `http://127.0.0.1:28081`
 - P2P port: `28444`
@@ -62,8 +65,9 @@ When `testnet` is selected, quick mode is intentionally local/manual only:
 - miner minimum block interval: `10.0` seconds
 - miner nonce batch size: `50000`
 
-There is no public testnet bootstrap, snapshot publisher, faucet, or explorer in
-this repository step. See `docs/testnet-launch.md` for the manual dry-run flow.
+See `docs/testnet.md` for the public testnet candidate runbook. Official
+bootstrap, snapshot, faucet, and explorer endpoints are still separate follow-up
+items.
 
 ### Custom Configuration
 
@@ -92,7 +96,7 @@ After you choose your node setup, keep this practical distinction in mind:
 - outbound-only nodes can still connect to the network and sync
 - publicly reachable nodes are strongly preferred for network health
 - when possible, open and forward the selected network P2P port so other peers can reach your node
-- devnet uses `TCP 18444`; testnet dry-runs use `TCP 28444`
+- devnet uses `TCP 18444`; testnet uses `TCP 28444`
 - do not expose the HTTP API port directly; keep it bound to `127.0.0.1` and use a reverse proxy only when intentional
 
 The wizard does not require public exposure, but public reachability is the main way an operator contributes an additional resilient peer to the mesh.
@@ -118,7 +122,7 @@ For public devnet setups, the default manifest is:
 
 - `https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json`
 
-For testnet dry-runs, the wizard leaves snapshot manifest URLs empty and defaults
+For testnet, the wizard leaves snapshot manifest URLs empty and defaults
 to full sync unless the operator explicitly provides a compatible testnet
 manifest.
 
@@ -197,6 +201,9 @@ If you run `node` or `both`, the wizard now also asks whether the node should be
 - a passive full node
 - a reward node that will later register on-chain
 
+If you choose the explicit `reward-node` role, the wizard skips the passive-node
+question and configures reward-node automation directly.
+
 If reward-node mode is selected, the wizard also:
 
 - creates or imports a reward-node wallet
@@ -210,7 +217,7 @@ If reward-node mode is selected, the wizard also:
 
 The wizard writes:
 
-- `.env` in the repository root
+- `.env` or `.env.testnet` in the repository root
 - runtime data file paths under the configured runtime directory
 - miner wallet file under the configured runtime directory when needed
 - reward-node wallet file under the configured runtime directory when reward-node mode is selected
@@ -234,10 +241,18 @@ Wizard defaults by operator mode:
 - `node` + `miner` on one host
   - node uses the public devnet peer
   - miner uses `http://node:8081`
-- testnet dry-run
+- testnet
+  - node uses `28444/tcp` for public P2P
+  - node publishes HTTP on `127.0.0.1:28081`
   - node starts isolated unless manual peers are provided
   - miner uses `http://node:28081` inside the same Compose project
   - miner uses conservative public-testnet defaults to avoid one-to-two-second block production
+
+For testnet, the success output prints Compose commands with:
+
+```bash
+docker compose --env-file .env.testnet -p chipcoin-testnet ...
+```
 - miner-only host
   - miner uses `https://api.chipcoinprotocol.com`
 - local/self-hosted node + miner

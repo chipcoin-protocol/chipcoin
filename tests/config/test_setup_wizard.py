@@ -96,6 +96,42 @@ def test_testnet_network_defaults_are_separate_and_do_not_point_to_devnet_bootst
     assert "/snapshots/devnet/" not in ",".join(env_values.values())
 
 
+def test_testnet_env_path_defaults_to_dedicated_env_file(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+
+    env_path = wizard._ask_env_path("testnet")
+
+    assert env_path == REPO_ROOT / ".env.testnet"
+
+
+def test_devnet_env_path_defaults_to_standard_env_file(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+
+    env_path = wizard._ask_env_path("devnet")
+
+    assert env_path == REPO_ROOT / ".env"
+
+
+def test_write_env_supports_dedicated_testnet_env_file(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    with TemporaryDirectory() as tempdir:
+        env_path = Path(tempdir) / ".env.testnet"
+        env_values = dict(wizard.DEFAULTS)
+        wizard._apply_network_defaults(env_values, "testnet")
+        wizard._apply_setup_mode(env_values, "quick", "both", network="testnet")
+        monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+        wizard._write_env(env_values, env_path)
+
+        content = env_path.read_text(encoding="utf-8")
+        assert "CHIPCOIN_NETWORK=testnet" in content
+        assert "NODE_P2P_BIND_PORT=28444" in content
+        assert "NODE_HTTP_PUBLISH_HOST=127.0.0.1" in content
+        assert "MINING_NODE_URLS=http://node:8081" not in content
+
+
 def test_testnet_quick_mode_stays_local_and_has_no_public_bootstrap_or_snapshot_defaults() -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
@@ -110,6 +146,43 @@ def test_testnet_quick_mode_stays_local_and_has_no_public_bootstrap_or_snapshot_
     assert env_values["NODE_BOOTSTRAP_URL"] == ""
     assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
     assert env_values["DEFAULT_EXPLORER_URL"] == ""
+
+
+def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "testnet")
+    wizard._apply_setup_mode(env_values, "quick", "node", network="testnet")
+
+    wizard._print_success(
+        "reward-node",
+        "testnet",
+        "background",
+        REPO_ROOT / ".env.testnet",
+        None,
+        None,
+        None,
+        Path("/var/lib/chipcoin/wallets/testnet-reward-node-wallet.json"),
+        "CHCCtestrewardaddress",
+        None,
+        True,
+        "quick",
+        {
+            **env_values,
+            "REWARD_NODE_AUTO_NODE_ID": "testnet-reward-node-example",
+            "REWARD_NODE_AUTO_DECLARED_HOST": "node.example.com",
+            "REWARD_NODE_AUTO_DECLARED_PORT": "28444",
+            "REWARD_NODE_AUTO_OWNER_WALLET_FILE": "/var/lib/chipcoin/wallets/testnet-reward-node-wallet.json",
+            "REWARD_NODE_AUTO_ATTEST_WALLET_FILE": "/var/lib/chipcoin/wallets/testnet-reward-node-wallet.json",
+        },
+        bootstrap_notes=[],
+    )
+
+    output = capsys.readouterr().out
+    assert "Role: reward-node" in output
+    assert "Environment file:" in output
+    assert "docker compose --env-file .env.testnet -p chipcoin-testnet up -d node" in output
+    assert "--declared-port 28444" in output
 
 
 def test_testnet_discovery_defaults_to_isolated_when_no_bootstrap_exists(monkeypatch) -> None:

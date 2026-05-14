@@ -139,15 +139,26 @@ def main() -> int:
         },
         "quick",
     )
-    role = _ask_choice("What do you want to run?", {"node": "Node", "miner": "Miner", "both": "Both"}, "both")
+    selected_role = _ask_choice(
+        "What do you want to run?",
+        {
+            "node": "Full node",
+            "miner": "Miner",
+            "reward-node": "Reward node",
+            "both": "Full node + miner",
+        },
+        "node",
+    )
+    role = "node" if selected_role == "reward-node" else selected_role
     network = _ask_choice(
         "Which network do you want to use?",
         {
             "devnet": "Devnet",
-            "testnet": "Testnet dry-run (local/manual bootstrap only)",
+            "testnet": "Public testnet candidate",
         },
         "devnet",
     )
+    env_path = _ask_env_path(network)
     runtime_mode = _ask_choice("How should services run?", {"foreground": "Foreground", "background": "Background"}, "foreground")
     _print_public_reachability_note(network=network)
     bootstrap_notes: list[str] = []
@@ -175,14 +186,16 @@ def main() -> int:
     if role in {"node", "both"}:
         _configure_node_discovery(env_values, setup_mode=setup_mode)
         _configure_node_bootstrap(env_values, setup_mode=setup_mode)
-        reward_node_enabled = _ask_choice(
-            "How should this node participate?",
-            {
-                "passive": "Passive full node only",
-                "reward": "Reward node that registers for protocol rewards",
-            },
-            "passive",
-        ) == "reward"
+        reward_node_enabled = selected_role == "reward-node"
+        if not reward_node_enabled:
+            reward_node_enabled = _ask_choice(
+                "How should this node participate?",
+                {
+                    "passive": "Passive full node only",
+                    "reward": "Reward node that registers for protocol rewards",
+                },
+                "passive",
+            ) == "reward"
         if reward_node_enabled:
             reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex = _configure_reward_node(
                 env_values,
@@ -193,11 +206,12 @@ def main() -> int:
     if role in {"node", "both"}:
         bootstrap_notes = _prepare_node_bootstrap(env_values, network=network)
 
-    _write_env(env_values)
+    _write_env(env_values, env_path)
     _print_success(
-        role,
+        selected_role,
         network,
         runtime_mode,
+        env_path,
         miner_wallet_path,
         miner_wallet_address,
         miner_wallet_private_key_hex,
@@ -236,6 +250,15 @@ def _ask_choice(prompt: str, options: dict[str, str], default: str) -> str:
         if answer in options:
             return answer
         print("Invalid selection. Please choose one of the listed options.")
+
+
+def _ask_env_path(network: str) -> Path:
+    default_path = REPO_ROOT / (".env.testnet" if network == "testnet" else ".env")
+    answer = input(f"Where should the environment file be written? [{default_path}]: ").strip()
+    path = Path(answer) if answer else default_path
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    return path
 
 
 def _parse_peer_list(value: str) -> list[str]:
@@ -732,11 +755,13 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
 
 def _print_public_reachability_note(*, network: str = "devnet") -> None:
     default_port = get_network_config(network).default_p2p_port
+    default_http_port = "28081" if network == "testnet" else "8081"
     print()
     print("Public reachability note:")
     print("  - outbound-only nodes can still connect and sync")
     print("  - publicly reachable nodes are strongly preferred for network health")
     print(f"  - when possible, open and forward TCP {default_port} for the node P2P listener")
+    print(f"  - keep HTTP TCP {default_http_port} bound to 127.0.0.1 unless you intentionally reverse-proxy it")
     print("  - for clean installs, prefer multiple startup peers when available")
     print()
 
@@ -1075,19 +1100,20 @@ def _select_latest_compatible_snapshot(manifest_urls: list[str], *, network: str
     raise ValueError(f"snapshot source unavailable or incompatible: {details}")
 
 
-def _write_env(values: dict[str, str]) -> None:
-    if ENV_PATH.exists():
-        overwrite = input(f"{ENV_PATH} already exists. Overwrite it? [y/N]: ").strip().lower()
+def _write_env(values: dict[str, str], env_path: Path) -> None:
+    if env_path.exists():
+        overwrite = input(f"{env_path} already exists. Overwrite it? [y/N]: ").strip().lower()
         if overwrite not in {"y", "yes"}:
-            _die("Setup aborted because .env would be overwritten.")
+            _die(f"Setup aborted because {env_path.name} would be overwritten.")
     lines = [f"{key}={values[key]}" for key in DEFAULTS]
-    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _print_success(
     role: str,
     network: str,
     runtime_mode: str,
+    env_path: Path,
     miner_wallet_path: Path | None,
     miner_wallet_address: str | None,
     miner_wallet_private_key_hex: str | None,
@@ -1099,13 +1125,19 @@ def _print_success(
     env_values: dict[str, str],
     bootstrap_notes: list[str],
 ) -> None:
-    command_suffix = {"node": "node", "miner": "miner", "both": "node miner"}[role]
-    compose_up_background = f"docker compose up -d {command_suffix}".strip()
+    service_role = "node" if role == "reward-node" else role
+    command_suffix = {"node": "node", "miner": "miner", "both": "node miner"}[service_role]
+    env_file_arg = f"--env-file {env_path.relative_to(REPO_ROOT) if env_path.is_relative_to(REPO_ROOT) else env_path}"
+    compose_base = f"docker compose {env_file_arg}"
+    if network == "testnet":
+        compose_base = f"{compose_base} -p chipcoin-testnet"
+    compose_up_background = f"{compose_base} up -d {command_suffix}".strip()
 
     print()
     print("Setup completed successfully.")
     print(f"Role: {role}")
     print(f"Network: {network}")
+    print(f"Environment file: {env_path}")
     if miner_wallet_path is not None and miner_wallet_address is not None:
         print(f"Miner wallet file: {miner_wallet_path}")
         print(f"Miner wallet address: {miner_wallet_address}")
@@ -1131,7 +1163,7 @@ def _print_success(
     else:
         print("Reward-node mode: passive full node")
     print(f"Runtime directory: {env_values['CHIPCOIN_RUNTIME_DIR']}")
-    if role in {"node", "both"}:
+    if service_role in {"node", "both"}:
         print(f"Node database: {env_values['NODE_DATA_PATH']}")
         print(f"Snapshot metadata file: {_snapshot_metadata_path(Path(env_values['NODE_DATA_PATH']))}")
         if env_values["NODE_BOOTSTRAP_URL"]:
@@ -1144,7 +1176,7 @@ def _print_success(
             print(f"Announced public P2P port: {env_values['NODE_PUBLIC_P2P_PORT']}")
     print(f"Setup mode: {setup_mode}")
     print(f"Default node endpoint: {env_values['DEFAULT_NODE_ENDPOINT']}")
-    if role in {"node", "both"}:
+    if service_role in {"node", "both"}:
         print(f"Node bootstrap mode: {env_values['NODE_BOOTSTRAP_MODE']}")
         if env_values["NODE_BOOTSTRAP_MODE"] == "snapshot":
             print(f"Snapshot manifest URL(s): {env_values['NODE_SNAPSHOT_MANIFEST_URLS']}")
@@ -1154,7 +1186,7 @@ def _print_success(
                 print(f"Selected snapshot URL: {env_values['NODE_SNAPSHOT_SELECTED_URL']}")
                 print(f"Selected snapshot height: {env_values['NODE_SNAPSHOT_SELECTED_HEIGHT']}")
                 print(f"Selected snapshot hash: {env_values['NODE_SNAPSHOT_SELECTED_HASH']}")
-    if role in {"miner", "both"}:
+    if service_role in {"miner", "both"}:
         print(f"Miner node endpoint(s): {env_values['MINING_NODE_URLS']}")
     if env_values["DEFAULT_BOOTSTRAP_PEER"]:
         print(f"Default bootstrap peer: {env_values['DEFAULT_BOOTSTRAP_PEER']}")
@@ -1180,7 +1212,7 @@ def _print_success(
         print()
         print("Reward-node registration command:")
         print(
-            "  docker compose run --rm --no-deps --entrypoint chipcoin "
+            f"  {compose_base} run --rm --no-deps --entrypoint chipcoin "
             f"-v \"{env_values['NODE_DATA_PATH']}:/runtime/node.sqlite3\" "
             f"-v \"{reward_wallet_path}:/runtime/reward-node-wallet.json:ro\" "
             "node "
@@ -1197,17 +1229,17 @@ def _print_success(
     print("Next commands:")
     print(f"  {compose_up_background}")
     print("  bash scripts/runtime/reset-chain.sh")
-    if role in {"node", "both"}:
-        print("  docker compose logs -f node")
-    if role in {"miner", "both"}:
-        print("  docker compose logs -f miner")
-    print("  docker compose ps")
-    print("  docker compose down")
+    if service_role in {"node", "both"}:
+        print(f"  {compose_base} logs -f node")
+    if service_role in {"miner", "both"}:
+        print(f"  {compose_base} logs -f miner")
+    print(f"  {compose_base} ps")
+    print(f"  {compose_base} down")
     print()
     print("What to inspect:")
-    if role in {"node", "both"} and env_values["NODE_BOOTSTRAP_MODE"] == "full":
+    if service_role in {"node", "both"} and env_values["NODE_BOOTSTRAP_MODE"] == "full":
         print("  - On first start, the node should log bootstrap_mode=full and begin syncing from genesis.")
-    elif role in {"node", "both"}:
+    elif service_role in {"node", "both"}:
         print("  - On first start, the node should log bootstrap_mode=snapshot and start near the snapshot anchor height.")
         print("  - If the remote tip is higher than the anchor, only the post-anchor delta should sync.")
 

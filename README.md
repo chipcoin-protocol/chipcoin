@@ -437,6 +437,9 @@ The wizard can now prepare:
 - a miner
 - a reward-participating node with prewired `REWARD_NODE_AUTO_*` env values
 
+For testnet, the wizard writes a dedicated `.env.testnet` by default and prints
+Compose commands using `--env-file .env.testnet -p chipcoin-testnet`.
+
 For reward-node operators on the public devnet, the wizard assumes the bootstrap funding source is the faucet path or another funded devnet wallet. Registration still requires CHC because reward-node participation is an on-chain paid action.
 
 For a clean devnet chain reset that preserves wallets and rereads paths from `.env`, use:
@@ -468,6 +471,7 @@ Use the manual setup flow when:
 Details:
 
 - `docs/setup-wizard.md`
+- `docs/testnet.md`
 
 ### Public Node Reachability
 
