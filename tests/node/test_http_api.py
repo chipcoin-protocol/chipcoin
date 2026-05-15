@@ -837,6 +837,49 @@ def test_http_api_address_history() -> None:
         assert "net_chipbits" in body[0]
 
 
+def test_http_api_address_history_defaults_to_bounded_page() -> None:
+    address = wallet_key(0).address
+
+    class HistoryOnlyService:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def address_history(self, recipient: str, *, limit: int = 50, descending: bool = True) -> list[dict[str, object]]:
+            self.calls.append({"recipient": recipient, "limit": limit, "descending": descending})
+            return [{"index": index} for index in range(limit)]
+
+    service = HistoryOnlyService()
+    app = HttpApiApp(service)
+
+    status, _, body = _call_wsgi(app, method="GET", path=f"/v1/address/{address}/history")
+
+    assert status == "200 OK"
+    assert len(body) == HttpApiApp.ADDRESS_HISTORY_DEFAULT_LIMIT
+    assert service.calls == [
+        {
+            "recipient": address,
+            "limit": HttpApiApp.ADDRESS_HISTORY_DEFAULT_LIMIT,
+            "descending": True,
+        }
+    ]
+
+
+def test_http_api_address_history_rejects_oversized_limit() -> None:
+    address = wallet_key(0).address
+    app = HttpApiApp(object())
+
+    status, _, body = _call_wsgi(
+        app,
+        method="GET",
+        path=f"/v1/address/{address}/history",
+        query=f"limit={HttpApiApp.ADDRESS_HISTORY_MAX_LIMIT + 1}",
+    )
+
+    assert status == "400 Bad Request"
+    assert body["error"]["code"] == "invalid_request"
+    assert body["error"]["message"] == "limit must be between 1 and 100"
+
+
 def test_http_api_address_endpoints_reject_invalid_address() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

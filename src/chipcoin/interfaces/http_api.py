@@ -40,6 +40,8 @@ class HttpApiApp:
     """WSGI app exposing a small JSON API over the local node service."""
 
     API_VERSION = "v1"
+    ADDRESS_HISTORY_DEFAULT_LIMIT = 50
+    ADDRESS_HISTORY_MAX_LIMIT = 100
 
     def __init__(
         self,
@@ -343,7 +345,13 @@ class HttpApiApp:
             return self.service.utxo_diagnostics(address)
         if suffix == "history":
             query = parse_qs(environ.get("QUERY_STRING", ""))
-            limit = self._parse_optional_int(query, "limit", minimum=1, maximum=100, default=50)
+            limit = self._parse_optional_int(
+                query,
+                "limit",
+                minimum=1,
+                maximum=self.ADDRESS_HISTORY_MAX_LIMIT,
+                default=self.ADDRESS_HISTORY_DEFAULT_LIMIT,
+            )
             order = self._parse_optional_choice(query, "order", {"asc", "desc"}, default="desc")
             return self.service.address_history(address, limit=limit, descending=order == "desc")
         raise ApiError(404, "not_found", "not found")
