@@ -25,6 +25,8 @@ import {
   DEFAULT_AUTO_LOCK_MINUTES,
   SUBMITTED_TX_POLL_ALARM,
   WALLET_FORMAT_VERSION,
+  getSupportedNetwork,
+  type SupportedNetworkId,
 } from "../shared/constants";
 import { minutesToMilliseconds } from "../shared/time";
 import { normalizeNodeEndpoint, requireMinPasswordLength } from "../shared/validation";
@@ -38,8 +40,16 @@ import type {
   WalletSettings,
 } from "../state/app_state";
 import { loadSettings, saveSettings } from "../storage/preferences_store";
-import { clearSubmittedTransactions, loadSubmittedTransactions, saveSubmittedTransactions } from "../storage/session_store";
-import { clearWalletDataCache, loadWalletDataCache, saveWalletDataCache } from "../storage/wallet_data_store";
+import {
+  clearAllSubmittedTransactions,
+  loadSubmittedTransactions,
+  saveSubmittedTransactions,
+} from "../storage/session_store";
+import {
+  clearAllWalletDataCaches,
+  loadWalletDataCache,
+  saveWalletDataCache,
+} from "../storage/wallet_data_store";
 import { clearWalletRecord, loadWalletRecord, saveWalletRecord } from "../storage/wallet_store";
 import { AUTO_LOCK_ALARM } from "./alarms";
 
@@ -49,7 +59,7 @@ export async function initializeBackground(): Promise<void> {
   const [walletRecord, settings] = await Promise.all([loadWalletRecord(), loadSettings()]);
   if (!walletRecord) {
     extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
-    await clearWalletDataCache();
+    await clearAllWalletDataCaches();
     return;
   }
   await reconcileSubmittedTransactions(settings, walletRecord.address, { forceCheckAll: true });
@@ -109,8 +119,8 @@ export async function removeWallet(): Promise<AppState> {
   extensionAlarms().clear(AUTO_LOCK_ALARM);
   extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
   await clearWalletRecord();
-  await clearSubmittedTransactions();
-  await clearWalletDataCache();
+  await clearAllSubmittedTransactions();
+  await clearAllWalletDataCaches();
   return getAppState();
 }
 
@@ -160,17 +170,14 @@ export async function exportRecoveryPhrase(args: { password?: string; confirmAct
   return secret.recoveryPhrase;
 }
 
-export async function updateNodeEndpoint(nodeApiBaseUrl: string): Promise<AppState> {
+export async function updateNodeEndpoint(nodeApiBaseUrl: string, expectedNetwork: SupportedNetworkId): Promise<AppState> {
   await touchSession();
   const settings = await loadSettings();
+  const network = getSupportedNetwork(expectedNetwork);
   const normalized = normalizeNodeEndpoint(nodeApiBaseUrl);
   const client = ChipcoinApiClient.fromBaseUrl(normalized);
-  await client.health();
-  const status = await client.status();
-  if (status.network !== settings.expectedNetwork) {
-    throw new Error(`Wrong network. Expected ${settings.expectedNetwork}, got ${status.network}.`);
-  }
-  const nextSettings = { ...settings, nodeApiBaseUrl: normalized };
+  await validateClientNetwork(client, network.id);
+  const nextSettings = { ...settings, nodeApiBaseUrl: normalized, expectedNetwork: network.id };
   await saveSettings(nextSettings);
   const walletRecord = await loadWalletRecord();
   if (walletRecord) {
@@ -192,11 +199,8 @@ export async function refreshWalletData(): Promise<AppState> {
 
 export async function getWalletHistory(): Promise<WalletOverviewState["history"]> {
   await touchSession();
-  const [walletRecord, settings, submittedTransactions] = await Promise.all([
-    loadWalletRecord(),
-    loadSettings(),
-    loadSubmittedTransactions(),
-  ]);
+  const [walletRecord, settings] = await Promise.all([loadWalletRecord(), loadSettings()]);
+  const submittedTransactions = await loadSubmittedTransactions(settings.expectedNetwork);
   if (!walletRecord) {
     return [];
   }
@@ -218,6 +222,7 @@ export async function submitTransaction(args: {
   let built: ReturnType<typeof buildSignedPaymentTransaction> | null = null;
 
   try {
+    await validateClientNetwork(client, settings.expectedNetwork);
     const utxos = await client.utxos(activeSession.address);
     built = buildSignedPaymentTransaction({
       privateKeyHex: activeSession.privateKeyHex,
@@ -268,11 +273,10 @@ export async function submitTransaction(args: {
 
 export async function getAppState(): Promise<AppState> {
   await touchSession();
-  const [walletRecord, settings, submittedTransactions, walletDataCache] = await Promise.all([
-    loadWalletRecord(),
-    loadSettings(),
-    loadSubmittedTransactions(),
-    loadWalletDataCache(),
+  const [walletRecord, settings] = await Promise.all([loadWalletRecord(), loadSettings()]);
+  const [submittedTransactions, walletDataCache] = await Promise.all([
+    loadSubmittedTransactions(settings.expectedNetwork),
+    loadWalletDataCache(settings.expectedNetwork),
   ]);
 
   const overview = await buildOverview(walletRecord, settings, submittedTransactions, walletDataCache);
@@ -319,8 +323,8 @@ async function persistPrivateKeyWallet(privateKeyHex: string, password: string):
     ...encrypted,
   };
   extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
-  await clearSubmittedTransactions();
-  await clearWalletDataCache();
+  await clearAllSubmittedTransactions();
+  await clearAllWalletDataCaches();
   await saveWalletRecord(record);
   const settings = await loadSettings();
   activeSession = makeUnlockedSession({ walletType: "private_key", privateKeyHex }, settings.autoLockMinutes, 0);
@@ -351,8 +355,8 @@ async function persistSeedWallet(recoveryPhrase: string, password: string, accou
     ...encrypted,
   };
   extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
-  await clearSubmittedTransactions();
-  await clearWalletDataCache();
+  await clearAllSubmittedTransactions();
+  await clearAllWalletDataCaches();
   await saveWalletRecord(record);
   const settings = await loadSettings();
   activeSession = makeUnlockedSession(
@@ -438,7 +442,7 @@ async function refreshWalletDataCache(
   options: { includeHistory: boolean },
 ): Promise<WalletDataCache> {
   const client = ChipcoinApiClient.fromBaseUrl(settings.nodeApiBaseUrl);
-  const previous = await loadWalletDataCache();
+  const previous = await loadWalletDataCache(settings.expectedNetwork);
   const [summary, utxos, history] = await Promise.all([
     withFallback<AddressSummary | null>(client.address(address), previous.summary),
     withFallback<AddressUtxo[]>(client.utxos(address), previous.utxos),
@@ -452,7 +456,7 @@ async function refreshWalletDataCache(
     history,
     updatedAt: Date.now(),
   };
-  await saveWalletDataCache(next);
+  await saveWalletDataCache(next, settings.expectedNetwork);
   return next;
 }
 
@@ -461,7 +465,7 @@ async function reconcileSubmittedTransactions(
   address: string,
   options: { forceCheckAll: boolean },
 ): Promise<void> {
-  const submittedTransactions = await loadSubmittedTransactions();
+  const submittedTransactions = await loadSubmittedTransactions(settings.expectedNetwork);
   if (submittedTransactions.length === 0) {
     extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
     return;
@@ -492,7 +496,7 @@ async function reconcileSubmittedTransactions(
     }
   }
 
-  await saveSubmittedTransactions(next);
+  await saveSubmittedTransactions(next, settings.expectedNetwork);
   if (didConfirmAny) {
     await refreshWalletDataCache(settings, address, { includeHistory: true });
   }
@@ -500,7 +504,8 @@ async function reconcileSubmittedTransactions(
 }
 
 async function scheduleSubmittedTransactionPolling(): Promise<void> {
-  const submittedTransactions = await loadSubmittedTransactions();
+  const settings = await loadSettings();
+  const submittedTransactions = await loadSubmittedTransactions(settings.expectedNetwork);
   const nextChecks = submittedTransactions
     .filter((entry) => entry.status === "submitted")
     .map((entry) => entry.nextCheckAt ?? Date.now());
@@ -521,6 +526,14 @@ async function withFallback<T>(promise: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
+async function validateClientNetwork(client: ChipcoinApiClient, expectedNetwork: SupportedNetworkId): Promise<void> {
+  await client.health();
+  const status = await client.status();
+  if (status.network !== expectedNetwork) {
+    throw new Error(`Wrong network. Expected ${expectedNetwork}, got ${status.network}.`);
+  }
+}
+
 async function requireWalletRecord(): Promise<EncryptedWalletRecord> {
   const record = await loadWalletRecord();
   if (!record) {
@@ -530,6 +543,7 @@ async function requireWalletRecord(): Promise<EncryptedWalletRecord> {
 }
 
 export async function rememberSubmittedTransaction(record: SubmittedTransactionRecord): Promise<void> {
-  const current = await loadSubmittedTransactions();
-  await saveSubmittedTransactions(upsertSubmittedTransaction(current, record));
+  const settings = await loadSettings();
+  const current = await loadSubmittedTransactions(settings.expectedNetwork);
+  await saveSubmittedTransactions(upsertSubmittedTransaction(current, record), settings.expectedNetwork);
 }

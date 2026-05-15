@@ -1,5 +1,6 @@
 import type { AppState } from "./app_state";
 import type { HistoryEntry } from "../api/types";
+import type { SupportedNetworkId } from "../shared/constants";
 
 export type BackgroundRequest =
   | { type: "wallet:getState" }
@@ -14,7 +15,7 @@ export type BackgroundRequest =
   | { type: "wallet:remove" }
   | { type: "wallet:exportPrivateKey"; password?: string; confirmActiveSession?: boolean }
   | { type: "wallet:exportRecoveryPhrase"; password?: string; confirmActiveSession?: boolean }
-  | { type: "wallet:updateNode"; nodeApiBaseUrl: string }
+  | { type: "wallet:updateNode"; nodeApiBaseUrl: string; expectedNetwork: SupportedNetworkId }
   | { type: "wallet:refresh" }
   | { type: "wallet:submit"; recipient: string; amountChipbits: number; feeChipbits: number };
 

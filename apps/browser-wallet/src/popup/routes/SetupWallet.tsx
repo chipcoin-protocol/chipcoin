@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 
 import type { AppState } from "../../state/app_state";
-import { DEFAULT_NODE_ENDPOINT } from "../../shared/constants";
+import { DEFAULT_NETWORK, getSupportedNetwork } from "../../shared/constants";
 import { sendWalletMessage } from "../../shared/messages";
 
 type SetupMode = "create-seed" | "recover-seed" | "import-key";
 
 export function SetupWallet({ onCreated }: { onCreated(state: AppState): void }): JSX.Element {
+  const defaultNetwork = getSupportedNetwork(DEFAULT_NETWORK);
   const [mode, setMode] = useState<SetupMode>("create-seed");
   const [password, setPassword] = useState("");
   const [recoveryPhrase, setRecoveryPhrase] = useState("");
@@ -66,7 +67,7 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
   return (
     <section className="panel">
       <h2>Set Up Wallet</h2>
-      <p className="message">Create a new wallet, recover from a saved recovery phrase, or import a private key as a fallback. The default node is <span className="mono">{DEFAULT_NODE_ENDPOINT}</span>.</p>
+      <p className="message">Create a new wallet, recover from a saved recovery phrase, or import a private key as a fallback. The default network is {defaultNetwork.label} at <span className="mono">{defaultNetwork.defaultNodeApiBaseUrl}</span>; switch to testnet in Settings after setup.</p>
       <div className="nav-tabs">
         <button className={mode === "create-seed" ? "is-active" : ""} onClick={() => { setMode("create-seed"); setError(null); }}>
           Create

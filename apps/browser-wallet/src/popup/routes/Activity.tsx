@@ -45,7 +45,7 @@ export function Activity({ state }: { state: AppState }): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [state.address, state.nodeApiBaseUrl]);
+  }, [state.address, state.nodeApiBaseUrl, state.expectedNetwork]);
 
   function transactionUrl(txid: string): string {
     const explorerBaseUrl = DEFAULT_EXPLORER_URL.trim().replace(/\/+$/, "");

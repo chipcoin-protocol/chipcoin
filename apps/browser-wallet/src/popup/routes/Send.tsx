@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { AppState } from "../../state/app_state";
+import { getSupportedNetwork } from "../../shared/constants";
 import { parseChcToChipbits } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
 
@@ -14,8 +15,16 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
   let parsedAmountChipbits = 0;
   let parsedFeeChipbits = 0;
   let formError: string | null = null;
+  const activeNetwork = getSupportedNetwork(state.expectedNetwork);
+  const connectedNetwork = state.nodeStatus?.network ?? null;
+  const hasNetworkMismatch = connectedNetwork !== null && connectedNetwork !== state.expectedNetwork;
+  const hasEndpointValidationFailure = connectedNetwork === null || hasNetworkMismatch;
 
-  if (!recipient.trim()) {
+  if (connectedNetwork === null) {
+    formError = "Node endpoint is unavailable or has not passed network validation.";
+  } else if (hasNetworkMismatch) {
+    formError = `Wrong network. Expected ${state.expectedNetwork}, got ${connectedNetwork}.`;
+  } else if (!recipient.trim()) {
     formError = "Recipient address is required.";
   } else {
     try {
@@ -67,6 +76,9 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
     <section className="panel">
       <h2>Send</h2>
       <p className="message">Spending stays client-side. The wallet builds, signs, and serializes transactions locally before submitting raw hex to the node.</p>
+      <p><strong>Network:</strong> <span className="pill">{activeNetwork.label}</span></p>
+      <p><strong>Node API:</strong> <span className="mono">{state.nodeApiBaseUrl}</span></p>
+      {hasEndpointValidationFailure ? <p className="message error">Endpoint validation failed. Switch to a reachable {state.expectedNetwork} node before submitting transactions.</p> : null}
       <p><strong>From wallet:</strong> <span className="mono">{state.address}</span></p>
       <div className="stack">
         <label className="stack">

@@ -1,11 +1,13 @@
 import type { AppState } from "../../state/app_state";
 import { copyText } from "../../shared/clipboard";
+import { getSupportedNetwork } from "../../shared/constants";
 import { formatChc } from "../../shared/formatting";
 
 export function Overview(
   { state, isLoading, onRefresh }: { state: AppState; isLoading: boolean; onRefresh(): Promise<void> },
 ): JSX.Element {
   const summary = state.overview.summary;
+  const activeNetwork = getSupportedNetwork(state.expectedNetwork);
   const hasAddress = typeof state.address === "string" && state.address.length > 0;
   const connectedNetwork = isLoading && state.nodeStatus === null
     ? "Loading…"
@@ -26,8 +28,11 @@ export function Overview(
           </button>
         </div>
         <p><strong>Node API:</strong> <span className="mono">{state.nodeApiBaseUrl}</span></p>
-        <p><strong>Expected network:</strong> <span className="pill">{state.expectedNetwork}</span></p>
+        <p><strong>Active network:</strong> <span className="pill">{activeNetwork.label}</span> <span className="message">{activeNetwork.statusLabel}</span></p>
         <p><strong>Connected network:</strong> <span className={networkClassName}>{connectedNetwork}</span></p>
+        {connectedNetwork !== state.expectedNetwork && connectedNetwork !== "Loading…" ? (
+          <p className="message error">Network mismatch: this wallet will not submit transactions until the node reports {state.expectedNetwork}.</p>
+        ) : null}
         <p><strong>Height:</strong> {isLoading && state.nodeStatus === null ? "Loading…" : (state.nodeStatus?.height ?? "Unknown")}</p>
       </div>
       <button className="primary-button" onClick={() => void onRefresh()} disabled={isLoading}>

@@ -1,4 +1,5 @@
 import type { AddressSummary, AddressUtxo, HistoryEntry, NodeStatus } from "../api/types";
+import type { SupportedNetworkId } from "../shared/constants";
 
 export type SubmittedTransactionState = "submitted" | "confirmed" | "rejected" | "failed_to_submit";
 export type WalletType = "private_key" | "seed_phrase";
@@ -19,7 +20,7 @@ export interface SubmittedTransactionRecord {
 
 export interface WalletSettings {
   nodeApiBaseUrl: string;
-  expectedNetwork: string;
+  expectedNetwork: SupportedNetworkId;
   autoLockMinutes: number;
 }
 
@@ -71,7 +72,7 @@ export interface AppState {
   recoveryPhraseWordCount: number | null;
   address: string | null;
   nodeApiBaseUrl: string;
-  expectedNetwork: string;
+  expectedNetwork: SupportedNetworkId;
   autoLockMinutes: number;
   nodeStatus: NodeStatus | null;
   overview: WalletOverviewState;

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Chipcoin browser wallet is a minimal Chrome and Firefox extension for `devnet`.
+The Chipcoin browser wallet is a minimal Chrome and Firefox extension for Chipcoin development networks.
 
 It currently supports:
 
@@ -13,6 +13,7 @@ It currently supports:
 - address display
 - balance and history loading from the node HTTP API
 - local transaction build, sign, and broadcast
+- network switching between `devnet` and the public `testnet` candidate
 
 ## Prerequisites
 
@@ -80,9 +81,24 @@ Behavior:
 - `Recover` restores the same wallet deterministically from that recovery phrase
 - `Import key` remains available as a fallback for advanced users using raw private key hex
 
+## Networks
+
+Supported networks:
+
+- Devnet: default endpoint `https://api.chipcoinprotocol.com`
+- Testnet public candidate: default endpoint `http://127.0.0.1:28081`
+
+The testnet endpoint is intentionally local by default. Run a local/private testnet node and keep its HTTP API bound to localhost or a private interface.
+
+Never expose node HTTP `28081` publicly. Expose P2P `28444` only when operating a public testnet peer.
+
+Do not use `https://explorer.chipcoinprotocol.com/api/testnet` as a wallet endpoint. The explorer proxy is readonly and is not suitable for `POST /v1/tx/submit` or other wallet send operations.
+
+The extension manifests allow `http://*/*` and `https://*/*`, which covers `http://127.0.0.1:28081`. Some browsers may still show or require host permission approval for localhost access when the extension is installed or updated.
+
 ## Connect To A Node
 
-The browser wallet uses a fallback default endpoint from the repository `.env` at build time:
+The browser wallet uses a fallback devnet endpoint from the repository `.env` at build time:
 
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT`
 
@@ -92,12 +108,13 @@ In `.env.example`, that fallback is set to the public devnet node:
 
 Public devnet endpoints are provided for convenience and may change or become unavailable.
 
-To use a different node:
+To use a different node or switch network:
 
 1. Open the wallet popup
 2. Go to `Settings`
-3. Change the Node API URL
-4. Save
+3. Choose `Devnet` or `Testnet`
+4. Confirm or change the Node API URL
+5. Save
 
 Behavior:
 
@@ -106,9 +123,32 @@ Behavior:
 - manual override in the UI remains available at any time
 - the wallet verifies both `/v1/health` and `/v1/status` before saving a new endpoint
 - the wallet rejects endpoints on the wrong network
+- submitted transaction state and wallet data cache are stored under network-scoped keys
 - the Overview and Settings screens now show an explicit connection state and message for the saved endpoint
+- the Send screen blocks transaction submission when the connected node reports the wrong network
 
 If the node is remote, allow the wallet origin through `CHIPCOIN_HTTP_ALLOWED_ORIGINS`.
+
+## Testnet Wallet Endpoint
+
+Recommended testnet setup:
+
+1. Join testnet with a local node using the fast-join runbook.
+2. Keep HTTP local-only, for example `127.0.0.1:28081`.
+3. Open the browser wallet Settings screen.
+4. Select `Testnet`.
+5. Use `http://127.0.0.1:28081` as the Node API URL.
+6. Save and confirm Overview shows active network `Testnet` and connected network `testnet`.
+
+Verification commands:
+
+```bash
+curl -s https://bootstrap.chipcoinprotocol.com/v1/peers?network=testnet | jq
+curl -s https://explorer.chipcoinprotocol.com/api/testnet/v1/status | jq
+curl -s http://127.0.0.1:28081/v1/status | jq
+```
+
+The explorer command is for status comparison only. Do not configure the wallet to use the explorer API as its node endpoint.
 
 ## Endpoint Failure Modes
 
@@ -122,6 +162,8 @@ The wallet now distinguishes these common cases more explicitly:
   - the browser may block the request because of CORS, HTTPS, or mixed-content rules
 - wrong network
   - the endpoint answered, but not on the expected network
+- readonly explorer proxy
+  - the wallet endpoint was pointed at an explorer/API proxy that cannot submit transactions
 - stale saved endpoint
   - the wallet keeps the saved endpoint, but Overview and Settings show that it is currently unreachable
 
@@ -174,6 +216,9 @@ High-level model:
 - seed-based wallets store the encrypted recovery phrase and derive account `0` deterministically
 - private-key imports store the encrypted private key directly
 - no remote backup or cloud sync is implemented
+- wallet identity is shared across devnet and testnet; runtime cache and submitted transaction tracking are network-scoped
+- switching networks never reuses cached history or submitted transaction state from the other network
+- legacy devnet-only cache keys are read only as devnet fallback data, then newly refreshed data is written to devnet-scoped keys
 
 The current recovery phrase format is Chipcoin-specific and is not documented as BIP39-compatible.
 

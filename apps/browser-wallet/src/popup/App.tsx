@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { AppState } from "../state/app_state";
+import { getSupportedNetwork } from "../shared/constants";
 import { sendWalletMessage } from "../shared/messages";
 import { Activity } from "./routes/Activity";
 import { Backup } from "./routes/Backup";
@@ -55,9 +56,14 @@ export function App(): JSX.Element {
     return <Locked onUnlocked={setState} />;
   }
 
+  const activeNetwork = getSupportedNetwork(state.expectedNetwork);
+
   return (
     <main className="app-shell">
       <h1>Chipcoin Wallet</h1>
+      <p className="network-strip">
+        <strong>{activeNetwork.label}</strong> · <span className="mono">{state.nodeApiBaseUrl}</span>
+      </p>
       <nav className="nav-tabs">
         <button className={route === "overview" ? "is-active" : ""} onClick={() => setRoute("overview")}>Overview</button>
         <button className={route === "activity" ? "is-active" : ""} onClick={() => setRoute("activity")}>Activity</button>

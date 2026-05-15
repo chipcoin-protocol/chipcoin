@@ -80,7 +80,7 @@ async function handleMessage(message: BackgroundRequest): Promise<BackgroundResp
           },
         };
       case "wallet:updateNode":
-        return { ok: true, payload: await updateNodeEndpoint(message.nodeApiBaseUrl) };
+        return { ok: true, payload: await updateNodeEndpoint(message.nodeApiBaseUrl, message.expectedNetwork) };
       case "wallet:refresh":
         return { ok: true, payload: await refreshWalletData() };
       case "wallet:submit":

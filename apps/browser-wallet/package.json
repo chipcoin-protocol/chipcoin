@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "build": "npm run build:chrome && npm run build:firefox",
     "build:chrome": "vite build --mode chrome",
     "build:firefox": "vite build --mode firefox",
     "test": "vitest run"
