@@ -5,6 +5,8 @@ testnet candidate from the GitHub repository.
 
 Devnet remains separate and available as a fallback environment.
 
+For the fastest fresh-node onboarding path, use `docs/testnet-fast-join.md`.
+
 ## Testnet Parameters
 
 - Network: `testnet`

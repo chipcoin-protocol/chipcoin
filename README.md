@@ -472,6 +472,7 @@ Details:
 
 - `docs/setup-wizard.md`
 - `docs/testnet.md`
+- `docs/testnet-fast-join.md`
 
 ### Public Node Reachability
 
