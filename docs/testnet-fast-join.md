@@ -119,7 +119,7 @@ Choose:
 
 - role: `Full node`
 - network: `testnet`
-- environment file: `.env.testnet`
+- environment file: `.env`
 - discovery: bootstrap seed service
 - bootstrap URL: `https://bootstrap.chipcoinprotocol.com`
 - node bootstrap: `snapshot` or `auto`
@@ -139,7 +139,7 @@ When prompted, use that path as the trusted snapshot keys file.
 Start the node after the wizard finishes:
 
 ```bash
-docker compose -f docker-compose.yml --env-file .env.testnet -p chipcoin-testnet up -d --build node
+docker compose -f docker-compose.yml up -d --build node
 ```
 
 ## Manual Docker Path

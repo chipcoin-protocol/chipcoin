@@ -1,6 +1,6 @@
 # Chipcoin v2
 
-Chipcoin v2 is a Python-first, Bitcoin-inspired blockchain project focused on a small but operational devnet stack.
+Chipcoin v2 is a Python-first, Bitcoin-inspired blockchain project focused on a small but operational public testnet stack.
 
 This public repository is centered on three components:
 
@@ -8,17 +8,18 @@ This public repository is centered on three components:
 - `miner`
 - `browser-wallet`
 
-The current public release target is `devnet`, not mainnet.
+The current public release target is `testnet`, not mainnet. Devnet remains available as an explicit legacy/development profile.
 
-Public devnet fallback defaults included in `.env.example`:
+Public testnet defaults included in `.env.example`:
 
-- node API: `https://api.chipcoinprotocol.com`
-- bootstrap peer: `chipcoinprotocol.com:18444`
-- public P2P port: `18444/tcp`
-- explorer URL: `https://explorer.chipcoinprotocol.com`
+- wallet-safe API: `https://testnet-api.chipcoinprotocol.com`
+- bootstrap service: `https://bootstrap.chipcoinprotocol.com`
+- public P2P port: `28444/tcp`
+- local node HTTP: `127.0.0.1:28081`
+- explorer status: `https://explorer.chipcoinprotocol.com/api/testnet/v1/status`
 
 These are fallback defaults only. They are not required and can be replaced with your own node, peer, and inspection tooling.
-Public devnet endpoints are provided for convenience and may change or become unavailable.
+Public testnet endpoints are provided for convenience and may change or become unavailable.
 
 ## Current Status
 
@@ -38,11 +39,12 @@ What works today:
 - reward-node registration, renewal, and deterministic epoch settlement
 - reward-node automation for on-chain renewal and attestation
 - automatic reward settlement inclusion at epoch close
-- public devnet bootstrap path for first CHC through the faucet flow used by the setup wizard
+- public testnet bootstrap path, signed snapshots, wallet-safe API, and faucet flow
 
 What is intentionally limited today:
 
-- `devnet` is the only supported public network for this release
+- `testnet` is the supported public candidate network for this release
+- `devnet` is retained for legacy/local development use
 - the node runtime does not use a wallet file yet
 - browser wallet recovery phrases are Chipcoin-specific and not BIP39-compatible yet
 - no multisig, no multiple accounts, no hardware wallet support
@@ -227,7 +229,7 @@ At minimum, set real values for:
 
 `NODE_DATA_PATH` must be a writable SQLite file path. Do not point it at a directory.
 
-For the shortest first run, you can either keep the public devnet defaults from `.env.example` or replace them with your own values.
+For the shortest first run, keep the public testnet defaults from `.env.example` or replace them with your own values.
 
 If you want a fully local first run, set:
 
@@ -240,8 +242,8 @@ If you want a fully local first run, set:
 - `BOOTSTRAP_ANNOUNCE_ENABLED=false`
 - `NODE_PUBLIC_HOST=`
 - `NODE_PUBLIC_P2P_PORT=`
-- `MINING_NODE_URLS=http://node:8081`
-- `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:8081`
+- `MINING_NODE_URLS=http://node:28081`
+- `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:28081`
 
 This starts an isolated local node with a miner that immediately pulls templates from the local node HTTP API.
 
@@ -262,16 +264,16 @@ Chipcoin now supports two node bootstrap paths:
 Snapshot workflow:
 
 ```bash
-chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot
-chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot
-chipcoin --data /runtime/node.sqlite3 run --snapshot-file /runtime/devnet.snapshot --peer chipcoinprotocol.com:18444
+chipcoin --network testnet --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/testnet.snapshot
+chipcoin --network testnet --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/testnet.snapshot
+chipcoin --network testnet --data /runtime/node.sqlite3 run --snapshot-file /runtime/testnet.snapshot --bootstrap-url https://bootstrap.chipcoinprotocol.com
 ```
 
 Use full sync when you want maximum assurance. Use snapshot bootstrap when you trust the snapshot publisher operationally and want a much faster first sync.
 
-Public devnet defaults already point at the hosted snapshot manifest service:
+Public testnet defaults already point at the hosted snapshot manifest service:
 
-- `NODE_SNAPSHOT_MANIFEST_URLS=https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json`
+- `NODE_SNAPSHOT_MANIFEST_URLS=https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json`
 
 If that manifest is healthy, a fresh node can bootstrap from the published snapshot set instead of replaying the full chain from genesis.
 
@@ -283,25 +285,25 @@ Snapshot format notes:
 - force `v1` export when needed with:
 
 ```bash
-chipcoin --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/devnet.snapshot.v1.json --snapshot-format v1
+chipcoin --network testnet --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/testnet.snapshot.v1.json --snapshot-format v1
 ```
 
 Signing works for both `v1` and `v2` snapshots:
 
 ```bash
-chipcoin snapshot-sign --snapshot-file /runtime/devnet.snapshot --private-key-hex <ED25519_PRIVATE_KEY_HEX>
+chipcoin snapshot-sign --snapshot-file /runtime/testnet.snapshot --private-key-hex <ED25519_PRIVATE_KEY_HEX>
 ```
 
 Signed snapshot import in strict mode:
 
 ```bash
 chipcoin --data /runtime/node.sqlite3 snapshot-import \
-  --snapshot-file /runtime/devnet.snapshot \
+  --snapshot-file /runtime/testnet.snapshot \
   --snapshot-trust-mode enforce \
   --snapshot-trusted-key <ED25519_PUBLIC_KEY_HEX>
 ```
 
-If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=18444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it.
+If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=28444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it. Keep HTTP on `127.0.0.1:28081`.
 
 ## First Deploy Path
 
@@ -316,7 +318,7 @@ Shortest documented operator path:
 7. start `miner` only after the node path is understood
 8. add browser wallet or explorer after the node API is stable
 
-If you want to run a reward-participating node on the public devnet, add these practical steps after basic node health:
+If you want to run a reward-participating node on the public testnet, add these practical steps after basic node health:
 
 9. obtain initial devnet CHC through the faucet or another funded devnet wallet
 10. register the reward node on-chain
@@ -387,12 +389,12 @@ Service-specific discovery precedence:
 Recommended operator modes:
 
 - `node` + `miner` on the same host/compose
-  - leave `NODE_DIRECT_PEERS=chipcoinprotocol.com:18444`
-  - leave `MINING_NODE_URLS=http://node:8081`
+  - leave `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
+  - leave `MINING_NODE_URLS=http://node:28081`
 - miner-only host
-  - set `MINING_NODE_URLS=https://api.chipcoinprotocol.com`
+  - set `MINING_NODE_URLS` to a private/full node API; do not use the wallet-safe public testnet API for mining
 - node-only follower host
-  - set `NODE_DIRECT_PEERS=chipcoinprotocol.com:18444` or `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
+  - set `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
   - leave miner-specific vars unused
 - public bootstrap seed contributor
   - set `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
@@ -437,12 +439,13 @@ The wizard can now prepare:
 - a miner
 - a reward-participating node with prewired `REWARD_NODE_AUTO_*` env values
 
-For testnet, the wizard writes a dedicated `.env.testnet` by default and prints
-Compose commands using `--env-file .env.testnet -p chipcoin-testnet`.
+Testnet is now the default wizard path. It writes `.env` by default so plain
+`docker compose ps` and `docker compose up -d node` operate on the testnet
+project. Choose `devnet` only when you intentionally want the legacy profile.
 
-For reward-node operators on the public devnet, the wizard assumes the bootstrap funding source is the faucet path or another funded devnet wallet. Registration still requires CHC because reward-node participation is an on-chain paid action.
+For reward-node operators on the public testnet, the wizard assumes the bootstrap funding source is the faucet path or another funded testnet wallet. Registration still requires CHC because reward-node participation is an on-chain paid action.
 
-For a clean devnet chain reset that preserves wallets and rereads paths from `.env`, use:
+For a clean chain reset that preserves wallets and rereads paths from `.env`, use:
 
 ```bash
 bash scripts/runtime/reset-chain.sh
@@ -451,11 +454,11 @@ bash scripts/runtime/reset-chain.sh
 Available modes:
 
 - `Quick start`
-  Uses the public devnet defaults for node endpoint, bootstrap peer, and explorer URL.
+  Uses the public testnet defaults for bootstrap, snapshot, wallet-safe API, and explorer status.
 - `Custom configuration`
   Prompts for node endpoint, bootstrap peer, and explorer URL, then writes them into `.env`.
 - `Local/self-hosted`
-  Uses `http://127.0.0.1:8081`, leaves bootstrap empty, and does not depend on public endpoints.
+  Uses the selected network's localhost HTTP port, leaves bootstrap empty, and does not depend on public endpoints.
 
 Use the wizard when:
 
@@ -476,22 +479,21 @@ Details:
 
 ### Public Node Reachability
 
-Nodes that do not expose `TCP 18444` can still connect outbound and participate in the devnet.
+Nodes that do not expose `TCP 28444` can still connect outbound and participate in testnet.
 
 However, outbound-only nodes do not materially improve peer discovery or overall network resilience because other peers cannot reliably dial them back.
 
 For best network health, operators should:
 
-- keep the public devnet P2P listener on `TCP 18444`
-- expose and forward `TCP 18444` when possible
+- keep the public testnet P2P listener on `TCP 28444`
+- expose and forward `TCP 28444` when possible
 - ensure the announced endpoint is publicly reachable from outside the local network
 
-The HTTP/API port (`8081`) and explorer port (`4173`) are optional operator interfaces. They are not required for basic P2P participation.
+The HTTP/API port (`28081`) and explorer port (`4173`) are optional operator interfaces. They are not required for basic P2P participation.
 In the default Docker Compose stack, the HTTP/API port is published on `127.0.0.1` only; expose it publicly through a reverse proxy such as Apache/Nginx if needed.
 
-Testnet uses a separate public P2P port, `TCP 28444`, and local-only HTTP port
-`28081`. Keep testnet HTTP bound to `127.0.0.1`; public firewall rules should
-open only the P2P port unless you intentionally add a reverse proxy.
+Devnet remains available as an unusual legacy profile on `TCP 18444` and
+localhost HTTP `8081`.
 
 ### Create A Miner Wallet
 

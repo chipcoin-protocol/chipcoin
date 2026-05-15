@@ -45,6 +45,11 @@ PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
 PUBLIC_DEVNET_BOOTSTRAP_URL = "http://chipcoinprotocol.com:28080"
 PUBLIC_DEVNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com"
 PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json"
+PUBLIC_TESTNET_WALLET_API_ENDPOINT = "https://testnet-api.chipcoinprotocol.com"
+PUBLIC_TESTNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:28444"
+PUBLIC_TESTNET_BOOTSTRAP_URL = "https://bootstrap.chipcoinprotocol.com"
+PUBLIC_TESTNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com/api/testnet"
+PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
 TESTNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:28081"
 PUBLIC_IP_DETECT_URLS = (
     "https://api.ipify.org",
@@ -54,24 +59,24 @@ SNAPSHOT_STALE_WARNING_SECONDS = 6 * 60 * 60
 SNAPSHOT_LARGE_DELTA_WARNING_SECONDS = 24 * 60 * 60
 COMPOSE_FILE_PATH = REPO_ROOT / "docker-compose.yml"
 DEFAULTS = {
-    "CHIPCOIN_NETWORK": "devnet",
-    "COMPOSE_PROJECT_NAME": "chipcoin",
+    "CHIPCOIN_NETWORK": "testnet",
+    "COMPOSE_PROJECT_NAME": "chipcoin-testnet",
     "CHIPCOIN_RUNTIME_DIR": str(RUNTIME_ROOT),
-    "DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
-    "DEFAULT_BOOTSTRAP_PEER": PUBLIC_DEVNET_BOOTSTRAP_PEER,
-    "DEFAULT_EXPLORER_URL": PUBLIC_DEVNET_EXPLORER_URL,
-    "NODE_DATA_PATH": NODE_DATA_PATH,
+    "DEFAULT_NODE_ENDPOINT": PUBLIC_TESTNET_WALLET_API_ENDPOINT,
+    "DEFAULT_BOOTSTRAP_PEER": PUBLIC_TESTNET_BOOTSTRAP_PEER,
+    "DEFAULT_EXPLORER_URL": PUBLIC_TESTNET_EXPLORER_URL,
+    "NODE_DATA_PATH": TESTNET_NODE_DATA_PATH,
     "NODE_BOOTSTRAP_MODE": "auto",
-    "NODE_SNAPSHOT_MANIFEST_URLS": PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL,
-    "NODE_SNAPSHOT_FILE": NODE_SNAPSHOT_PATH,
+    "NODE_SNAPSHOT_MANIFEST_URLS": PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL,
+    "NODE_SNAPSHOT_FILE": TESTNET_NODE_SNAPSHOT_PATH,
     "NODE_SNAPSHOT_TRUST_MODE": "warn",
     "NODE_SNAPSHOT_TRUSTED_KEYS_FILE": "",
     "NODE_SNAPSHOT_SELECTED_URL": "",
     "NODE_SNAPSHOT_SELECTED_HEIGHT": "",
     "NODE_SNAPSHOT_SELECTED_HASH": "",
     "NODE_LOG_LEVEL": "INFO",
-    "NODE_P2P_BIND_PORT": "18444",
-    "NODE_HTTP_BIND_PORT": "8081",
+    "NODE_P2P_BIND_PORT": "28444",
+    "NODE_HTTP_BIND_PORT": "28081",
     "NODE_HTTP_PUBLISH_HOST": "127.0.0.1",
     "CHIPCOIN_HTTP_ALLOWED_ORIGINS": "",
     "MINER_LOG_LEVEL": "INFO",
@@ -84,19 +89,19 @@ DEFAULTS = {
     "REWARD_NODE_AUTO_RENEW_ENABLED": "true",
     "REWARD_NODE_AUTO_ATTEST_ENABLED": "true",
     "REWARD_NODE_AUTO_POLL_INTERVAL_SECONDS": "5.0",
-    "MINING_MIN_INTERVAL_SECONDS": "1.0",
-    "MINING_NODE_URLS": "http://node:8081",
+    "MINING_MIN_INTERVAL_SECONDS": "10.0",
+    "MINING_NODE_URLS": "http://node:28081",
     "MINING_MINER_ID": "",
     "MINING_POLLING_INTERVAL_SECONDS": "2.0",
     "MINING_REQUEST_TIMEOUT_SECONDS": "10.0",
-    "MINING_NONCE_BATCH_SIZE": "250000",
+    "MINING_NONCE_BATCH_SIZE": "50000",
     "MINING_TEMPLATE_REFRESH_SKEW_SECONDS": "1",
-    "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_DEVNET_NODE_ENDPOINT,
+    "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_TESTNET_WALLET_API_ENDPOINT,
     "NODE_DIRECT_PEERS": "",
     "NODE_DIRECT_PEER": "",
-    "NODE_BOOTSTRAP_URL": PUBLIC_DEVNET_BOOTSTRAP_URL,
+    "NODE_BOOTSTRAP_URL": PUBLIC_TESTNET_BOOTSTRAP_URL,
     "NODE_PUBLIC_HOST": "",
-    "NODE_PUBLIC_P2P_PORT": "18444",
+    "NODE_PUBLIC_P2P_PORT": "28444",
     "DIRECT_PEERS": "",
     "DIRECT_PEER": "",
     "BOOTSTRAP_URL": "",
@@ -133,7 +138,7 @@ def main() -> int:
     setup_mode = _ask_choice(
         "Select setup mode",
         {
-            "quick": "Quick start (use public devnet defaults)",
+            "quick": "Quick start (use public testnet defaults)",
             "custom": "Custom configuration",
             "local": "Local/self-hosted",
         },
@@ -156,7 +161,7 @@ def main() -> int:
             "devnet": "Devnet",
             "testnet": "Public testnet candidate",
         },
-        "devnet",
+        "testnet",
     )
     env_path = _ask_env_path(network)
     runtime_mode = _ask_choice("How should services run?", {"foreground": "Foreground", "background": "Background"}, "foreground")
@@ -253,7 +258,7 @@ def _ask_choice(prompt: str, options: dict[str, str], default: str) -> str:
 
 
 def _ask_env_path(network: str) -> Path:
-    default_path = REPO_ROOT / (".env.testnet" if network == "testnet" else ".env")
+    default_path = REPO_ROOT / (".env" if network == "testnet" else ".env.devnet")
     answer = input(f"Where should the environment file be written? [{default_path}]: ").strip()
     path = Path(answer) if answer else default_path
     if not path.is_absolute():
@@ -562,6 +567,7 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
 
     env_values["CHIPCOIN_NETWORK"] = network
     if network == "devnet":
+        env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-devnet"
         env_values["NODE_DATA_PATH"] = NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = NODE_SNAPSHOT_PATH
         env_values["NODE_P2P_BIND_PORT"] = "18444"
@@ -578,18 +584,19 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["MINING_NONCE_BATCH_SIZE"] = "250000"
         return
     if network == "testnet":
+        env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-testnet"
         env_values["NODE_DATA_PATH"] = TESTNET_NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = TESTNET_NODE_SNAPSHOT_PATH
         env_values["NODE_P2P_BIND_PORT"] = "28444"
         env_values["NODE_PUBLIC_P2P_PORT"] = "28444"
         env_values["NODE_HTTP_BIND_PORT"] = "28081"
         env_values["NODE_HTTP_PUBLISH_HOST"] = "127.0.0.1"
-        env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = ""
-        env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
-        env_values["NODE_BOOTSTRAP_URL"] = ""
-        env_values["DEFAULT_NODE_ENDPOINT"] = TESTNET_LOCAL_NODE_ENDPOINT
-        env_values["DEFAULT_EXPLORER_URL"] = ""
-        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = TESTNET_LOCAL_NODE_ENDPOINT
+        env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL
+        env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_TESTNET_BOOTSTRAP_PEER
+        env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_TESTNET_BOOTSTRAP_URL
+        env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_TESTNET_WALLET_API_ENDPOINT
+        env_values["DEFAULT_EXPLORER_URL"] = PUBLIC_TESTNET_EXPLORER_URL
+        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_TESTNET_WALLET_API_ENDPOINT
         env_values["MINING_MIN_INTERVAL_SECONDS"] = "10.0"
         env_values["MINING_NONCE_BATCH_SIZE"] = "50000"
         return
@@ -598,6 +605,10 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
 
 def _public_node_endpoint_for_network(network: str) -> str:
     return PUBLIC_DEVNET_NODE_ENDPOINT if network == "devnet" else TESTNET_LOCAL_NODE_ENDPOINT
+
+
+def _wallet_endpoint_for_network(network: str) -> str:
+    return PUBLIC_DEVNET_NODE_ENDPOINT if network == "devnet" else PUBLIC_TESTNET_WALLET_API_ENDPOINT
 
 
 def _same_compose_node_endpoint(env_values: dict[str, str]) -> str:
@@ -614,7 +625,7 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str, *,
 
     if setup_mode == "quick":
         env_values["DEFAULT_NODE_ENDPOINT"] = public_or_local_endpoint
-        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = public_or_local_endpoint
+        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = _wallet_endpoint_for_network(network)
         env_values["NODE_DIRECT_PEERS"] = ""
         env_values["NODE_DIRECT_PEER"] = ""
         env_values["MINING_NODE_URLS"] = miner_node_default
@@ -1128,9 +1139,7 @@ def _print_success(
     service_role = "node" if role == "reward-node" else role
     command_suffix = {"node": "node", "miner": "miner", "both": "node miner"}[service_role]
     env_file_arg = f"--env-file {env_path.relative_to(REPO_ROOT) if env_path.is_relative_to(REPO_ROOT) else env_path}"
-    compose_base = f"docker compose {env_file_arg}"
-    if network == "testnet":
-        compose_base = f"{compose_base} -p chipcoin-testnet"
+    compose_base = "docker compose" if env_path == ENV_PATH else f"docker compose {env_file_arg}"
     compose_up_background = f"{compose_base} up -d {command_suffix}".strip()
 
     print()

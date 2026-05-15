@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The setup wizard is a guided way to create a local `.env`, prepare runtime paths, and initialize the public Chipcoin devnet stack without editing every setting by hand.
+The setup wizard is a guided way to create a local `.env`, prepare runtime paths, and initialize the public Chipcoin testnet stack without editing every setting by hand.
 
 Run it from the repository root:
 
@@ -10,9 +10,10 @@ Run it from the repository root:
 python3 scripts/setup/wizard.py
 ```
 
-The wizard writes a local `.env` in the repository root. It does not change the protocol, and it does not modify public defaults in the repository.
-When `testnet` is selected, the recommended output is `.env.testnet` so the
-operator can run devnet and testnet as separate Compose projects.
+The wizard writes a local `.env` in the repository root by default. It does not
+change the protocol, and it does not modify public defaults in the repository.
+Devnet remains selectable, but is treated as an explicit legacy/development
+profile.
 
 The wizard is now Docker-first:
 
@@ -44,31 +45,20 @@ Prefer the manual setup flow from `README.md` when:
 
 ### Quick Start
 
-This mode uses the public devnet defaults when `devnet` is selected:
+This mode uses public testnet defaults:
 
-- node endpoint: `https://api.chipcoinprotocol.com`
-- bootstrap peer: `chipcoinprotocol.com:18444`
-- explorer URL: `https://explorer.chipcoinprotocol.com`
-
-This is the shortest path if you want to connect quickly to the public devnet environment.
-
-Public devnet endpoints are provided for convenience and may change or become unavailable.
-
-When `testnet` is selected, quick mode uses public testnet candidate defaults:
-
-- node endpoint: `http://127.0.0.1:28081`
+- wallet-safe endpoint: `https://testnet-api.chipcoinprotocol.com`
 - P2P port: `28444`
 - HTTP port: `28081`, published on `127.0.0.1` only
-- bootstrap peer: empty
-- snapshot manifest URL: empty by default; operators may opt into the public
-  testnet manifest when published
-- explorer URL: empty
+- bootstrap URL: `https://bootstrap.chipcoinprotocol.com`
+- snapshot manifest URL: `https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json`
+- explorer status API: `https://explorer.chipcoinprotocol.com/api/testnet/v1/status`
 - miner minimum block interval: `10.0` seconds
 - miner nonce batch size: `50000`
 
-See `docs/testnet.md` for the public testnet candidate runbook. Official
-bootstrap and explorer endpoints are available separately. Snapshot bootstrap
-is optional and faucet support remains a separate follow-up item.
+This is the shortest path if you want to connect quickly to the public testnet
+candidate. Public testnet endpoints are provided for convenience and may change
+or become unavailable.
 
 ### Custom Configuration
 
@@ -84,7 +74,7 @@ Use it when you want guided setup but do not want the public defaults.
 
 This mode writes local-first defaults:
 
-- node endpoint: `http://127.0.0.1:8081`
+- node endpoint: selected network localhost HTTP, for testnet `http://127.0.0.1:28081`
 - bootstrap peer: empty
 - explorer URL: empty
 
@@ -225,7 +215,7 @@ If reward-node mode is selected, the wizard also:
 
 The wizard writes:
 
-- `.env` or `.env.testnet` in the repository root
+- `.env` in the repository root by default, or a custom env path if you choose one
 - runtime data file paths under the configured runtime directory
 - miner wallet file under the configured runtime directory when needed
 - reward-node wallet file under the configured runtime directory when reward-node mode is selected
@@ -247,25 +237,14 @@ For clean installs, prefer multiple known-good startup peers when you have them.
 Wizard defaults by operator mode:
 
 - `node` + `miner` on one host
-  - node uses the public devnet peer
-  - miner uses `http://node:8081`
-- testnet
-  - node uses `28444/tcp` for public P2P
-  - node publishes HTTP on `127.0.0.1:28081`
-  - node starts isolated unless manual peers are provided
-  - miner uses `http://node:28081` inside the same Compose project
+  - node uses public testnet bootstrap discovery
+  - miner uses `http://node:28081`
   - miner uses conservative public-testnet defaults to avoid one-to-two-second block production
-
-For testnet, the success output prints Compose commands with:
-
-```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet ...
-```
 - miner-only host
-  - miner uses `https://api.chipcoinprotocol.com`
+  - miner must use a private/full node API, not `https://testnet-api.chipcoinprotocol.com`
 - local/self-hosted node + miner
   - node starts isolated
-  - miner uses `http://node:8081`
+  - miner uses the selected network's Compose node HTTP port
 
 Practical rule:
 

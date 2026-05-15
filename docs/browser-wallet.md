@@ -85,8 +85,8 @@ Behavior:
 
 Supported networks:
 
-- Devnet: default endpoint `https://api.chipcoinprotocol.com`
 - Testnet public candidate: default endpoint `https://testnet-api.chipcoinprotocol.com`
+- Devnet: explicit legacy/development endpoint `https://api.chipcoinprotocol.com`
 
 The testnet default is a public wallet-safe API. It exposes only wallet reads
 and transaction submission, not raw node internals. Operators can still override
@@ -102,15 +102,15 @@ or require host permission approval when the extension is installed or updated.
 
 ## Connect To A Node
 
-The browser wallet uses a fallback devnet endpoint from the repository `.env` at build time:
+The browser wallet uses a fallback endpoint from the repository `.env` at build time:
 
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT`
 
-In `.env.example`, that fallback is set to the public devnet node:
+In `.env.example`, that fallback is set to the public wallet-safe testnet API:
 
-- `https://api.chipcoinprotocol.com`
+- `https://testnet-api.chipcoinprotocol.com`
 
-Public devnet endpoints are provided for convenience and may change or become unavailable.
+Public testnet endpoints are provided for convenience and may change or become unavailable.
 
 To use a different node or switch network:
 

@@ -35,7 +35,7 @@ The wallet-safe API pattern is network-extensible. Future mainnet should use a
 separate hostname and the same allowlist model rather than exposing raw node
 HTTP.
 
-## Generate `.env.testnet` With The Wizard
+## Generate `.env` With The Wizard
 
 From the repository root:
 
@@ -48,7 +48,7 @@ Choose:
 - setup mode: `quick` for standard public-testnet candidate defaults, or `custom` when you need explicit peers
 - role: `Full node`, `Miner`, or `Reward node`
 - network: `testnet`
-- environment file: accept `.env.testnet`
+- environment file: accept `.env`
 
 For a full node or reward node, enter your public P2P host/IP if the node accepts
 inbound internet connections. Use port `28444`.
@@ -62,7 +62,7 @@ reward-node wallet.
 Start the node:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet up -d --build node
+docker compose up -d --build node
 ```
 
 Verify ports:
@@ -89,7 +89,7 @@ curl -s http://127.0.0.1:28081/v1/status \
 Watch logs:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet logs -f node
+docker compose logs -f node
 ```
 
 ## Optional Testnet Snapshot Bootstrap
@@ -178,7 +178,7 @@ The expected testnet service settings are:
 ```bash
 NETWORK="testnet"
 BASE_URL="https://chipcoinprotocol.com/downloads/snapshots/testnet"
-COMPOSE_CMD="docker compose -f /opt/chipcoin/docker-compose.yml --env-file /opt/chipcoin/.env.testnet -p chipcoin-testnet"
+COMPOSE_CMD="docker compose -f /opt/chipcoin/docker-compose.yml --env-file /opt/chipcoin/.env"
 STATUS_URL="http://127.0.0.1:28081/v1/status"
 ```
 
@@ -274,13 +274,13 @@ The miner requires a wallet file configured by `MINER_WALLET_FILE`.
 Start miner only after the node is synced:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet up -d --build miner
+docker compose up -d --build miner
 ```
 
 Inspect miner logs:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet logs miner --since 2m
+docker compose logs miner --since 2m
 ```
 
 The conservative testnet miner defaults are intentional. Do not lower
@@ -294,7 +294,7 @@ A reward node is a full node plus an on-chain reward-node registration.
 Generate or import a reward wallet with the wizard, or manually:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
+docker compose exec node \
   chipcoin --network testnet wallet-generate \
   --wallet-file /var/lib/chipcoin/wallets/testnet-reward-node-wallet.json
 ```
@@ -302,7 +302,7 @@ docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
 Read wallet address and public key:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
+docker compose exec node \
   chipcoin --network testnet wallet-address \
   --wallet-file /var/lib/chipcoin/wallets/testnet-reward-node-wallet.json
 ```
@@ -312,12 +312,12 @@ Fund the reward wallet before registration. Then register:
 ```bash
 REWARD_NODE_ID="testnet-reward-node-example"
 REWARD_WALLET="/var/lib/chipcoin/wallets/testnet-reward-node-wallet.json"
-REWARD_ADDR="$(docker compose --env-file .env.testnet -p chipcoin-testnet exec -T node \
+REWARD_ADDR="$(docker compose exec -T node \
   chipcoin --network testnet wallet-address --wallet-file "$REWARD_WALLET" | jq -r .address)"
-REWARD_PUBKEY="$(docker compose --env-file .env.testnet -p chipcoin-testnet exec -T node \
+REWARD_PUBKEY="$(docker compose exec -T node \
   chipcoin --network testnet wallet-address --wallet-file "$REWARD_WALLET" | jq -r .public_key_hex)"
 
-docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
+docker compose exec node \
   chipcoin --network testnet --data /runtime/node.sqlite3 register-reward-node \
   --wallet-file "$REWARD_WALLET" \
   --node-id "$REWARD_NODE_ID" \
@@ -327,7 +327,7 @@ docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
   --declared-port 28444
 ```
 
-Enable automation in `.env.testnet`:
+Enable automation in `.env`:
 
 ```dotenv
 REWARD_NODE_AUTO_NODE_ID=testnet-reward-node-example
@@ -339,16 +339,16 @@ REWARD_NODE_AUTO_RENEW_ENABLED=true
 REWARD_NODE_AUTO_ATTEST_ENABLED=true
 ```
 
-Restart node after changing `.env.testnet`:
+Restart node after changing `.env`:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet up -d --build node
+docker compose up -d --build node
 ```
 
 Check reward-node status:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
+docker compose exec node \
   chipcoin --network testnet --data /runtime/node.sqlite3 reward-node-status \
   --node-id "$REWARD_NODE_ID" \
   | jq '{node_id, active, eligibility_status, eligibility_reason, last_renewal_epoch, last_renewal_height}'
@@ -357,7 +357,7 @@ docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
 Check reward epochs:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet exec node \
+docker compose exec node \
   chipcoin --network testnet --data /runtime/node.sqlite3 reward-epoch-summary \
   --epoch-index 12 \
   | jq '{epoch_index, settlement_exists, settlement_status, rewarded_node_count, payout_totals, reward_entries}'
@@ -376,13 +376,13 @@ Inspect:
 ```bash
 ls -la docker-compose*.yml
 grep -R "8081\|18444\|container_name" docker-compose*.yml
-docker compose --env-file .env.testnet -p chipcoin-testnet config | grep -A20 'ports:'
+docker compose config | grep -A20 'ports:'
 ```
 
 Bypass the override:
 
 ```bash
-docker compose -f docker-compose.yml --env-file .env.testnet -p chipcoin-testnet up -d --build node
+docker compose -f docker-compose.yml up -d --build node
 ```
 
 Or rename it:
@@ -408,7 +408,7 @@ NODE_HTTP_PUBLISH_HOST=127.0.0.1
 Restart:
 
 ```bash
-docker compose --env-file .env.testnet -p chipcoin-testnet up -d --build node
+docker compose up -d --build node
 ```
 
 ### NAT or firewall blocks peers
@@ -436,10 +436,10 @@ If `sync_phase` is `synced`, the tip matches other nodes, and
 
 ### Node behind old config
 
-Regenerate `.env.testnet` with the wizard or verify these values:
+Regenerate `.env` with the wizard or verify these values:
 
 ```bash
-grep -E '^(CHIPCOIN_NETWORK|NODE_P2P_BIND_PORT|NODE_HTTP_BIND_PORT|NODE_HTTP_PUBLISH_HOST|MINING_NODE_URLS|MINING_MIN_INTERVAL_SECONDS)=' .env.testnet
+grep -E '^(CHIPCOIN_NETWORK|NODE_P2P_BIND_PORT|NODE_HTTP_BIND_PORT|NODE_HTTP_PUBLISH_HOST|MINING_NODE_URLS|MINING_MIN_INTERVAL_SECONDS)=' .env
 ```
 
 Expected:

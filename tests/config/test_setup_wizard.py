@@ -74,7 +74,7 @@ def test_local_mode_same_host_keeps_node_isolated_and_miner_local_http() -> None
     assert env_values["DIRECT_PEERS"] == ""
 
 
-def test_testnet_network_defaults_are_separate_and_do_not_point_to_devnet_bootstrap() -> None:
+def test_testnet_network_defaults_use_public_testnet_bootstrap_and_snapshot() -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
 
@@ -89,29 +89,29 @@ def test_testnet_network_defaults_are_separate_and_do_not_point_to_devnet_bootst
     assert env_values["NODE_HTTP_PUBLISH_HOST"] == "127.0.0.1"
     assert env_values["MINING_MIN_INTERVAL_SECONDS"] == "10.0"
     assert env_values["MINING_NONCE_BATCH_SIZE"] == "50000"
-    assert env_values["DEFAULT_BOOTSTRAP_PEER"] == ""
-    assert env_values["NODE_BOOTSTRAP_URL"] == ""
-    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
+    assert env_values["DEFAULT_BOOTSTRAP_PEER"] == "chipcoinprotocol.com:28444"
+    assert env_values["NODE_BOOTSTRAP_URL"] == "https://bootstrap.chipcoinprotocol.com"
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
     assert "chipcoinprotocol.com:18444" not in ",".join(env_values.values())
     assert "/snapshots/devnet/" not in ",".join(env_values.values())
 
 
-def test_testnet_env_path_defaults_to_dedicated_env_file(monkeypatch) -> None:
+def test_testnet_env_path_defaults_to_standard_env_file(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr("builtins.input", lambda prompt="": "")
 
     env_path = wizard._ask_env_path("testnet")
 
-    assert env_path == REPO_ROOT / ".env.testnet"
+    assert env_path == REPO_ROOT / ".env"
 
 
-def test_devnet_env_path_defaults_to_standard_env_file(monkeypatch) -> None:
+def test_devnet_env_path_defaults_to_dedicated_legacy_env_file(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr("builtins.input", lambda prompt="": "")
 
     env_path = wizard._ask_env_path("devnet")
 
-    assert env_path == REPO_ROOT / ".env"
+    assert env_path == REPO_ROOT / ".env.devnet"
 
 
 def test_write_env_supports_dedicated_testnet_env_file(monkeypatch) -> None:
@@ -132,7 +132,7 @@ def test_write_env_supports_dedicated_testnet_env_file(monkeypatch) -> None:
         assert "MINING_NODE_URLS=http://node:8081" not in content
 
 
-def test_testnet_quick_mode_stays_local_and_has_no_public_bootstrap_or_snapshot_defaults() -> None:
+def test_testnet_quick_mode_uses_public_wallet_api_and_bootstrap_defaults() -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
 
@@ -140,12 +140,12 @@ def test_testnet_quick_mode_stays_local_and_has_no_public_bootstrap_or_snapshot_
     wizard._apply_setup_mode(env_values, "quick", "both", network="testnet")
 
     assert env_values["DEFAULT_NODE_ENDPOINT"] == "http://127.0.0.1:28081"
-    assert env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] == "http://127.0.0.1:28081"
+    assert env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] == "https://testnet-api.chipcoinprotocol.com"
     assert env_values["MINING_NODE_URLS"] == "http://node:28081"
-    assert env_values["DEFAULT_BOOTSTRAP_PEER"] == ""
-    assert env_values["NODE_BOOTSTRAP_URL"] == ""
-    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
-    assert env_values["DEFAULT_EXPLORER_URL"] == ""
+    assert env_values["DEFAULT_BOOTSTRAP_PEER"] == "chipcoinprotocol.com:28444"
+    assert env_values["NODE_BOOTSTRAP_URL"] == "https://bootstrap.chipcoinprotocol.com"
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
+    assert env_values["DEFAULT_EXPLORER_URL"] == "https://explorer.chipcoinprotocol.com/api/testnet"
 
 
 def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
@@ -158,7 +158,7 @@ def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
         "reward-node",
         "testnet",
         "background",
-        REPO_ROOT / ".env.testnet",
+        REPO_ROOT / ".env",
         None,
         None,
         None,
@@ -181,16 +181,17 @@ def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
     output = capsys.readouterr().out
     assert "Role: reward-node" in output
     assert "Environment file:" in output
-    assert "docker compose --env-file .env.testnet -p chipcoin-testnet up -d node" in output
+    assert "docker compose up -d node" in output
     assert "--declared-port 28444" in output
 
 
-def test_testnet_discovery_defaults_to_isolated_when_no_bootstrap_exists(monkeypatch) -> None:
+def test_testnet_discovery_defaults_to_bootstrap_when_public_bootstrap_exists(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
     wizard._apply_network_defaults(env_values, "testnet")
     answers = iter([
-        "",  # isolated default
+        "",  # bootstrap default
+        "",  # default bootstrap URL
         "no",
     ])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -198,25 +199,28 @@ def test_testnet_discovery_defaults_to_isolated_when_no_bootstrap_exists(monkeyp
     wizard._configure_node_discovery(env_values, setup_mode="quick")
 
     assert env_values["NODE_DIRECT_PEERS"] == ""
-    assert env_values["NODE_BOOTSTRAP_URL"] == ""
+    assert env_values["NODE_BOOTSTRAP_URL"] == "https://bootstrap.chipcoinprotocol.com"
     assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "false"
     assert env_values["NODE_PUBLIC_P2P_PORT"] == "28444"
 
 
-def test_testnet_bootstrap_defaults_to_full_when_no_snapshot_manifest_exists(monkeypatch) -> None:
+def test_testnet_bootstrap_defaults_to_auto_when_snapshot_manifest_exists(monkeypatch) -> None:
     wizard = load_wizard_module()
     env_values = dict(wizard.DEFAULTS)
     wizard._apply_network_defaults(env_values, "testnet")
     answers = iter([
-        "",  # full default
+        "",  # auto default
+        "",  # default manifest URL
+        "",  # trust mode warn default
+        "",  # no trusted keys file
     ])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     wizard._configure_node_bootstrap(env_values, setup_mode="quick")
 
-    assert env_values["NODE_BOOTSTRAP_MODE"] == "full"
-    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
-    assert env_values["NODE_SNAPSHOT_TRUST_MODE"] == "off"
+    assert env_values["NODE_BOOTSTRAP_MODE"] == "auto"
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
+    assert env_values["NODE_SNAPSHOT_TRUST_MODE"] == "warn"
 
 
 def test_env_examples_expose_service_specific_discovery_defaults() -> None:
@@ -353,6 +357,7 @@ def test_configure_reward_node_sets_reward_automation_env_and_writes_wallet(monk
         monkeypatch.setattr(wizard, "REWARD_WALLET_PATH", str(reward_wallet_path))
         env_values = dict(wizard.DEFAULTS)
         env_values["NODE_P2P_BIND_PORT"] = "18444"
+        env_values["NODE_PUBLIC_P2P_PORT"] = "18444"
         answers = iter(
             [
                 "generate",
@@ -650,6 +655,7 @@ def test_both_role_snapshot_bootstrap_keeps_local_miner_endpoint() -> None:
         metadata = _make_snapshot(source_service, snapshot_path)
 
         env_values = dict(wizard.DEFAULTS)
+        wizard._apply_network_defaults(env_values, "devnet")
         wizard._apply_setup_mode(env_values, "quick", "both")
         env_values["NODE_DATA_PATH"] = str(node_data_path)
         env_values["NODE_BOOTSTRAP_MODE"] = "snapshot"
