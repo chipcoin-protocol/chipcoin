@@ -37,7 +37,9 @@ export function ConfigureNode(): JSX.Element {
         </select>
       </label>
       <p>{selectedNetwork.description}</p>
+      <p>Endpoint mode: {selectedNetwork.defaultEndpointLabel}</p>
       <input value={nodeApiBaseUrl} onChange={(event) => setNodeApiBaseUrl(event.target.value)} placeholder="Node API endpoint" />
+      {selectedNetwork.localNodeApiBaseUrl ? <p>Local node API option: {selectedNetwork.localNodeApiBaseUrl}</p> : null}
       <p>{selectedNetwork.httpSafetyNote}</p>
       <button onClick={() => void handleSave()}>Save node endpoint</button>
       {message ? <p>{message}</p> : null}

@@ -33,6 +33,12 @@ Explorer status:
 https://explorer.chipcoinprotocol.com/api/testnet/v1/status
 ```
 
+Wallet-safe API:
+
+```text
+https://testnet-api.chipcoinprotocol.com/v1/status
+```
+
 Trusted testnet snapshot signer:
 
 ```text
@@ -63,6 +69,11 @@ Never expose the node HTTP API publicly:
 The public explorer uses a readonly server-side proxy. Do not publish the raw
 node HTTP listener.
 
+Normal browser-wallet users can use `https://testnet-api.chipcoinprotocol.com`,
+which is an allowlisted wallet-safe proxy for reads and `POST /v1/tx/submit`.
+Operators can still point the wallet at local node HTTP, for example
+`http://127.0.0.1:28081`.
+
 ## Prerequisites
 
 - Linux host with Docker Compose or a local Python environment.
@@ -89,6 +100,7 @@ git pull origin main
 curl -s https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json | jq
 curl -s 'https://bootstrap.chipcoinprotocol.com/v1/peers?network=testnet' | jq
 curl -s https://explorer.chipcoinprotocol.com/api/testnet/v1/status | jq
+curl -s https://testnet-api.chipcoinprotocol.com/v1/status | jq
 ```
 
 The manifest should contain `network: testnet`, a snapshot entry, a

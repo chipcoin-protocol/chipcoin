@@ -22,7 +22,18 @@ Security boundary:
 
 - expose only `28444/tcp` publicly
 - do not expose `28081/tcp` publicly
-- expose HTTP through a reverse proxy only if you intentionally operate a public API endpoint
+- expose HTTP through a reverse proxy only if you intentionally operate an allowlisted public API endpoint
+
+Public HTTP service split:
+
+- `https://explorer.chipcoinprotocol.com` is readonly explorer UI/API.
+- `https://bootstrap.chipcoinprotocol.com` is P2P peer discovery only.
+- `https://testnet-api.chipcoinprotocol.com` is the public wallet-safe API for testnet.
+- raw node HTTP stays bound to localhost/private interfaces.
+
+The wallet-safe API pattern is network-extensible. Future mainnet should use a
+separate hostname and the same allowlist model rather than exposing raw node
+HTTP.
 
 ## Generate `.env.testnet` With The Wizard
 

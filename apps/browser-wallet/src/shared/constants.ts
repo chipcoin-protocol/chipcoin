@@ -3,7 +3,9 @@ export type SupportedNetworkId = "devnet" | "testnet";
 export interface SupportedNetworkConfig {
   id: SupportedNetworkId;
   label: string;
+  defaultEndpointLabel: string;
   defaultNodeApiBaseUrl: string;
+  localNodeApiBaseUrl?: string;
   description: string;
   statusLabel: string;
   httpSafetyNote: string;
@@ -20,6 +22,7 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
   {
     id: "devnet",
     label: "Devnet",
+    defaultEndpointLabel: "Public Devnet API",
     defaultNodeApiBaseUrl: DEFAULT_NODE_ENDPOINT,
     description: "Legacy public devnet/fallback environment.",
     statusLabel: "legacy devnet",
@@ -28,10 +31,12 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
   {
     id: "testnet",
     label: "Testnet",
-    defaultNodeApiBaseUrl: "http://127.0.0.1:28081",
-    description: "Public testnet candidate. Use a local/private node HTTP API.",
+    defaultEndpointLabel: "Public Testnet API",
+    defaultNodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
+    localNodeApiBaseUrl: "http://127.0.0.1:28081",
+    description: "Public testnet candidate. Uses the wallet-safe public API by default; operators can switch to a local node API.",
     statusLabel: "public testnet candidate",
-    httpSafetyNote: "Keep testnet node HTTP local/private. Do not use the readonly explorer API for wallet submissions.",
+    httpSafetyNote: "The public testnet API only allows wallet-safe reads and transaction submit. Keep raw node HTTP local/private and do not use the readonly explorer API for wallet submissions.",
   },
 ] as const;
 export const WALLET_FORMAT_VERSION = 2;

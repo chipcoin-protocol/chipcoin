@@ -56,10 +56,14 @@ export function Settings(
           </select>
         </label>
         <p className="message">{selectedNetwork.description}</p>
+        <p className="message">Endpoint mode: {selectedNetwork.defaultEndpointLabel}</p>
         <label className="stack">
           <span>Node API endpoint</span>
           <input value={nodeApiBaseUrl} onChange={(event) => setNodeApiBaseUrl(event.target.value)} placeholder="Node API endpoint" />
         </label>
+        {selectedNetwork.localNodeApiBaseUrl ? (
+          <p className="message">Advanced/operator local node API: <span className="mono">{selectedNetwork.localNodeApiBaseUrl}</span></p>
+        ) : null}
         <p className="message">{selectedNetwork.httpSafetyNote}</p>
         <button className="primary-button" onClick={() => void handleSave()}>Save network endpoint</button>
         <button className="secondary-button" onClick={onOpenBackup}>Open backup / export</button>

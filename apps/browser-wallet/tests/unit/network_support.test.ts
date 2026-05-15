@@ -120,13 +120,13 @@ describe("browser wallet network support", () => {
 
     await saveSettings({
       expectedNetwork: "testnet",
-      nodeApiBaseUrl: "http://127.0.0.1:28081",
+      nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
       autoLockMinutes: 15,
     });
 
     await expect(loadSettings()).resolves.toMatchObject({
       expectedNetwork: "testnet",
-      nodeApiBaseUrl: "http://127.0.0.1:28081",
+      nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
     });
   });
 
@@ -135,10 +135,10 @@ describe("browser wallet network support", () => {
     const session = await import("../../src/background/session");
 
     await session.createWallet("phase12-password");
-    const state = await session.updateNodeEndpoint("http://127.0.0.1:28081", "testnet");
+    const state = await session.updateNodeEndpoint("https://testnet-api.chipcoinprotocol.com", "testnet");
 
     expect(state.expectedNetwork).toBe("testnet");
-    expect(state.nodeApiBaseUrl).toBe("http://127.0.0.1:28081");
+    expect(state.nodeApiBaseUrl).toBe("https://testnet-api.chipcoinprotocol.com");
   });
 
   it("rejects a node endpoint when the node reports the wrong network", async () => {

@@ -86,15 +86,19 @@ Behavior:
 Supported networks:
 
 - Devnet: default endpoint `https://api.chipcoinprotocol.com`
-- Testnet public candidate: default endpoint `http://127.0.0.1:28081`
+- Testnet public candidate: default endpoint `https://testnet-api.chipcoinprotocol.com`
 
-The testnet endpoint is intentionally local by default. Run a local/private testnet node and keep its HTTP API bound to localhost or a private interface.
+The testnet default is a public wallet-safe API. It exposes only wallet reads
+and transaction submission, not raw node internals. Operators can still override
+the endpoint to a local/private node API, for example `http://127.0.0.1:28081`.
 
 Never expose node HTTP `28081` publicly. Expose P2P `28444` only when operating a public testnet peer.
 
 Do not use `https://explorer.chipcoinprotocol.com/api/testnet` as a wallet endpoint. The explorer proxy is readonly and is not suitable for `POST /v1/tx/submit` or other wallet send operations.
 
-The extension manifests allow `http://*/*` and `https://*/*`, which covers `http://127.0.0.1:28081`. Some browsers may still show or require host permission approval for localhost access when the extension is installed or updated.
+The extension manifests allow `http://*/*` and `https://*/*`, which covers both
+the public wallet API and `http://127.0.0.1:28081`. Some browsers may still show
+or require host permission approval when the extension is installed or updated.
 
 ## Connect To A Node
 
@@ -129,9 +133,19 @@ Behavior:
 
 If the node is remote, allow the wallet origin through `CHIPCOIN_HTTP_ALLOWED_ORIGINS`.
 
-## Testnet Wallet Endpoint
+## Testnet Wallet Endpoints
 
-Recommended testnet setup:
+Recommended public setup for normal users:
+
+1. Open the browser wallet Settings screen.
+2. Select `Testnet`.
+3. Use the default `Public Testnet API` endpoint:
+
+```text
+https://testnet-api.chipcoinprotocol.com
+```
+
+Operator/local-node setup:
 
 1. Join testnet with a local node using the fast-join runbook.
 2. Keep HTTP local-only, for example `127.0.0.1:28081`.
@@ -145,10 +159,18 @@ Verification commands:
 ```bash
 curl -s https://bootstrap.chipcoinprotocol.com/v1/peers?network=testnet | jq
 curl -s https://explorer.chipcoinprotocol.com/api/testnet/v1/status | jq
+curl -s https://testnet-api.chipcoinprotocol.com/v1/status | jq
 curl -s http://127.0.0.1:28081/v1/status | jq
 ```
 
 The explorer command is for status comparison only. Do not configure the wallet to use the explorer API as its node endpoint.
+
+Public service boundaries:
+
+- `explorer.chipcoinprotocol.com` is readonly explorer API and UI.
+- `bootstrap.chipcoinprotocol.com` is P2P peer discovery only.
+- `testnet-api.chipcoinprotocol.com` is the wallet-safe testnet API.
+- local node HTTP remains private/operator-only.
 
 ## Endpoint Failure Modes
 
@@ -164,6 +186,8 @@ The wallet now distinguishes these common cases more explicitly:
   - the endpoint answered, but not on the expected network
 - readonly explorer proxy
   - the wallet endpoint was pointed at an explorer/API proxy that cannot submit transactions
+- blocked public wallet API path
+  - `testnet-api.chipcoinprotocol.com` only exposes allowlisted wallet-safe paths
 - stale saved endpoint
   - the wallet keeps the saved endpoint, but Overview and Settings show that it is currently unreachable
 
