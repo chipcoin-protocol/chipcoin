@@ -143,23 +143,22 @@ Safety notes:
 ## Publish A Testnet Snapshot
 
 This is operator-driven Phase 1 publishing. Do not run it from an unsynced node.
-The current chipcom production model uses a signed publisher script plus a
-systemd timer, with devnet and testnet isolated.
+The current chipcom production model uses a signed testnet publisher script
+plus a systemd timer. The old devnet publisher is legacy and should stay
+disabled unless an operator intentionally resumes devnet publishing.
 
-Verified chipcom units:
+Expected active chipcom units:
 
 ```text
-chipcoin-snapshot.service
-chipcoin-snapshot.timer
 chipcoin-testnet-snapshot.service
 chipcoin-testnet-snapshot.timer
 ```
 
-The devnet publisher writes:
+Legacy devnet units, if still present, should be disabled:
 
 ```text
-/var/www/chipcoin-central/website/downloads/snapshots/devnet/latest.manifest.json
-/var/www/chipcoin-central/website/downloads/snapshots/devnet/latest.snapshot
+chipcoin-snapshot.service
+chipcoin-snapshot.timer
 ```
 
 The testnet publisher writes:
@@ -178,7 +177,7 @@ The expected testnet service settings are:
 ```bash
 NETWORK="testnet"
 BASE_URL="https://chipcoinprotocol.com/downloads/snapshots/testnet"
-COMPOSE_CMD="docker compose -f /opt/chipcoin/docker-compose.yml --env-file /opt/chipcoin/.env"
+COMPOSE_CMD="docker compose"
 STATUS_URL="http://127.0.0.1:28081/v1/status"
 ```
 

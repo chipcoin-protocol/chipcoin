@@ -45,12 +45,15 @@ Trusted testnet snapshot signer:
 147ce2ece1046008f465cb471ffe6f6a12ebd3c63ba39d8fd4dc9cd290816b0c
 ```
 
-Expected snapshot anchor at publication time:
+Example validated snapshot anchor from the May 2026 public testnet candidate:
 
 ```text
-height=1801
-tip=00002087b2dfc6ee2d89c013e9a78f8b26454f9372882f2d61de604b04522847
+height=1809
+tip=0000111fc480cdeee7ff460d927ce33d0467eb28d14beb23eb1b89a7d93c042f
 ```
+
+Always treat the manifest as authoritative for the current snapshot height,
+tip hash, checksum, and signer set.
 
 ## Security Boundary
 
@@ -430,7 +433,7 @@ Expected after import:
 
 ```text
 bootstrap_mode=snapshot
-snapshot_anchor_height=1801
+snapshot_anchor_height=<manifest snapshot_height>
 sync_phase=snapshot_imported or synced
 ```
 

@@ -69,8 +69,9 @@ docker compose logs -f miner
 - Rewards are paid to the address derived from `MINER_WALLET_FILE`.
 - Reward redistribution can be done later with standard wallet transactions.
 - The miner no longer keeps a local chain database or performs historical sync.
-- In the default Docker Compose stack, the miner points at `http://node:8081`.
-- For a miner-only host, set `MINING_NODE_URLS=https://api.chipcoinprotocol.com`.
+- In the default Docker Compose stack, the miner points at the private in-stack node API: `http://node:28081`.
+- Do not mine through `https://testnet-api.chipcoinprotocol.com`; it is wallet-safe and not a miner endpoint.
+- For a miner-only host, set `MINING_NODE_URLS` to a local/private full node API you operate or explicitly trust.
 - The recommended runtime directory is outside the repo, for example `/var/lib/chipcoin` on a stable Linux host.
 - Remote miners trust their selected node endpoints for template quality and freshness.
 

@@ -81,7 +81,7 @@ Core issuance:
 
 Reward-node lifecycle:
 
-- reward-node activation height on `devnet`: `300`
+- reward-node activation height on `testnet`: `600`
 - reward-node warmup: `2` epochs
 - reward eligibility depends on on-chain registration plus valid renewal timing
 - reward settlement remains deterministic and consensus-visible
@@ -320,7 +320,7 @@ Shortest documented operator path:
 
 If you want to run a reward-participating node on the public testnet, add these practical steps after basic node health:
 
-9. obtain initial devnet CHC through the faucet or another funded devnet wallet
+9. obtain initial testnet CHC through the faucet or another funded testnet wallet
 10. register the reward node on-chain
 11. let the automation loop handle renewal and attestation afterward
 
@@ -329,7 +329,7 @@ Practical order:
 ```bash
 cp .env.example .env
 docker compose up --build -d node
-curl http://127.0.0.1:8081/v1/status
+curl http://127.0.0.1:28081/v1/status
 docker compose up --build -d miner
 ```
 
@@ -562,7 +562,7 @@ Use these checks after restart or update:
 docker compose ps
 docker compose logs --tail=100 node
 docker compose logs --tail=100 miner
-curl http://127.0.0.1:8081/v1/status
+curl http://127.0.0.1:28081/v1/status
 ```
 
 ### Inspect Runtime
@@ -578,7 +578,7 @@ chipcoin --data /path/to/node.sqlite3 list-peers
 
 Node HTTP API default:
 
-- `http://127.0.0.1:8081`
+- `http://127.0.0.1:28081`
 
 Peer diagnostics now expose:
 
@@ -592,8 +592,8 @@ Peer diagnostics now expose:
 Useful examples:
 
 ```bash
-chipcoin --network devnet --data /var/lib/chipcoin/data/node-devnet.sqlite3 tip
-chipcoin --network devnet mine --node-url http://127.0.0.1:8081 --miner-address CHC...
+chipcoin --network testnet --data /var/lib/chipcoin/data/node-testnet.sqlite3 tip
+chipcoin --network testnet mine --node-url http://127.0.0.1:28081 --miner-address CHC...
 ```
 
 For practical operator diagnostics and recovery steps, use:
@@ -682,8 +682,8 @@ Create a local-only override file when you need machine-specific customization:
 services:
   node:
     ports:
-      - "18444:18444"
-      - "127.0.0.1:8081:8081"
+      - "28444:28444"
+      - "127.0.0.1:28081:28081"
 
   miner:
     ports:
@@ -715,9 +715,9 @@ That produces:
 - `apps/browser-wallet/dist-chrome`
 - `apps/browser-wallet/dist-firefox`
 
-On first run, the browser wallet uses `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT` from your local `.env` as its initial fallback endpoint.
+On first run, the browser wallet defaults to `testnet` and uses the public wallet-safe API endpoint unless the user changes networks or endpoints in Settings.
 
-In `.env.example`, that points to the public devnet node at `https://api.chipcoinprotocol.com`. The user can override it in `Settings`, and the chosen endpoint is persisted afterward.
+In `.env.example`, the testnet wallet endpoint is `https://testnet-api.chipcoinprotocol.com`. Devnet remains available as an explicit legacy network with `https://api.chipcoinprotocol.com`.
 
 Detailed instructions:
 
@@ -732,9 +732,9 @@ The shortest supported path from clone to a working local stack is:
 3. Adjust `.env` only if you intentionally want a different runtime root.
 4. Generate a miner wallet file at `MINER_WALLET_FILE`.
 5. Start the local stack with `docker compose up --build node miner`.
-6. Verify the node API with `curl http://127.0.0.1:8081/v1/status`.
+6. Verify the node API with `curl http://127.0.0.1:28081/v1/status`.
 7. Build and load the browser wallet from `apps/browser-wallet`.
-8. Point the browser wallet to `http://127.0.0.1:8081`.
+8. Keep the wallet default `https://testnet-api.chipcoinprotocol.com`, or point it to local operator HTTP at `http://127.0.0.1:28081`.
 9. Create or import a wallet in the extension.
 10. Send a test transaction and verify it through the node API or your chosen inspection tooling.
 
