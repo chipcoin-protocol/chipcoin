@@ -67,7 +67,7 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
   return (
     <section className="panel">
       <h2>Set Up Wallet</h2>
-      <p className="message">Create a new wallet, recover from a saved recovery phrase, or import a private key as a fallback. The default network is {defaultNetwork.label} at <span className="mono">{defaultNetwork.defaultNodeApiBaseUrl}</span>; switch to testnet in Settings after setup.</p>
+      <p className="message">Create a new wallet, recover from a saved recovery phrase, or import a private key as a fallback. The default network is {defaultNetwork.label} at <span className="mono">{defaultNetwork.defaultNodeApiBaseUrl}</span>; switch networks in Settings only if you intentionally need a legacy or operator endpoint.</p>
       <div className="nav-tabs">
         <button className={mode === "create-seed" ? "is-active" : ""} onClick={() => { setMode("create-seed"); setError(null); }}>
           Create

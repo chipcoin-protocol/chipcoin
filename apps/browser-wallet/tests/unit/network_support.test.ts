@@ -110,23 +110,23 @@ describe("browser wallet network support", () => {
     installExtensionStorage();
   });
 
-  it("uses devnet defaults and persists the selected network", async () => {
+  it("uses testnet defaults and persists the selected network", async () => {
     const { loadSettings, saveSettings } = await import("../../src/storage/preferences_store");
 
     await expect(loadSettings()).resolves.toMatchObject({
-      expectedNetwork: "devnet",
-      nodeApiBaseUrl: "https://api.chipcoinprotocol.com",
+      expectedNetwork: "testnet",
+      nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
     });
 
     await saveSettings({
-      expectedNetwork: "testnet",
-      nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
+      expectedNetwork: "devnet",
+      nodeApiBaseUrl: "https://api.chipcoinprotocol.com",
       autoLockMinutes: 15,
     });
 
     await expect(loadSettings()).resolves.toMatchObject({
-      expectedNetwork: "testnet",
-      nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
+      expectedNetwork: "devnet",
+      nodeApiBaseUrl: "https://api.chipcoinprotocol.com",
     });
   });
 

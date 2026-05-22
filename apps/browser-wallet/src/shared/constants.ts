@@ -17,7 +17,7 @@ declare const __CHIPCOIN_DEFAULT_NODE_ENDPOINT__: string;
 declare const __CHIPCOIN_DEFAULT_EXPLORER_URL__: string;
 export const DEFAULT_NODE_ENDPOINT = __CHIPCOIN_DEFAULT_NODE_ENDPOINT__;
 export const DEFAULT_EXPLORER_URL = __CHIPCOIN_DEFAULT_EXPLORER_URL__;
-export const DEFAULT_NETWORK: SupportedNetworkId = "devnet";
+export const DEFAULT_NETWORK: SupportedNetworkId = "testnet";
 export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
   {
     id: "devnet",

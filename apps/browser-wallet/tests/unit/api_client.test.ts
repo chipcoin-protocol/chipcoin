@@ -15,7 +15,7 @@ describe("ChipcoinApiClient", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const client = ChipcoinApiClient.fromBaseUrl("http://127.0.0.1:8081");
+    const client = ChipcoinApiClient.fromBaseUrl("http://127.0.0.1:28081");
     const pending = expect(client.address("CHCCfW1doC5nV2HXB3m5aJhJdiuQP8ft5dPkL", 25)).rejects.toMatchObject<ApiClientError>({
       code: "request_timeout",
       message: "The node API request timed out.",
@@ -38,7 +38,7 @@ describe("ChipcoinApiClient", () => {
       headers: { "Content-Type": "application/json" },
     })));
 
-    const client = ChipcoinApiClient.fromBaseUrl("http://127.0.0.1:8081");
+    const client = ChipcoinApiClient.fromBaseUrl("http://127.0.0.1:28081");
 
     await expect(client.submitRawTransaction("abcd", 100)).rejects.toMatchObject<ApiClientError>({
       code: "validation_error",
