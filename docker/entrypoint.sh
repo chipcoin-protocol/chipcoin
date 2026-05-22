@@ -246,6 +246,19 @@ ensure_sqlite_file() {
   fi
 }
 
+prepare_node_sqlite_file() {
+  local configured_path="${NODE_DATA_PATH:-/runtime/node.sqlite3}"
+  ensure_sqlite_file "$configured_path" "Node SQLite"
+
+  mkdir -p /runtime
+  if [[ "$configured_path" != "/runtime/node.sqlite3" ]]; then
+    if [[ -d /runtime/node.sqlite3 ]]; then
+      die "Node SQLite compatibility path /runtime/node.sqlite3 is a directory. Expected a symlink or file path."
+    fi
+    ln -sfn "$configured_path" /runtime/node.sqlite3
+  fi
+}
+
 sqlite_file_is_pristine() {
   local path="$1"
   [[ ! -s "$path" ]]
@@ -292,7 +305,7 @@ run_node() {
   : "${NODE_P2P_BIND_PORT:?missing NODE_P2P_BIND_PORT}"
   : "${NODE_HTTP_BIND_PORT:?missing NODE_HTTP_BIND_PORT}"
 
-  ensure_sqlite_file /runtime/node.sqlite3 "Node SQLite"
+  prepare_node_sqlite_file
   configure_discovery_env_for_role node
   log "Starting node network=${CHIPCOIN_NETWORK} p2p_port=${NODE_P2P_BIND_PORT} http_port=${NODE_HTTP_BIND_PORT} node_wallet_runtime=not_used_in_phase_1"
 

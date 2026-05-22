@@ -8,6 +8,7 @@ services:
       TZ: Europe/Rome
       CHIPCOIN_NETWORK: ${CHIPCOIN_NETWORK}
       CHIPCOIN_RUNTIME_DIR: ${CHIPCOIN_RUNTIME_DIR:-}
+      NODE_DATA_PATH: ${NODE_DATA_PATH}
       NODE_LOG_LEVEL: ${NODE_LOG_LEVEL}
       NODE_P2P_BIND_PORT: ${NODE_P2P_BIND_PORT}
       NODE_HTTP_BIND_PORT: ${NODE_HTTP_BIND_PORT}
@@ -73,9 +74,6 @@ services:
       - type: bind
         source: ${CHIPCOIN_RUNTIME_DIR}
         target: ${CHIPCOIN_RUNTIME_DIR}
-      - type: bind
-        source: ${NODE_DATA_PATH}
-        target: /runtime/node.sqlite3
     restart: unless-stopped
 
   miner:
