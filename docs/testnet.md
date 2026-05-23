@@ -308,6 +308,14 @@ docker compose exec node \
 
 Fund the reward wallet before registration. Then register:
 
+The setup wizard prints the exact registration command at the end of a
+reward-node setup. Prefer that generated command because it includes the
+wallet-specific `--node-pubkey-hex`, node id, declared host, and declared port.
+
+Funding note: the public faucet may be limited to one small claim per day. If it
+grants `1 CHC/day`, the first claim covers the initial registration target and a
+later claim or another funded testnet wallet should be used for renewal buffer.
+
 ```bash
 REWARD_NODE_ID="testnet-reward-node-example"
 REWARD_WALLET="/var/lib/chipcoin/wallets/testnet-reward-node-wallet.json"

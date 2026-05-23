@@ -174,6 +174,7 @@ def main() -> int:
     reward_wallet_path: Path | None = None
     reward_wallet_address: str | None = None
     reward_wallet_private_key_hex: str | None = None
+    reward_wallet_public_key_hex: str | None = None
     reward_node_enabled = False
     if role in {"miner", "both"}:
         wallet_mode = _ask_choice(
@@ -183,7 +184,7 @@ def main() -> int:
         )
         miner_wallet_path = Path(WALLET_PATH)
         _prepare_wallet_path(miner_wallet_path)
-        miner_wallet_address, miner_wallet_private_key_hex = _handle_wallet(wallet_mode, miner_wallet_path)
+        miner_wallet_address, miner_wallet_private_key_hex, _miner_wallet_public_key_hex = _handle_wallet(wallet_mode, miner_wallet_path)
 
     env_values = dict(DEFAULTS)
     _apply_network_defaults(env_values, network)
@@ -202,7 +203,7 @@ def main() -> int:
                 "passive",
             ) == "reward"
         if reward_node_enabled:
-            reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex = _configure_reward_node(
+            reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex = _configure_reward_node(
                 env_values,
                 setup_mode=setup_mode,
             )
@@ -223,6 +224,7 @@ def main() -> int:
         reward_wallet_path,
         reward_wallet_address,
         reward_wallet_private_key_hex,
+        reward_wallet_public_key_hex,
         reward_node_enabled,
         setup_mode,
         env_values,
@@ -533,7 +535,7 @@ def _default_reward_registration_peer(env_values: dict[str, str]) -> str:
     return f"127.0.0.1:{env_values.get('NODE_P2P_BIND_PORT', '18444')}"
 
 
-def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tuple[Path, str, str]:
+def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tuple[Path, str, str, str]:
     reward_wallet_mode = _ask_choice(
         "How should the reward-node wallet be handled?",
         {"generate": "Generate new wallet", "import": "Import existing private key"},
@@ -541,7 +543,7 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tu
     )
     reward_wallet_path = Path(REWARD_WALLET_PATH)
     _prepare_wallet_path(reward_wallet_path)
-    reward_wallet_address, reward_wallet_private_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path)
+    reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path)
     env_values["REWARD_NODE_AUTO_NODE_ID"] = _ask_reward_node_id(_default_reward_node_id())
     default_declared_host = (
         env_values.get("NODE_PUBLIC_HOST", "").strip()
@@ -559,7 +561,7 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tu
     env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] = str(reward_wallet_path)
     env_values["REWARD_NODE_AUTO_RENEW_ENABLED"] = "true"
     env_values["REWARD_NODE_AUTO_ATTEST_ENABLED"] = "true"
-    return reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex
+    return reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex
 
 
 def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
@@ -785,7 +787,7 @@ def _prepare_wallet_path(wallet_path: Path) -> None:
             _die("Setup aborted because the wallet file would be overwritten.")
 
 
-def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str]:
+def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str, str]:
     if wallet_mode == "generate":
         wallet_key = generate_wallet_key()
     else:
@@ -808,7 +810,7 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str]:
         os.chmod(wallet_path, 0o600)
     except OSError:
         pass
-    return wallet_key.address, wallet_key.private_key.hex()
+    return wallet_key.address, wallet_key.private_key.hex(), wallet_key.public_key.hex()
 
 
 def _prepare_sqlite_file(path: Path, label: str) -> None:
@@ -1131,6 +1133,7 @@ def _print_success(
     reward_wallet_path: Path | None,
     reward_wallet_address: str | None,
     reward_wallet_private_key_hex: str | None,
+    reward_wallet_public_key_hex: str | None,
     reward_node_enabled: bool,
     setup_mode: str,
     env_values: dict[str, str],
@@ -1154,7 +1157,12 @@ def _print_success(
             print(f"Miner wallet private key: {miner_wallet_private_key_hex}")
     else:
         print("Miner wallet: not configured")
-    if reward_node_enabled and reward_wallet_path is not None and reward_wallet_address is not None:
+    if (
+        reward_node_enabled
+        and reward_wallet_path is not None
+        and reward_wallet_address is not None
+        and reward_wallet_public_key_hex is not None
+    ):
         register_fee, renew_fee, suggested_total = _reward_fee_guidance(network)
         print(f"Reward-node wallet file: {reward_wallet_path}")
         print(f"Reward-node payout address: {reward_wallet_address}")
@@ -1168,7 +1176,14 @@ def _print_success(
             f"registration currently starts at {register_fee} CHC, "
             f"renewal at {renew_fee} CHC, and you should provision at least {suggested_total} CHC."
         )
-        print("Devnet note: use the faucet or another devnet funding source before attempting registration.")
+        if network == "testnet":
+            print(
+                "Testnet faucet note: the public faucet is rate-limited. "
+                "If it grants 1 CHC/day, the first claim covers the initial registration target; "
+                "claim again later or use another funded testnet wallet for renewal buffer."
+            )
+        elif network == "devnet":
+            print("Devnet note: use the legacy devnet faucet or another devnet funding source before attempting registration.")
     else:
         print("Reward-node mode: passive full node")
     print(f"Runtime directory: {env_values['CHIPCOIN_RUNTIME_DIR']}")
@@ -1216,10 +1231,15 @@ def _print_success(
         print("Bootstrap notes:")
         for note in bootstrap_notes:
             print(f"  - {note}")
-    if reward_node_enabled and reward_wallet_path is not None and reward_wallet_address is not None:
+    if (
+        reward_node_enabled
+        and reward_wallet_path is not None
+        and reward_wallet_address is not None
+        and reward_wallet_public_key_hex is not None
+    ):
         registration_peer = _default_reward_registration_peer(env_values)
         print()
-        print("Reward-node registration command:")
+        print("Reward-node registration command (run after the reward-node wallet is funded):")
         print(
             f"  {compose_base} run --rm --no-deps --entrypoint chipcoin "
             f"-v \"{env_values['NODE_DATA_PATH']}:/runtime/node.sqlite3\" "
@@ -1230,6 +1250,7 @@ def _print_success(
             "--wallet-file /runtime/reward-node-wallet.json "
             f"--node-id {env_values['REWARD_NODE_AUTO_NODE_ID']} "
             f"--payout-address {reward_wallet_address} "
+            f"--node-pubkey-hex {reward_wallet_public_key_hex} "
             f"--declared-host {env_values['REWARD_NODE_AUTO_DECLARED_HOST']} "
             f"--declared-port {env_values['REWARD_NODE_AUTO_DECLARED_PORT']} "
             f"--connect {registration_peer}"

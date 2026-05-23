@@ -208,8 +208,8 @@ If reward-node mode is selected, the wizard also:
 - writes `REWARD_NODE_AUTO_*` values into `.env`
 - asks for the declared reward-node host and port
 - reminds the operator that CHC is required only for reward registration and renewal, not for ordinary full-node operation
-- suggests the devnet faucet or another devnet funding source
-- prints a ready-to-run registration command for after the wallet is funded
+- suggests the testnet faucet or another funded testnet wallet when using `testnet`
+- prints a ready-to-run registration command for after the wallet is funded, including the reward-node public key
 
 ## Output
 

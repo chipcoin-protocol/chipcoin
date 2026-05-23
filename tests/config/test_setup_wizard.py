@@ -165,6 +165,7 @@ def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
         Path("/var/lib/chipcoin/wallets/testnet-reward-node-wallet.json"),
         "CHCCtestrewardaddress",
         None,
+        "02" + ("11" * 32),
         True,
         "quick",
         {
@@ -182,7 +183,11 @@ def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
     assert "Role: reward-node" in output
     assert "Environment file:" in output
     assert "docker compose up -d node" in output
+    assert "Reward-node registration command (run after the reward-node wallet is funded):" in output
+    assert "--node-pubkey-hex 021111111111111111111111111111111111111111111111111111111111111111" in output
     assert "--declared-port 28444" in output
+    assert "Testnet faucet note:" in output
+    assert "Devnet note:" not in output
 
 
 def test_testnet_discovery_defaults_to_bootstrap_when_public_bootstrap_exists(monkeypatch) -> None:
@@ -368,12 +373,13 @@ def test_configure_reward_node_sets_reward_automation_env_and_writes_wallet(monk
         )
         monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-        wallet_path, wallet_address, wallet_private_key_hex = wizard._configure_reward_node(env_values, setup_mode="quick")
+        wallet_path, wallet_address, wallet_private_key_hex, wallet_public_key_hex = wizard._configure_reward_node(env_values, setup_mode="quick")
 
         assert wallet_path == reward_wallet_path
         assert reward_wallet_path.exists()
         assert wallet_address.startswith("CHCC")
         assert len(wallet_private_key_hex) == 64
+        assert wallet_public_key_hex
         assert env_values["REWARD_NODE_AUTO_NODE_ID"] == "reward-node-test"
         assert env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] == str(reward_wallet_path)
         assert env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] == str(reward_wallet_path)
