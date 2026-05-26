@@ -53,7 +53,7 @@ from ..consensus.economics import (
     REWARD_NODE_MIN_REGISTER_FEE_CHIPBITS,
     REWARD_NODE_MIN_RENEW_FEE_CHIPBITS,
     subsidy_split_chipbits,
-    total_subsidy_through_height,
+    subsidy_totals_through_height,
 )
 from ..consensus.utxo import InMemoryUtxoView, OverlayUtxoView
 from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block
@@ -1542,13 +1542,11 @@ class NodeService:
         if tip is None:
             return self.supply_snapshot()
 
-        scheduled_supply_chipbits = total_subsidy_through_height(tip.height, self.params)
-        scheduled_miner_supply_chipbits = 0
-        scheduled_node_reward_supply_chipbits = 0
-        for block_height in range(tip.height + 1):
-            miner_subsidy_chipbits, node_reward_chipbits = subsidy_split_chipbits(block_height, self.params)
-            scheduled_miner_supply_chipbits += miner_subsidy_chipbits
-            scheduled_node_reward_supply_chipbits += node_reward_chipbits
+        scheduled_miner_supply_chipbits, scheduled_node_reward_supply_chipbits = subsidy_totals_through_height(
+            tip.height,
+            self.params,
+        )
+        scheduled_supply_chipbits = scheduled_miner_supply_chipbits + scheduled_node_reward_supply_chipbits
 
         materialized_supply = self._materialized_supply_snapshot(
             scheduled_miner_supply_chipbits=scheduled_miner_supply_chipbits,
@@ -3310,14 +3308,11 @@ class NodeService:
         if self._supply_snapshot_cache_key == cache_key and self._supply_snapshot_cache is not None:
             return dict(self._supply_snapshot_cache)
 
-        scheduled_supply_chipbits = total_subsidy_through_height(-1 if tip is None else tip.height, self.params)
-        scheduled_miner_supply_chipbits = 0
-        scheduled_node_reward_supply_chipbits = 0
-        if tip is not None:
-            for block_height in range(tip.height + 1):
-                miner_subsidy_chipbits, node_reward_chipbits = subsidy_split_chipbits(block_height, self.params)
-                scheduled_miner_supply_chipbits += miner_subsidy_chipbits
-                scheduled_node_reward_supply_chipbits += node_reward_chipbits
+        scheduled_miner_supply_chipbits, scheduled_node_reward_supply_chipbits = subsidy_totals_through_height(
+            -1 if tip is None else tip.height,
+            self.params,
+        )
+        scheduled_supply_chipbits = scheduled_miner_supply_chipbits + scheduled_node_reward_supply_chipbits
         materialized_supply = self._materialized_supply_snapshot(
             scheduled_miner_supply_chipbits=scheduled_miner_supply_chipbits,
         )

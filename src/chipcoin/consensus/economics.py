@@ -100,19 +100,28 @@ def block_subsidy(height: int, params: ConsensusParams) -> int:
 def total_subsidy_through_height(height: int, params: ConsensusParams) -> int:
     """Return the total minted subsidy from height zero through the given height."""
 
-    if height < 0:
-        return 0
+    miner_total, node_total = subsidy_totals_through_height(height, params)
+    return miner_total + node_total
 
-    total = 0
+
+def subsidy_totals_through_height(height: int, params: ConsensusParams) -> tuple[int, int]:
+    """Return scheduled miner and node subsidy totals through one height."""
+
+    if height < 0:
+        return 0, 0
+
+    miner_total = 0
+    node_total = 0
     for current_height in range(height + 1):
         miner_subsidy = _regular_miner_subsidy_chipbits(current_height, params)
         node_reward = _scheduled_node_epoch_reward_chipbits(current_height, params)
         if miner_subsidy <= 0 and node_reward <= 0:
             break
-        scheduled_total = miner_subsidy + node_reward
-        remaining_supply = max(0, params.max_money_chipbits - total)
-        total += min(scheduled_total, remaining_supply)
-    return total
+        remaining_supply = max(0, params.max_money_chipbits - miner_total - node_total)
+        miner_total += min(miner_subsidy, remaining_supply)
+        remaining_supply = max(0, params.max_money_chipbits - miner_total - node_total)
+        node_total += min(node_reward, remaining_supply)
+    return miner_total, node_total
 
 
 def reward_registered_node_count(registry_view: NodeRegistryView) -> int:
