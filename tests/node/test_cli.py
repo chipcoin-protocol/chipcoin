@@ -987,6 +987,58 @@ def test_cli_peer_summary_keeps_connected_peer_operational_when_height_is_stale(
         assert payload["operator_summary"]["peer_health"] == "ok"
 
 
+def test_cli_peer_summary_does_not_degrade_healthy_node_for_one_backoff_peer() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        service = _make_service(db_path)
+        for index, host in enumerate(("173.212.193.13", "188.218.213.92")):
+            service.record_peer_observation(
+                host=host,
+                port=8333,
+                source="discovered",
+                direction="outbound",
+                handshake_complete=True,
+                node_id=f"peer-{index}",
+                last_success=1_700_000_100 + index,
+                success_count=3,
+                score=1,
+                last_known_height=4204,
+            )
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=8333,
+            source="discovered",
+            direction="outbound",
+            handshake_complete=False,
+            node_id="offline-peer",
+            last_success=1_600_000_000,
+            success_count=8,
+            last_failure=1_700_000_120,
+            failure_count=7989,
+            score=-100,
+            reconnect_attempts=7989,
+            backoff_until=9_999_999_999,
+            last_error="Timed out while connecting to peer.",
+            last_error_at=1_700_000_120,
+            protocol_error_class="timeout",
+            last_known_height=1809,
+        )
+
+        code, payload = _run_cli(["--data", str(db_path), "peer-summary"])
+
+        assert code == 0
+        assert payload["backoff_peer_count"] == 1
+        assert payload["operator_summary"] == {
+            "peer_health": "ok",
+            "non_banned_peer_count": 3,
+            "operational_peer_count": 2,
+            "canonical_peer_count": 2,
+            "active_backoff_peer_count": 1,
+            "active_ban_count": 0,
+            "warnings": [],
+        }
+
+
 def test_cli_peer_success_clears_transient_failure_state() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
@@ -1131,6 +1183,49 @@ def test_cli_peerbook_clean_prunes_ephemeral_discovered_peers_and_can_reset_pena
         assert manual.backoff_until == 0
         assert manual.misbehavior_score == 0
         assert manual.ban_until is None
+
+
+def test_cli_peerbook_clean_prunes_stale_failed_canonical_discovered_peers() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
+        service = NodeService.open_sqlite(db_path, network="devnet", time_provider=lambda: 1_700_000_000)
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=18444,
+            source="discovered",
+            direction="outbound",
+            handshake_complete=False,
+            last_success=1_699_000_000,
+            success_count=8,
+            last_failure=1_700_000_000,
+            failure_count=7989,
+            score=-100,
+            reconnect_attempts=7989,
+            backoff_until=1_700_000_030,
+            last_error="Timed out while connecting to peer.",
+            last_error_at=1_700_000_000,
+            protocol_error_class="timeout",
+        )
+        service.record_peer_observation(
+            host="tiltmediaconsulting.com",
+            port=18444,
+            source="manual",
+            handshake_complete=False,
+            last_success=1_699_000_000,
+            failure_count=7989,
+            score=-100,
+            backoff_until=1_700_000_030,
+        )
+
+        code, payload = _run_cli(["--network", "devnet", "--data", str(db_path), "peerbook-clean"])
+
+        assert code == 0
+        assert payload["removed"] == [
+            {"host": "188.217.94.86", "port": 18444, "reason": "stale_failed_canonical_peer"}
+        ]
+        peers = NodeService.open_sqlite(db_path, network="devnet").list_peers()
+        assert not any(peer.host == "188.217.94.86" and peer.port == 18444 for peer in peers)
+        assert any(peer.host == "tiltmediaconsulting.com" and peer.port == 18444 for peer in peers)
 
 
 def test_cli_peerbook_clean_supports_dry_run() -> None:

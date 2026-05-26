@@ -87,6 +87,10 @@ from .snapshots import (
 from ..wallet.models import SpendCandidate
 
 
+PEERBOOK_CLEAN_STALE_AFTER_SECONDS = 604800
+PEERBOOK_CLEAN_STALE_FAILURE_THRESHOLD = 100
+
+
 @dataclass(frozen=True)
 class ChainActivationResult:
     """Summary of activating one stored branch as the new active chain."""
@@ -1221,7 +1225,7 @@ class NodeService:
         elif non_banned_peer_count == 0:
             peer_health = "all_banned"
             peer_warnings.append("all_known_peers_banned")
-        elif active_backoff_peers:
+        elif active_backoff_peers and len(operational_peers) < 2:
             peer_health = "degraded"
             peer_warnings.append("backoff_peers_present")
         elif not operational_peers and questionable_peer_count > 0 and good_peer_count == 0:
@@ -1354,12 +1358,25 @@ class NodeService:
 
         peers = self.list_peers()
         default_port = get_network_config(self.network).default_p2p_port
+        now = self.time_provider()
         removed: list[dict[str, object]] = []
         reset: list[dict[str, object]] = []
 
         for peer in peers:
             if peer.source not in {"manual", "seed"} and peer.port != default_port:
                 removed.append({"host": peer.host, "port": peer.port, "reason": "noncanonical_discovered_port"})
+                if not dry_run:
+                    self.remove_peer(peer.host, peer.port)
+                continue
+            if (
+                peer.source == "discovered"
+                and peer.port == default_port
+                and peer.handshake_complete is not True
+                and (peer.failure_count or 0) >= PEERBOOK_CLEAN_STALE_FAILURE_THRESHOLD
+                and peer.last_success is not None
+                and now - peer.last_success >= PEERBOOK_CLEAN_STALE_AFTER_SECONDS
+            ):
+                removed.append({"host": peer.host, "port": peer.port, "reason": "stale_failed_canonical_peer"})
                 if not dry_run:
                     self.remove_peer(peer.host, peer.port)
 
