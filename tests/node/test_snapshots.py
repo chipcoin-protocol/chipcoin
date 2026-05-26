@@ -81,6 +81,30 @@ def test_snapshot_export_import_roundtrip_preserves_anchor_and_utxo_state() -> N
         assert snapshot_path.read_bytes().startswith(b"CHCSNP2\n")
 
 
+def test_snapshot_node_activates_linear_extension_without_replaying_anchor_delta() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 4, "CHCminer-source")
+        snapshot_path = Path(tempdir) / "snapshot.snapshot"
+        source.export_snapshot_file(snapshot_path)
+
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        target.import_snapshot_file(snapshot_path)
+        extension_blocks = _mine_chain(source, 2, "CHCminer-source")
+
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in extension_blocks), peer_id="peer-a")
+        for block in extension_blocks:
+            target.blocks.put(block)
+
+        result = manager.activate_best_chain_if_ready()
+
+        assert result.activated_tip == extension_blocks[-1].block_hash()
+        assert result.reorged is False
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == extension_blocks[-1].block_hash()
+
+
 def test_testnet_rejects_devnet_snapshot_import() -> None:
     with TemporaryDirectory() as tempdir:
         timestamps = iter(range(1_700_000_000, 1_700_000_200))

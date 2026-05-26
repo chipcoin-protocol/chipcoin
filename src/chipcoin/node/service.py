@@ -830,7 +830,40 @@ class NodeService:
         common_ancestor = path_hashes[common_prefix - 1] if common_prefix > 0 else None
         disconnected_hashes = old_path[common_prefix:]
         reorged = old_tip_hash is not None and old_tip_hash != tip_hash and old_tip_hash not in path_hashes
-        if snapshot_anchor is None:
+        if old_tip_hash == tip_hash:
+            return ChainActivationResult(
+                activated_tip=tip_hash,
+                applied_blocks=0,
+                reorged=False,
+                reorg_depth=0,
+                old_tip=old_tip_hash,
+                new_tip=tip_hash,
+                common_ancestor=common_ancestor,
+                disconnected_blocks=0,
+                readded_transaction_count=0,
+            )
+
+        extends_current_tip = previous_tip is not None and common_prefix == len(old_path)
+        if extends_current_tip:
+            utxo_view = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
+            node_registry_view = self.node_registry.snapshot()
+            reward_attestation_bundles = self.reward_attestations.list_bundles()
+            reward_settlements = self.reward_settlements.list_settlements()
+            reward_attestation_identities = self.reward_attestations.attestation_identities()
+            settled_epoch_indexes = self.reward_settlements.settled_epoch_indexes()
+            previous_hash = old_tip_hash if old_tip_hash is not None else "00" * 32
+            previous_header = None if old_tip_hash is None else self.headers.get(old_tip_hash)
+            if previous_header is None:
+                raise ValueError("missing current active tip header")
+            median_time_past = previous_header.timestamp
+            validated_headers = []
+            for height in range(common_prefix):
+                header = self.headers.get(path_hashes[height])
+                if header is None:
+                    raise ValueError(f"missing active chain header at height {height}")
+                validated_headers.append(header)
+            start_height = common_prefix
+        elif snapshot_anchor is None:
             utxo_view = InMemoryUtxoView()
             node_registry_view = InMemoryNodeRegistryView()
             reward_attestation_bundles: list[StoredRewardAttestationBundle] = []

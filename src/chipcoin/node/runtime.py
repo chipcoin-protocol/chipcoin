@@ -1387,7 +1387,7 @@ class NodeRuntime:
                 await self._dispatch_block_downloads()
                 self._activate_ready_best_chain()
             except Exception as exc:  # noqa: BLE001
-                self.logger.debug("sync scheduler loop failed: %s", exc)
+                self.logger.warning("sync scheduler loop failed: %s", exc, exc_info=True)
             self._update_sync_status()
             await asyncio.sleep(self.sync_scheduler_interval)
 
