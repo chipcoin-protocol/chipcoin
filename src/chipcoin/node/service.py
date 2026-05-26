@@ -1436,7 +1436,7 @@ class NodeService:
             "last_penalty_at": peer.last_penalty_at,
         }
 
-    def status(self) -> dict[str, object]:
+    def status(self, *, include_supply: bool = True) -> dict[str, object]:
         """Return a richer status snapshot for CLI diagnostics."""
 
         tip = self.chain_tip()
@@ -1450,7 +1450,7 @@ class NodeService:
             node_reward_pool_chipbits=node_reward_pool_chipbits(next_height, self.params),
             params=self.params,
         )
-        supply = self.supply_snapshot()
+        supply = self.supply_snapshot() if include_supply else self._status_supply_snapshot(tip)
         peers = self.list_peers()
         reward_node_fees = self.reward_node_fee_schedule()
         handshaken_peer_count = sum(1 for peer in peers if peer.handshake_complete)
@@ -1528,6 +1528,59 @@ class NodeService:
                 "circulating_supply_chipbits": supply["circulating_supply_chipbits"],
                 "remaining_supply_chipbits": supply["remaining_supply_chipbits"],
             },
+        }
+
+    def _status_supply_snapshot(self, tip) -> dict[str, int | str | None | bool]:
+        """Return a lightweight supply payload for latency-sensitive status calls."""
+
+        height = None if tip is None else tip.height
+        tip_hash = None if tip is None else tip.block_hash
+        cache_key = (height, tip_hash)
+        if self._supply_snapshot_cache_key == cache_key and self._supply_snapshot_cache is not None:
+            return dict(self._supply_snapshot_cache)
+
+        if tip is None:
+            return self.supply_snapshot()
+
+        scheduled_supply_chipbits = total_subsidy_through_height(tip.height, self.params)
+        scheduled_miner_supply_chipbits = 0
+        scheduled_node_reward_supply_chipbits = 0
+        for block_height in range(tip.height + 1):
+            miner_subsidy_chipbits, node_reward_chipbits = subsidy_split_chipbits(block_height, self.params)
+            scheduled_miner_supply_chipbits += miner_subsidy_chipbits
+            scheduled_node_reward_supply_chipbits += node_reward_chipbits
+
+        materialized_supply = self._materialized_supply_snapshot(
+            scheduled_miner_supply_chipbits=scheduled_miner_supply_chipbits,
+        )
+        undistributed_node_reward_supply_chipbits = max(
+            0,
+            scheduled_node_reward_supply_chipbits - materialized_supply["materialized_node_reward_supply_chipbits"],
+        )
+        return {
+            "network": self.network,
+            "height": height,
+            "tip_hash": tip_hash,
+            "max_supply_chipbits": self.params.max_money_chipbits,
+            "scheduled_supply_chipbits": scheduled_supply_chipbits,
+            "scheduled_miner_supply_chipbits": scheduled_miner_supply_chipbits,
+            "scheduled_node_reward_supply_chipbits": scheduled_node_reward_supply_chipbits,
+            "scheduled_remaining_supply_chipbits": max(0, self.params.max_money_chipbits - scheduled_supply_chipbits),
+            "materialized_supply_chipbits": materialized_supply["materialized_supply_chipbits"],
+            "materialized_miner_supply_chipbits": materialized_supply["materialized_miner_supply_chipbits"],
+            "materialized_node_reward_supply_chipbits": materialized_supply["materialized_node_reward_supply_chipbits"],
+            "undistributed_node_reward_supply_chipbits": undistributed_node_reward_supply_chipbits,
+            "minted_supply_chipbits": materialized_supply["materialized_supply_chipbits"],
+            "miner_minted_supply_chipbits": materialized_supply["materialized_miner_supply_chipbits"],
+            "node_minted_supply_chipbits": materialized_supply["materialized_node_reward_supply_chipbits"],
+            "burned_supply_chipbits": 0,
+            "immature_supply_chipbits": None,
+            "circulating_supply_chipbits": None,
+            "remaining_supply_chipbits": max(
+                0,
+                self.params.max_money_chipbits - materialized_supply["materialized_supply_chipbits"],
+            ),
+            "approximate": True,
         }
 
     def operator_check(self, *, reward_node_id: str | None = None) -> dict[str, object]:

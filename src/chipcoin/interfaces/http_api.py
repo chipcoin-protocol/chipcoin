@@ -103,7 +103,7 @@ class HttpApiApp:
             return {"status": "ok", "api_version": self.API_VERSION, "network": self.service.network}
 
         if method == "GET" and path == "/v1/status":
-            return {"api_version": self.API_VERSION, **self.service.status()}
+            return {"api_version": self.API_VERSION, **self.service.status(include_supply=False)}
 
         if method == "GET" and path == "/v1/supply":
             return {"api_version": self.API_VERSION, **self.service.supply_snapshot()}
