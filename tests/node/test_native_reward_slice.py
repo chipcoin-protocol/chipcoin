@@ -987,6 +987,25 @@ def test_native_reward_boundary_competition_stays_consistent_across_surfaces() -
         assert [entry["block_hash"] for entry in history_b] == [close_block.block_hash()]
         assert history_c == []
 
+        _renew_reward_node(service, wallet=reward_a, node_id="reward-node-a", port=19001)
+        _renew_reward_node(service, wallet=reward_b, node_id="reward-node-b", port=19002)
+        _mine_local_block(service, miner.address)
+
+        historical_state = service.native_reward_epoch_state(epoch_index=4)
+        assert [row["node_id"] for row in historical_state["active_reward_nodes"]] == [
+            "reward-node-a",
+            "reward-node-b",
+        ]
+        historical_report = service.native_reward_settlement_report(epoch_index=4)
+        assert {entry["node_id"] for entry in historical_report["eligible_ranking"]} == {
+            "reward-node-a",
+            "reward-node-b",
+        }
+        assert {entry["node_id"] for entry in historical_report["reward_entries"]} == {
+            "reward-node-a",
+            "reward-node-b",
+        }
+
 
 def test_native_reward_snapshot_restore_mid_cycle_preserves_auto_settlement_path() -> None:
     with TemporaryDirectory() as tempdir:

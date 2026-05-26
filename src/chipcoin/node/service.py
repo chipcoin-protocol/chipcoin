@@ -3527,7 +3527,7 @@ class NodeService:
     def list_active_reward_nodes(self, height: int):
         """Return reward-eligible nodes for the supplied height."""
 
-        return active_node_records(self.node_registry.snapshot(), height=height, params=self.params)
+        return active_node_records(self._node_registry_view_before_height(height), height=height, params=self.params)
 
     def _apply_node_registry_block(self, block: Block, height: int, *, registry_view=None) -> None:
         """Apply node special transactions from a block to registry state."""
@@ -3748,6 +3748,22 @@ class NodeService:
             utxo_view.apply_block(block, current_height)
             self._apply_node_registry_block(block, current_height, registry_view=node_registry_view)
         return utxo_view, node_registry_view
+
+    def _node_registry_view_before_height(self, height: int) -> InMemoryNodeRegistryView:
+        """Rebuild the node registry view immediately before a given block height."""
+
+        if height < 0:
+            raise ValueError("height cannot be negative")
+        tip = self.chain_tip()
+        if tip is not None and height >= tip.height + 1:
+            return self.node_registry.snapshot()
+        node_registry_view = InMemoryNodeRegistryView()
+        for current_height in range(height):
+            block = self.get_block_by_height(current_height)
+            if block is None:
+                raise ValueError(f"Missing active-chain block at height {current_height}")
+            self._apply_node_registry_block(block, current_height, registry_view=node_registry_view)
+        return node_registry_view
 
     def _get_chain_meta(self, key: str) -> str | None:
         """Return one stored chain metadata value when present."""
