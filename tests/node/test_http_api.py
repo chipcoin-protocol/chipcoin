@@ -1091,6 +1091,48 @@ def test_http_api_public_peers_uses_network_canonical_port() -> None:
         }
 
 
+def test_http_api_public_peers_publishes_operational_canonical_alias() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="testnet")
+        service.record_peer_observation(
+            host="tiltmediaconsulting.com",
+            port=28444,
+            direction="outbound",
+            source="seed",
+            handshake_complete=False,
+            node_id="node-tilt",
+            last_known_height=2347,
+        )
+        service.record_peer_observation(
+            host="95.111.224.46",
+            port=53826,
+            direction="inbound",
+            handshake_complete=True,
+            last_success=1_700_000_001,
+            success_count=1,
+            node_id="node-tilt",
+            last_known_height=2347,
+        )
+        app = HttpApiApp(service)
+
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/peers/public")
+
+        assert status == "200 OK"
+        assert body == {
+            "network": "testnet",
+            "count": 1,
+            "peers": [
+                {
+                    "host": "tiltmediaconsulting.com",
+                    "port": 28444,
+                    "address": "tiltmediaconsulting.com:28444",
+                    "state": "good",
+                    "last_known_height": 2347,
+                }
+            ],
+        }
+
+
 def test_http_api_and_cli_surfaces_are_consistent_for_status_and_peer_summary() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"

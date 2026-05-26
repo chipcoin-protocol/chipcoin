@@ -1059,23 +1059,33 @@ class NodeService:
         now = self.time_provider()
         default_port = get_network_config(self.network).default_p2p_port
         public_peers = []
-        for peer in self.list_peers():
-            if peer.port != default_port:
+        seen_endpoints: set[tuple[str, int]] = set()
+        candidates = self.peer_diagnostics()
+        operational_records = self._operational_peer_records(candidates)
+        candidates.extend(operational_records)
+        for peer in candidates:
+            if peer["port"] != default_port:
                 continue
-            if peer.handshake_complete is not True or _peer_state(peer, now=now) != "good":
+            direct_good_record = peer["handshake_complete"] is True and peer["peer_state"] == "good"
+            operational_alias_record = peer in operational_records
+            if not direct_good_record and not operational_alias_record:
                 continue
-            if (peer.backoff_until or 0) > now or (peer.ban_until or 0) > now:
+            if (peer["backoff_until"] or 0) > now or (peer["ban_until"] or 0) > now:
                 continue
-            if not _is_public_peer_host(peer.host):
+            if not _is_public_peer_host(str(peer["host"])):
                 continue
+            endpoint = (str(peer["host"]), int(peer["port"]))
+            if endpoint in seen_endpoints:
+                continue
+            seen_endpoints.add(endpoint)
             payload: dict[str, object] = {
-                "host": peer.host,
-                "port": peer.port,
-                "address": f"{peer.host}:{peer.port}",
+                "host": peer["host"],
+                "port": peer["port"],
+                "address": f"{peer['host']}:{peer['port']}",
                 "state": "good",
             }
-            if peer.last_known_height is not None:
-                payload["last_known_height"] = peer.last_known_height
+            if peer["last_known_height"] is not None:
+                payload["last_known_height"] = peer["last_known_height"]
             public_peers.append(payload)
 
         public_peers.sort(key=lambda peer: (str(peer["host"]), int(peer["port"])))
