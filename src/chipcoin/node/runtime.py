@@ -1385,6 +1385,7 @@ class NodeRuntime:
                 await self._expire_stalled_block_requests()
                 await self._drive_header_sync()
                 await self._dispatch_block_downloads()
+                self._activate_ready_best_chain()
             except Exception as exc:  # noqa: BLE001
                 self.logger.debug("sync scheduler loop failed: %s", exc)
             self._update_sync_status()
@@ -1525,6 +1526,27 @@ class NodeRuntime:
             if self._session_can_download_blocks(session, best_header_height=best_header_height)
         ]
         return sorted(sessions, key=self._sync_session_rank_key)
+
+    def _activate_ready_best_chain(self) -> None:
+        """Activate the strongest known header chain once all blocks are present."""
+
+        current_tip = self.service.chain_tip()
+        current_tip_hash = None if current_tip is None else current_tip.block_hash
+        result = self.sync_manager.activate_best_chain_if_ready()
+        new_tip = self.service.chain_tip()
+        new_tip_hash = None if new_tip is None else new_tip.block_hash
+        if new_tip_hash is None or new_tip_hash == current_tip_hash:
+            return
+        if result.reorged:
+            self.logger.info(
+                "reorg activated by sync scheduler old_tip=%s new_tip=%s common_ancestor=%s depth=%s",
+                result.old_tip,
+                result.new_tip,
+                result.common_ancestor,
+                result.reorg_depth,
+            )
+            return
+        self.logger.info("sync activated ready best chain tip=%s", new_tip_hash)
 
     def _session_can_contribute_headers(self, session: PeerProtocol) -> bool:
         """Return whether one session should be queried for headers."""

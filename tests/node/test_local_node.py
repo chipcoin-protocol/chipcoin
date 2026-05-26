@@ -1639,6 +1639,34 @@ def test_runtime_allows_block_download_from_peer_covering_current_window(monkeyp
         assert runtime._session_can_download_blocks(session, best_header_height=5813) is True
 
 
+def test_runtime_activates_ready_best_chain_when_no_blocks_are_missing() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3")
+        target = _make_service(Path(tempdir) / "target.sqlite3")
+        blocks: list[Block] = []
+        for _ in range(3):
+            template = source.build_candidate_block("CHCminer-source")
+            block = _mine_block(template.block)
+            source.apply_block(block)
+            blocks.append(block)
+
+        manager = NodeRuntime(service=target).sync_manager
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        for block in blocks:
+            target.blocks.put(block)
+
+        status_before = manager.sync_status()
+        assert status_before["best_header_height"] == 2
+        assert status_before["validated_tip_height"] is None
+        assert status_before["missing_block_count"] == 0
+
+        runtime = NodeRuntime(service=target)
+        runtime._activate_ready_best_chain()
+
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == blocks[-1].block_hash()
+
+
 def test_runtime_does_not_classify_block_request_stall_as_misbehavior() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
