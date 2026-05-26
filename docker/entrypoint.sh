@@ -136,7 +136,7 @@ resolve_peers() {
     if peers=$(BOOTSTRAP_URL="$BOOTSTRAP_URL" CHIPCOIN_NETWORK="$CHIPCOIN_NETWORK" BOOTSTRAP_PEER_LIMIT="${BOOTSTRAP_PEER_LIMIT:-4}" python3 - <<'PY'
 import os
 
-from chipcoin.interfaces.seed_client import SeedClient
+from chipcoin.interfaces.seed_client import SeedClient, SeedClientError
 
 base_url = os.environ["BOOTSTRAP_URL"]
 network = os.environ["CHIPCOIN_NETWORK"]
@@ -170,21 +170,25 @@ import time
 from importlib import metadata
 
 from chipcoin import __version__
-from chipcoin.interfaces.seed_client import SeedClient
+from chipcoin.interfaces.seed_client import SeedClient, SeedClientError
 
 client = SeedClient(os.environ["BOOTSTRAP_URL_VALUE"])
 try:
     version = metadata.version("chipcoin")
 except metadata.PackageNotFoundError:
     version = __version__
-client.announce(
-    host=os.environ["NODE_PUBLIC_HOST_VALUE"],
-    port=int(os.environ["NODE_PUBLIC_P2P_PORT_VALUE"]),
-    network=os.environ["CHIPCOIN_NETWORK_VALUE"],
-    node_id="",
-    version=version,
-    last_seen=int(time.time()),
-)
+try:
+    client.announce(
+        host=os.environ["NODE_PUBLIC_HOST_VALUE"],
+        port=int(os.environ["NODE_PUBLIC_P2P_PORT_VALUE"]),
+        network=os.environ["CHIPCOIN_NETWORK_VALUE"],
+        node_id="",
+        version=version,
+        last_seen=int(time.time()),
+    )
+except SeedClientError as exc:
+    print(f"BOOTSTRAP_ANNOUNCE_ERROR={exc}")
+    raise SystemExit(1)
 PY
 }
 
@@ -214,13 +218,14 @@ start_bootstrap_announce_loop() {
   (
     local announce_was_healthy=0
     while true; do
-      if bootstrap_announce_once; then
+      if announce_output="$(bootstrap_announce_once 2>&1)"; then
         if [[ "$announce_was_healthy" -eq 0 ]]; then
           log "Bootstrap announce succeeded bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT}"
           announce_was_healthy=1
         fi
       else
-        warn "Bootstrap announce failed bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT}"
+        announce_reason="${announce_output#BOOTSTRAP_ANNOUNCE_ERROR=}"
+        warn "Bootstrap announce failed bootstrap_url=${BOOTSTRAP_URL} public_host=${NODE_PUBLIC_HOST} public_port=${NODE_PUBLIC_P2P_PORT} reason=${announce_reason}"
         announce_was_healthy=0
       fi
       sleep "$refresh_interval"

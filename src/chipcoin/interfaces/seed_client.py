@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -63,5 +64,40 @@ class SeedClient:
             data=request_body,
             headers={"Content-Type": "application/json"} if request_body is not None else {},
         )
-        with urlopen(request, timeout=self.timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            raise SeedClientError(f"HTTP {exc.code}: {_extract_error_message(raw)}") from exc
+        except URLError as exc:
+            raise SeedClientError(f"connection failed: {exc.reason}") from exc
+
+
+class SeedClientError(RuntimeError):
+    """Raised when the bootstrap seed service rejects or fails a request."""
+
+
+def _extract_error_message(raw: str) -> str:
+    """Return a compact error message from a seed service response body."""
+
+    text = raw.strip()
+    if not text:
+        return "empty response body"
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return text[:300]
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            code = error.get("code")
+            if message and code:
+                return f"{code}: {message}"
+            if message:
+                return str(message)
+        message = payload.get("message")
+        if message:
+            return str(message)
+    return text[:300]
