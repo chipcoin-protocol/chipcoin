@@ -2907,7 +2907,15 @@ class NodeService:
             "selection_basis": "pre_block_registry",
         }
 
-    def reward_history(self, recipient: str, *, limit: int = 50, descending: bool = True) -> list[dict[str, object]]:
+    def reward_history(
+        self,
+        recipient: str,
+        *,
+        limit: int = 50,
+        descending: bool = True,
+        start_height: int | None = None,
+        end_height: int | None = None,
+    ) -> list[dict[str, object]]:
         """Return confirmed reward payouts paid to one address from active-chain coinbases."""
 
         tip = self.chain_tip()
@@ -2915,21 +2923,25 @@ class NodeService:
             return []
 
         rows: list[dict[str, object]] = []
-        heights = range(tip.height, -1, -1) if descending else range(tip.height + 1)
+        low_height = 0 if start_height is None else max(0, start_height)
+        high_height = tip.height if end_height is None else min(tip.height, end_height)
+        if low_height > high_height:
+            return []
+        heights = range(high_height, low_height - 1, -1) if descending else range(low_height, high_height + 1)
         for height in heights:
             block = self.get_block_by_height(height)
             if block is None or not block.transactions:
                 continue
             coinbase = block.transactions[0]
             coinbase_txid = coinbase.txid()
-            try:
-                fees_chipbits = self._block_total_fees_chipbits(height, block)
-            except ValueError:
-                fees_chipbits = 0
             miner_subsidy = miner_subsidy_chipbits(height, self.params)
             mature = height + self.params.coinbase_maturity < (tip.height + 1)
 
             if coinbase.outputs and coinbase.outputs[0].recipient == recipient:
+                try:
+                    fees_chipbits = self._block_total_fees_chipbits(height, block)
+                except ValueError:
+                    fees_chipbits = 0
                 rows.append(
                     {
                         "block_height": height,
@@ -3066,12 +3078,13 @@ class NodeService:
     ) -> dict[str, object]:
         """Return aggregated reward totals for one address across active-chain history."""
 
-        rewards = [
-            entry
-            for entry in self.reward_history(recipient, limit=10_000_000, descending=False)
-            if (start_height is None or int(entry["block_height"]) >= start_height)
-            and (end_height is None or int(entry["block_height"]) <= end_height)
-        ]
+        rewards = self.reward_history(
+            recipient,
+            limit=10_000_000,
+            descending=False,
+            start_height=start_height,
+            end_height=end_height,
+        )
         total_rewards_chipbits = sum(int(entry["amount_chipbits"]) for entry in rewards)
         total_miner_subsidy_chipbits = sum(
             int(entry["amount_chipbits"]) for entry in rewards if entry["reward_type"] == "miner_subsidy"

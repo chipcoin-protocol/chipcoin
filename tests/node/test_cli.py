@@ -1455,6 +1455,58 @@ def test_cli_reward_summary_for_miner_and_node_addresses() -> None:
         assert node_payload["total_miner_subsidy_chipbits"] == miner_payload["total_miner_subsidy_chipbits"]
 
 
+def test_cli_reward_summary_honors_height_window_without_fee_replay_for_node_address() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        params = _native_reward_test_params()
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
+        reward_address = wallet_key(0).address
+        _materialize_native_reward_payout(service, miner_address="CHCminer", rewarded_address=reward_address)
+
+        def fail_fee_replay(_height, _block):
+            raise AssertionError("node reward summaries must not replay fees for unrelated miner outputs")
+
+        service._block_total_fees_chipbits = fail_fee_replay  # type: ignore[method-assign]
+        original_open_sqlite = cli_module.NodeService.open_sqlite
+        cli_module.NodeService.open_sqlite = lambda _path, **_kwargs: service
+        try:
+            code, payload = _run_cli(
+                [
+                    "--data",
+                    str(db_path),
+                    "reward-summary",
+                    "--address",
+                    reward_address,
+                    "--start-height",
+                    "4",
+                    "--end-height",
+                    "4",
+                ]
+            )
+            empty_code, empty_payload = _run_cli(
+                [
+                    "--data",
+                    str(db_path),
+                    "reward-summary",
+                    "--address",
+                    reward_address,
+                    "--start-height",
+                    "5",
+                    "--end-height",
+                    "6",
+                ]
+            )
+        finally:
+            cli_module.NodeService.open_sqlite = original_open_sqlite
+
+        assert code == 0
+        assert payload["total_node_rewards_chipbits"] == subsidy_split_chipbits(4, params)[1]
+        assert payload["payout_count"] == 1
+        assert empty_code == 0
+        assert empty_payload["payout_count"] == 0
+
+
 def test_cli_reward_settlement_report_exposes_ranking_and_non_reward_reason() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"

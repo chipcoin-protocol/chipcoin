@@ -236,7 +236,13 @@ def main(argv: list[str] | None = None) -> int:
                         **entry,
                         "amount_chc": format_amount_chc(int(entry["amount_chipbits"])),
                     }
-                    for entry in service.reward_history(args.address, limit=args.limit, descending=not args.ascending)
+                    for entry in service.reward_history(
+                        args.address,
+                        limit=args.limit,
+                        descending=not args.ascending,
+                        start_height=args.start_height,
+                        end_height=args.end_height,
+                    )
                 ]
             )
             return 0
@@ -839,6 +845,8 @@ def _build_parser() -> argparse.ArgumentParser:
     reward_history_parser.add_argument("--address", required=True)
     reward_history_parser.add_argument("--limit", type=int, default=50)
     reward_history_parser.add_argument("--ascending", action="store_true")
+    reward_history_parser.add_argument("--start-height", type=int)
+    reward_history_parser.add_argument("--end-height", type=int)
     reward_summary_parser = subparsers.add_parser("reward-summary")
     reward_summary_parser.add_argument("--address", required=True)
     reward_summary_parser.add_argument("--start-height", type=int)
