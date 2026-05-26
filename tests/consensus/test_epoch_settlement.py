@@ -1,3 +1,6 @@
+from dataclasses import replace
+
+from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.epoch_settlement import (
     REWARD_ATTESTATION_BUNDLE_KIND,
     REWARD_SETTLE_EPOCH_KIND,
@@ -6,6 +9,7 @@ from chipcoin.consensus.epoch_settlement import (
     RewardAttestation,
     RewardAttestationBundle,
     RewardSettlementEntry,
+    analyze_reward_settlement,
     attestation_bundle_duplicates,
     bundle_rule_violations,
     candidate_check_windows,
@@ -183,3 +187,60 @@ def test_consensus_params_expose_native_reward_defaults() -> None:
     assert DEVNET_PARAMS.max_attestation_bundles_per_block == 4
     assert DEVNET_PARAMS.max_attestations_per_bundle == 24
     assert DEVNET_PARAMS.max_attestations_per_verifier_per_window == 1
+
+
+def test_settlement_quorum_scales_down_to_available_committee() -> None:
+    params = replace(
+        DEVNET_PARAMS,
+        reward_target_checks_per_epoch=3,
+        reward_min_passed_checks_per_epoch=2,
+        reward_verifier_committee_size=3,
+        reward_verifier_quorum=2,
+    )
+    seed = epoch_seed("66" * 32, 22)
+    records = {
+        "node-a": NodeRecord(
+            node_id="node-a",
+            payout_address="CHCa",
+            owner_pubkey=b"a" * 33,
+            registered_height=0,
+            last_renewed_height=2200,
+            reward_registration=True,
+        ),
+        "node-b": NodeRecord(
+            node_id="node-b",
+            payout_address="CHCb",
+            owner_pubkey=b"b" * 33,
+            registered_height=0,
+            last_renewed_height=2200,
+            reward_registration=True,
+        ),
+    }
+    attestations = []
+    for candidate_node_id, verifier_node_id in (("node-a", "node-b"), ("node-b", "node-a")):
+        for window_index in candidate_check_windows(node_id=candidate_node_id, seed=seed, params=params):
+            attestations.append(
+                RewardAttestation(
+                    epoch_index=22,
+                    check_window_index=window_index,
+                    candidate_node_id=candidate_node_id,
+                    verifier_node_id=verifier_node_id,
+                    result_code="pass",
+                    observed_sync_gap=0,
+                    endpoint_commitment=f"{candidate_node_id}.example:28444",
+                    concentration_key=f"unscoped:{candidate_node_id}",
+                    signature_hex="aa",
+                )
+            )
+
+    analysis = analyze_reward_settlement(
+        active_records_by_id=records,
+        seed=seed,
+        attestations=attestations,
+        distributed_reward_chipbits=5_000_000_000,
+        params=params,
+    )
+
+    assert {entry.node_id for entry in analysis["reward_entries"]} == {"node-a", "node-b"}
+    assert {entry["node_id"] for entry in analysis["eligible_ranking"]} == {"node-a", "node-b"}
+    assert all(entry["passed_window_count"] == 3 for entry in analysis["node_evaluations"])

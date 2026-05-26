@@ -490,6 +490,7 @@ def analyze_reward_settlement(
                 for attestation in grouped.get((node_id, window_index), [])
                 if attestation.verifier_node_id in committee
             ]
+            effective_quorum = min(params.reward_verifier_quorum, len(committee))
             passed_by_verifier: dict[str, RewardAttestation] = {}
             failing_attestations = 0
             for attestation in window_attestations:
@@ -500,7 +501,7 @@ def analyze_reward_settlement(
                     failing_attestations += 1
                     continue
                 passed_by_verifier.setdefault(attestation.verifier_node_id, attestation)
-            if len(passed_by_verifier) >= params.reward_verifier_quorum:
+            if effective_quorum > 0 and len(passed_by_verifier) >= effective_quorum:
                 passed_windows += 1
                 passed_window_indexes.append(window_index)
                 observed_sync_gaps.extend(
@@ -512,13 +513,16 @@ def analyze_reward_settlement(
                 failure_reason = "missing_attestations"
                 if failing_attestations > 0 and len(passed_by_verifier) == 0:
                     failure_reason = "no_valid_pass_quorum"
-                elif 0 < len(passed_by_verifier) < params.reward_verifier_quorum:
+                elif effective_quorum == 0:
+                    failure_reason = "empty_committee"
+                elif 0 < len(passed_by_verifier) < effective_quorum:
                     failure_reason = "insufficient_quorum"
                 failed_windows.append(
                     {
                         "window_index": window_index,
                         "committee": list(ordered_committee),
                         "valid_pass_count": len(passed_by_verifier),
+                        "required_quorum": effective_quorum,
                         "attestation_count": len(window_attestations),
                         "failure_reason": failure_reason,
                     }
