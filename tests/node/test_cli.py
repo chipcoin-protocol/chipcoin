@@ -697,6 +697,30 @@ def test_cli_add_peer_and_list_peers() -> None:
         assert peer["banned"] is False
 
 
+def test_cli_remove_peer_deletes_peerbook_record() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+
+        _run_cli(["--data", str(db_path), "add-peer", "127.0.0.1", "8333"])
+        remove_code, remove_payload = _run_cli(["--data", str(db_path), "remove-peer", "127.0.0.1", "8333"])
+        list_code, list_payload = _run_cli(["--data", str(db_path), "list-peers"])
+
+        assert remove_code == 0
+        assert remove_payload == {"host": "127.0.0.1", "port": 8333, "network": "mainnet", "removed": True}
+        assert list_code == 0
+        assert list_payload == []
+
+
+def test_cli_remove_peer_reports_missing_peer() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+
+        remove_code, remove_payload = _run_cli(["--data", str(db_path), "remove-peer", "127.0.0.1", "8333"])
+
+        assert remove_code == 0
+        assert remove_payload == {"host": "127.0.0.1", "port": 8333, "network": "mainnet", "removed": False}
+
+
 def test_cli_public_peers_returns_public_bootstrap_directory() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "node.sqlite3"

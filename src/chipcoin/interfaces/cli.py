@@ -145,6 +145,13 @@ def main(argv: list[str] | None = None) -> int:
             _print_json({"host": peer.host, "port": peer.port, "network": peer.network})
             return 0
 
+        if args.command == "remove-peer":
+            assert service is not None
+            existing = next((peer for peer in service.list_peers() if peer.host == args.host and peer.port == args.port), None)
+            service.remove_peer(args.host, args.port)
+            _print_json({"host": args.host, "port": args.port, "network": args.network, "removed": existing is not None})
+            return 0
+
         if args.command == "list-peers":
             assert service is not None
             _print_json(service.peer_diagnostics())
@@ -825,6 +832,10 @@ def _build_parser() -> argparse.ArgumentParser:
     add_peer_parser = subparsers.add_parser("add-peer")
     add_peer_parser.add_argument("host")
     add_peer_parser.add_argument("port", type=int)
+
+    remove_peer_parser = subparsers.add_parser("remove-peer")
+    remove_peer_parser.add_argument("host")
+    remove_peer_parser.add_argument("port", type=int)
 
     subparsers.add_parser("list-peers")
     peer_detail_parser = subparsers.add_parser("peer-detail")
