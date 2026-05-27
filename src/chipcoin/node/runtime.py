@@ -1924,6 +1924,7 @@ class NodeRuntime:
             healthy_persisted = [peer for peer in persisted_peers if self._is_healthy_persisted_peer(peer)]
             if healthy_persisted:
                 peers.update(OutboundPeer(peer.host, peer.port) for peer in healthy_persisted)
+                peers.update(OutboundPeer(peer.host, peer.port) for peer in persisted_peers if peer.source == "manual")
                 use_configured_fallback = False
             else:
                 peers.update(OutboundPeer(peer.host, peer.port) for peer in persisted_peers)
@@ -1967,7 +1968,7 @@ class NodeRuntime:
 
         info = self._known_peer_info(peer.host, peer.port)
         source = None if info is None else info.source
-        source_rank = {"discovered": 0, "manual": 1, "seed": 2}.get(source, 3)
+        source_rank = {"manual": 0, "discovered": 1, "seed": 2}.get(source, 3)
         success_count = 0 if info is None or info.success_count is None else info.success_count
         score = 0 if info is None or info.score is None else info.score
         last_success = 0 if info is None or info.last_success is None else info.last_success

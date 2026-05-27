@@ -1027,6 +1027,37 @@ def test_runtime_startup_prefers_persisted_healthy_peer_over_manual_seed() -> No
         assert runtime._desired_outbound_peers() == [OutboundPeer("188.218.213.92", 18444)]
 
 
+def test_runtime_startup_keeps_persisted_manual_peer_with_healthy_persisted_peers() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.record_peer_observation(
+            host="188.218.213.92",
+            port=18444,
+            source="discovered",
+            handshake_complete=True,
+            success_count=2,
+            last_success=1_700_000_010,
+            score=5,
+        )
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=18444,
+            source="discovered",
+            handshake_complete=True,
+            success_count=8,
+            last_success=1_700_000_020,
+            score=10,
+        )
+        service.add_peer("tiltmediaconsulting.com", 18444, source="manual")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        desired = runtime._desired_outbound_peers()
+
+        assert desired[0] == OutboundPeer("tiltmediaconsulting.com", 18444)
+        assert OutboundPeer("188.218.213.92", 18444) in desired
+        assert OutboundPeer("188.217.94.86", 18444) in desired
+
+
 def test_runtime_purges_stale_discovered_peers_but_keeps_manual_peers() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_800_000_000)
