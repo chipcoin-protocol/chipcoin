@@ -269,6 +269,198 @@ sqlite_file_is_pristine() {
   [[ ! -s "$path" ]]
 }
 
+select_snapshot_from_manifest() {
+  SNAPSHOT_MANIFEST_URLS_VALUE="${NODE_SNAPSHOT_MANIFEST_URLS:-}" \
+  CHIPCOIN_NETWORK_VALUE="${CHIPCOIN_NETWORK:-}" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+from urllib import request
+
+manifest_urls = [
+    item.strip()
+    for item in os.environ.get("SNAPSHOT_MANIFEST_URLS_VALUE", "").split(",")
+    if item.strip()
+]
+network = os.environ["CHIPCOIN_NETWORK_VALUE"]
+errors: list[str] = []
+
+for manifest_url in manifest_urls:
+    try:
+        with request.urlopen(manifest_url, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        raw_entries = payload.get("snapshots", []) if isinstance(payload, dict) else payload
+        if not isinstance(raw_entries, list):
+            raise ValueError("manifest entries are not a list")
+        entries = []
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("network", "")) != network:
+                continue
+            if int(entry.get("format_version", 0)) not in {1, 2}:
+                continue
+            entries.append(entry)
+        if not entries:
+            raise ValueError("no compatible snapshots")
+        entries.sort(
+            key=lambda item: (
+                int(item.get("snapshot_height", 0)),
+                int(item.get("created_at", 0)),
+                int(item.get("format_version", 0)),
+            ),
+            reverse=True,
+        )
+        selected = entries[0]
+        print(
+            "\t".join(
+                [
+                    str(selected["snapshot_url"]),
+                    str(selected["snapshot_height"]),
+                    str(selected["snapshot_block_hash"]),
+                    str(selected.get("checksum_sha256", selected.get("checksum", ""))),
+                    manifest_url,
+                ]
+            )
+        )
+        raise SystemExit(0)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"{manifest_url}: {exc}")
+
+print("; ".join(errors) if errors else "no snapshot manifest URLs configured", file=sys.stderr)
+raise SystemExit(1)
+PY
+}
+
+download_snapshot_file() {
+  local snapshot_url="$1"
+  local snapshot_path="$2"
+  local expected_checksum="${3:-}"
+
+  mkdir -p "$(dirname "$snapshot_path")"
+  SNAPSHOT_URL_VALUE="$snapshot_url" \
+  SNAPSHOT_PATH_VALUE="$snapshot_path" \
+  SNAPSHOT_EXPECTED_CHECKSUM_VALUE="$expected_checksum" \
+  python3 - <<'PY'
+import hashlib
+import os
+from pathlib import Path
+from urllib import request
+
+url = os.environ["SNAPSHOT_URL_VALUE"]
+path = Path(os.environ["SNAPSHOT_PATH_VALUE"])
+expected_checksum = os.environ.get("SNAPSHOT_EXPECTED_CHECKSUM_VALUE", "").strip().lower()
+tmp_path = path.with_suffix(path.suffix + ".tmp")
+
+digest = hashlib.sha256()
+with request.urlopen(url, timeout=60) as response, tmp_path.open("wb") as handle:
+    while True:
+        chunk = response.read(1024 * 1024)
+        if not chunk:
+            break
+        handle.write(chunk)
+        digest.update(chunk)
+
+actual_checksum = digest.hexdigest()
+if expected_checksum and actual_checksum != expected_checksum:
+    tmp_path.unlink(missing_ok=True)
+    raise SystemExit(
+        f"Downloaded snapshot checksum mismatch: expected {expected_checksum}, got {actual_checksum}"
+    )
+tmp_path.replace(path)
+PY
+}
+
+prepare_snapshot_bootstrap_if_needed() {
+  local sqlite_path="$1"
+  local mode="${NODE_BOOTSTRAP_MODE:-full}"
+
+  case "$mode" in
+    full|"")
+      return 0
+      ;;
+    snapshot|auto)
+      ;;
+    *)
+      die "Unsupported NODE_BOOTSTRAP_MODE=${mode}. Expected full, snapshot, or auto."
+      ;;
+  esac
+
+  if ! sqlite_file_is_pristine "$sqlite_path"; then
+    log "Snapshot bootstrap skipped mode=${mode} reason=node_database_already_initialized data_path=${sqlite_path}"
+    return 0
+  fi
+
+  local snapshot_path="${NODE_SNAPSHOT_FILE:-}"
+  if [[ -z "$snapshot_path" ]]; then
+    if [[ "$mode" == "auto" ]]; then
+      warn "Snapshot bootstrap skipped: NODE_SNAPSHOT_FILE is empty. Falling back to full sync."
+      return 0
+    fi
+    die "Snapshot bootstrap requires NODE_SNAPSHOT_FILE."
+  fi
+
+  local snapshot_url="${NODE_SNAPSHOT_SELECTED_URL:-}"
+  local snapshot_height="${NODE_SNAPSHOT_SELECTED_HEIGHT:-}"
+  local snapshot_hash="${NODE_SNAPSHOT_SELECTED_HASH:-}"
+  local snapshot_checksum=""
+  local manifest_url=""
+
+  if [[ -z "$snapshot_url" ]]; then
+    local selected=""
+    if ! selected="$(select_snapshot_from_manifest 2>&1)"; then
+      if [[ "$mode" == "auto" ]]; then
+        warn "Snapshot bootstrap failed while selecting manifest entry: ${selected}. Falling back to full sync."
+        return 0
+      fi
+      die "Snapshot bootstrap failed while selecting manifest entry: ${selected}"
+    fi
+    IFS=$'\t' read -r snapshot_url snapshot_height snapshot_hash snapshot_checksum manifest_url <<< "$selected"
+  fi
+
+  if [[ -z "$snapshot_url" ]]; then
+    if [[ "$mode" == "auto" ]]; then
+      warn "Snapshot bootstrap skipped: no selected snapshot URL. Falling back to full sync."
+      return 0
+    fi
+    die "Snapshot bootstrap requires NODE_SNAPSHOT_SELECTED_URL or NODE_SNAPSHOT_MANIFEST_URLS."
+  fi
+
+  log "Snapshot bootstrap preparing url=${snapshot_url} height=${snapshot_height:-unknown} hash=${snapshot_hash:-unknown} manifest=${manifest_url:-preselected} file=${snapshot_path}"
+  if ! download_snapshot_file "$snapshot_url" "$snapshot_path" "$snapshot_checksum"; then
+    if [[ "$mode" == "auto" ]]; then
+      warn "Snapshot download failed. Falling back to full sync."
+      return 0
+    fi
+    die "Snapshot download failed."
+  fi
+
+  local -a import_args=(
+    --network "${CHIPCOIN_NETWORK}"
+    --data "$sqlite_path"
+    snapshot-import
+    --snapshot-file "$snapshot_path"
+    --snapshot-reset
+    --snapshot-trust-mode "${NODE_SNAPSHOT_TRUST_MODE:-off}"
+  )
+  if [[ -n "${NODE_SNAPSHOT_TRUSTED_KEYS_FILE:-}" ]]; then
+    import_args+=(--snapshot-trusted-keys-file "${NODE_SNAPSHOT_TRUSTED_KEYS_FILE}")
+  fi
+
+  local import_output=""
+  if ! import_output="$(chipcoin "${import_args[@]}" 2>&1)"; then
+    if [[ "$mode" == "auto" ]]; then
+      rm -f -- "$sqlite_path" "$sqlite_path-shm" "$sqlite_path-wal"
+      touch "$sqlite_path" || die "Could not reset node database after failed snapshot import: ${sqlite_path}"
+      warn "Snapshot import failed: ${import_output}. Falling back to full sync."
+      return 0
+    fi
+    die "Snapshot import failed: ${import_output}"
+  fi
+  log "Snapshot bootstrap imported data_path=${sqlite_path} file=${snapshot_path} result=${import_output}"
+}
+
 apply_initial_sync_defaults_if_needed() {
   local sqlite_path="$1"
   local role_label="$2"
@@ -341,6 +533,7 @@ run_node() {
   fi
 
   apply_initial_sync_defaults_if_needed /runtime/node.sqlite3 "node" "$startup_peer_count"
+  prepare_snapshot_bootstrap_if_needed /runtime/node.sqlite3
 
   if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
     warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."
