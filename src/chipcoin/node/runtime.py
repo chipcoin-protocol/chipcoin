@@ -520,6 +520,8 @@ class NodeRuntime:
         """Run one idempotent reward automation pass."""
 
         assert self.reward_automation is not None
+        if not self._reward_automation_sync_ready():
+            return
         current_epoch_index = self.service.next_block_epoch()
         self._reward_submitted_renewal_epochs = {epoch for epoch in self._reward_submitted_renewal_epochs if epoch >= current_epoch_index}
         self._reward_submitted_attestation_identities = {
@@ -542,7 +544,7 @@ class NodeRuntime:
             raise ValueError(f"owner wallet does not match reward node owner for node_id={record.node_id}")
         if current_epoch(record.last_renewed_height, self.service.params) == current_epoch_index:
             return
-        if current_epoch_index in self._reward_submitted_renewal_epochs:
+        if self._has_staged_reward_renewal(current_epoch_index):
             return
         declared_host = self.reward_automation.declared_host or record.declared_host
         declared_port = self.reward_automation.declared_port or record.declared_port
@@ -558,6 +560,41 @@ class NodeRuntime:
         await self.submit_transaction(transaction)
         self._reward_submitted_renewal_epochs.add(current_epoch_index)
         self.logger.info("auto reward renewal submitted node_id=%s epoch=%s txid=%s", record.node_id, current_epoch_index, transaction.txid())
+
+    def _reward_automation_sync_ready(self) -> bool:
+        """Return whether local reward decisions are based on the validated network tip."""
+
+        sync_status = self.service.sync_status()
+        mode = str(sync_status.get("mode", "idle"))
+        if mode not in {"idle", "synced"}:
+            return False
+        local_height = sync_status.get("local_height")
+        remote_height = sync_status.get("remote_height")
+        if isinstance(local_height, int) and isinstance(remote_height, int) and local_height < remote_height:
+            return False
+        validated_height = sync_status.get("validated_tip_height")
+        best_header_height = sync_status.get("best_header_height")
+        if isinstance(validated_height, int) and isinstance(best_header_height, int) and validated_height < best_header_height:
+            return False
+        for field_name in ("missing_block_count", "queued_block_count", "inflight_block_count"):
+            value = sync_status.get(field_name)
+            if isinstance(value, int) and value > 0:
+                return False
+        return True
+
+    def _has_staged_reward_renewal(self, epoch_index: int) -> bool:
+        """Return whether this node already has the configured renewal staged locally."""
+
+        assert self.reward_automation is not None
+        for transaction in self.service.list_mempool_transactions():
+            metadata = transaction.metadata
+            if (
+                metadata.get("kind") == "renew_reward_node"
+                and metadata.get("node_id") == self.reward_automation.node_id
+                and metadata.get("renewal_epoch") == str(epoch_index)
+            ):
+                return True
+        return False
 
     async def _maybe_auto_attest(self, current_epoch_index: int) -> None:
         """Submit deterministic pass attestations for one configured verifier node."""

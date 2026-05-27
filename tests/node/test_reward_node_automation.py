@@ -119,6 +119,75 @@ def test_reward_node_automation_auto_renews_for_next_epoch() -> None:
         assert status["last_renewal_height"] == 5
 
 
+def test_reward_node_automation_skips_renewal_while_syncing() -> None:
+    with TemporaryDirectory() as tempdir:
+        reward_a = wallet_key(0)
+        service = _make_reward_service(Path(tempdir) / "node.sqlite3", start_time=1_700_051_000)
+        wallet_path = _write_wallet_file(Path(tempdir) / "reward-a.json", reward_a)
+        runtime = NodeRuntime(
+            service=service,
+            reward_automation=RewardNodeAutomationConfig(
+                node_id="reward-node-a",
+                owner_wallet_path=wallet_path,
+                attest_wallet_path=wallet_path,
+                auto_attest_enabled=False,
+            ),
+        )
+
+        _register_reward_node(service, wallet=reward_a, node_id="reward-node-a", declared_port=18444)
+        for _ in range(5):
+            _apply_candidate_block(service, reward_a.address)
+        service.set_runtime_sync_status(
+            {
+                "mode": "blocks",
+                "phase": "syncing_post_anchor_delta",
+                "local_height": 4,
+                "remote_height": 9,
+                "validated_tip_height": 4,
+                "best_header_height": 9,
+                "missing_block_count": 5,
+                "queued_block_count": 5,
+                "inflight_block_count": 0,
+            }
+        )
+
+        asyncio.run(runtime._run_reward_automation_once())
+
+        assert [tx.metadata.get("kind") for tx in service.list_mempool_transactions()] == []
+
+
+def test_reward_node_automation_renewal_retry_depends_on_mempool_not_memory() -> None:
+    with TemporaryDirectory() as tempdir:
+        reward_a = wallet_key(0)
+        service = _make_reward_service(Path(tempdir) / "node.sqlite3", start_time=1_700_052_000)
+        wallet_path = _write_wallet_file(Path(tempdir) / "reward-a.json", reward_a)
+        runtime = NodeRuntime(
+            service=service,
+            reward_automation=RewardNodeAutomationConfig(
+                node_id="reward-node-a",
+                owner_wallet_path=wallet_path,
+                attest_wallet_path=wallet_path,
+                auto_attest_enabled=False,
+            ),
+        )
+
+        _register_reward_node(service, wallet=reward_a, node_id="reward-node-a", declared_port=18444)
+        for _ in range(5):
+            _apply_candidate_block(service, reward_a.address)
+        runtime._reward_submitted_renewal_epochs.add(1)
+
+        asyncio.run(runtime._run_reward_automation_once())
+        asyncio.run(runtime._run_reward_automation_once())
+
+        renewals = [
+            tx
+            for tx in service.list_mempool_transactions()
+            if tx.metadata.get("kind") == "renew_reward_node"
+        ]
+        assert len(renewals) == 1
+        assert renewals[0].metadata["renewal_epoch"] == "1"
+
+
 def test_reward_node_automation_auto_attests_and_enables_settlement() -> None:
     with TemporaryDirectory() as tempdir:
         reward_a = wallet_key(0)
