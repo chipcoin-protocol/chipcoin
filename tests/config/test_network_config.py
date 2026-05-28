@@ -22,6 +22,7 @@ def test_get_network_config_supports_testnet() -> None:
     assert config.params is TESTNET_PARAMS
     assert config.params.max_money_chipbits == MAINNET_PARAMS.max_money_chipbits
     assert config.params.target_block_time_seconds == MAINNET_PARAMS.target_block_time_seconds
+    assert config.params.target_block_time_seconds == 600
     assert (
         DEVNET_PARAMS.node_reward_activation_height
         < config.params.node_reward_activation_height
