@@ -74,7 +74,7 @@ from ..utils.time import unix_time
 from .mempool import AcceptedTransaction, MempoolManager, MempoolPolicy
 from .messages import GetBlocksMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector
 from .mining import BlockTemplate, MiningCoordinator, build_coinbase_transaction, transaction_weight_units
-from .peers import PeerInfo, PeerManager
+from .peers import PeerInfo, PeerManager, preferred_peer_source
 from .snapshots import (
     LoadedSnapshot,
     SnapshotAnchor,
@@ -1012,7 +1012,7 @@ class NodeService:
             host=host,
             port=port,
             network=self.network,
-            source=source if existing is None or existing.source is None else existing.source,
+            source=preferred_peer_source(None if existing is None else existing.source, source),
             first_seen=now if existing is None or existing.first_seen is None else existing.first_seen,
             last_seen=now,
         )
@@ -1317,7 +1317,7 @@ class NodeService:
             host=host,
             port=port,
             network=self.network,
-            source=source if source is not None else (None if existing is None else existing.source),
+            source=preferred_peer_source(None if existing is None else existing.source, source),
             first_seen=(
                 first_seen if first_seen is not None else (now if existing is None or existing.first_seen is None else existing.first_seen)
             ),

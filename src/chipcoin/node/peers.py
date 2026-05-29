@@ -40,6 +40,21 @@ class PeerInfo:
     last_penalty_at: int | None = None
 
 
+_PEER_SOURCE_PRIORITY = {"manual": 3, "seed": 2, "discovered": 1}
+
+
+def preferred_peer_source(existing: str | None, incoming: str | None) -> str | None:
+    """Return the strongest peer source without downgrading explicit operator intent."""
+
+    if existing is None:
+        return incoming
+    if incoming is None:
+        return existing
+    existing_rank = _PEER_SOURCE_PRIORITY.get(existing, 0)
+    incoming_rank = _PEER_SOURCE_PRIORITY.get(incoming, 0)
+    return incoming if incoming_rank > existing_rank else existing
+
+
 def classify_peer_error(error: Exception | str | None) -> str | None:
     """Map peer/runtime errors into stable diagnostic classes."""
 
@@ -64,7 +79,7 @@ class PeerManager:
             host=peer.host,
             port=peer.port,
             network=peer.network,
-            source=peer.source if peer.source is not None else existing.source,
+            source=preferred_peer_source(existing.source, peer.source),
             first_seen=existing.first_seen if existing.first_seen is not None else peer.first_seen,
             direction=peer.direction if peer.direction is not None else existing.direction,
             last_seen=peer.last_seen if peer.last_seen is not None else existing.last_seen,

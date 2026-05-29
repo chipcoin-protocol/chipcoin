@@ -1058,6 +1058,23 @@ def test_runtime_startup_keeps_persisted_manual_peer_with_healthy_persisted_peer
         assert OutboundPeer("188.217.94.86", 18444) in desired
 
 
+def test_add_peer_promotes_existing_seed_to_manual_and_keeps_it_manual() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+
+        service.add_peer("appartamento4310.zapto.org", 18444, source="seed")
+        promoted = service.add_peer("appartamento4310.zapto.org", 18444, source="manual")
+        service.add_peer("appartamento4310.zapto.org", 18444, source="seed")
+
+        assert promoted.source == "manual"
+        [peer] = [
+            peer
+            for peer in service.list_peers()
+            if peer.host == "appartamento4310.zapto.org" and peer.port == 18444
+        ]
+        assert peer.source == "manual"
+
+
 def test_runtime_purges_stale_discovered_peers_but_keeps_manual_peers() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", time_provider=lambda: 1_800_000_000)
