@@ -1298,6 +1298,36 @@ def test_runtime_treats_alias_of_active_endpoint_as_already_connected(monkeypatc
         assert runtime._has_active_endpoint(OutboundPeer("tiltmediaconsulting.com", 18444)) is True
 
 
+def test_runtime_does_not_treat_inbound_alias_as_outbound_endpoint(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+
+        def fake_getaddrinfo(host: str, port: int, type: int):
+            if host in {"188.218.213.92", "appartamento4310.zapto.org"}:
+                return [(None, None, None, None, ("188.218.213.92", port))]
+            raise OSError("unresolvable")
+
+        monkeypatch.setattr("chipcoin.node.runtime.socket.getaddrinfo", fake_getaddrinfo)
+
+        class _FakeState:
+            closed = False
+            handshake_complete = True
+            remote_version = None
+
+        class _FakeSession:
+            state = _FakeState()
+
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=False,
+            endpoint=OutboundPeer("188.218.213.92", 61375),
+        )
+
+        assert runtime._has_active_endpoint(OutboundPeer("appartamento4310.zapto.org", 18444)) is False
+
+
 def test_runtime_forget_self_alias_removes_equivalent_peer_targets(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

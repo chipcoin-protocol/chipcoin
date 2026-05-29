@@ -1891,10 +1891,12 @@ class NodeRuntime:
             endpoint = self._session_endpoint(protocol, handle)
             if endpoint is not None and endpoint.host == peer.host and endpoint.port == peer.port:
                 return True
-            if endpoint is not None and self._peers_equivalent(endpoint, peer):
+            if handle.outbound and endpoint is not None and self._peers_equivalent(endpoint, peer):
                 return True
             remote = protocol.state.remote_version
             if (
+                handle.outbound
+                and
                 known_node_id is not None
                 and remote is not None
                 and remote.node_id == known_node_id
