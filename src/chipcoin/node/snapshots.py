@@ -512,6 +512,8 @@ def build_snapshot_payload(
                 "genesis_bits": params.genesis_bits,
                 "difficulty_adjustment_window": params.difficulty_adjustment_window,
                 "target_block_time_seconds": params.target_block_time_seconds,
+                "target_block_time_activation_height": params.target_block_time_activation_height,
+                "legacy_target_block_time_seconds": params.legacy_target_block_time_seconds,
                 "coinbase_maturity": params.coinbase_maturity,
                 "max_block_weight": params.max_block_weight,
             },
@@ -667,6 +669,7 @@ def _validate_snapshot_headers(records: list[SnapshotHeaderRecord], *, params: C
                     previous_bits=previous_header.bits,
                     actual_timespan_seconds=actual_timespan_seconds,
                     params=params,
+                    candidate_height=index,
                 )
         if header.bits != expected_bits:
             raise ValueError("snapshot header difficulty does not match expected retarget rules")

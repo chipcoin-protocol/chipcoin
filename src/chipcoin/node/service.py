@@ -38,7 +38,7 @@ from ..consensus.nodes import (
     reward_node_warmup_satisfied,
     select_rewarded_nodes,
 )
-from ..consensus.params import ConsensusParams
+from ..consensus.params import ConsensusParams, target_block_time_seconds_for_height
 from ..consensus.pow import bits_to_target, calculate_next_work_required, header_work
 from ..consensus.serialization import deserialize_block, deserialize_transaction, serialize_transaction
 from ..consensus.economics import (
@@ -2193,6 +2193,9 @@ class NodeService:
         return {
             "difficulty_adjustment_window": self.params.difficulty_adjustment_window,
             "target_block_time_seconds": self.params.target_block_time_seconds,
+            "active_target_block_time_seconds": target_block_time_seconds_for_height(next_height, self.params),
+            "target_block_time_activation_height": self.params.target_block_time_activation_height,
+            "legacy_target_block_time_seconds": self.params.legacy_target_block_time_seconds,
             "current_tip_height": None if tip is None else tip.height,
             "current_bits": self.params.genesis_bits if tip is None else self.headers.get(tip.block_hash).bits,
             "expected_next_bits": self.expected_next_bits(),
@@ -3578,6 +3581,7 @@ class NodeService:
             previous_bits=previous_header.bits,
             actual_timespan_seconds=actual_timespan_seconds,
             params=self.params,
+            candidate_height=height,
         )
 
     def _expected_bits_for_candidate_height(self, height: int, validated_headers: list) -> int:
@@ -3597,6 +3601,7 @@ class NodeService:
             previous_bits=previous_header.bits,
             actual_timespan_seconds=actual_timespan_seconds,
             params=self.params,
+            candidate_height=height,
         )
 
     def list_active_reward_nodes(self, height: int):
@@ -3875,7 +3880,8 @@ class NodeService:
                 "first_timestamp": None,
                 "last_timestamp": None,
                 "actual_timespan_seconds": None,
-                "target_timespan_seconds": self.params.target_block_time_seconds * self.params.difficulty_adjustment_window,
+                "target_timespan_seconds": target_block_time_seconds_for_height(candidate_height, self.params)
+                * self.params.difficulty_adjustment_window,
             }
         if candidate_height == 0:
             return {
@@ -3884,7 +3890,8 @@ class NodeService:
                 "first_timestamp": None,
                 "last_timestamp": None,
                 "actual_timespan_seconds": None,
-                "target_timespan_seconds": self.params.target_block_time_seconds * self.params.difficulty_adjustment_window,
+                "target_timespan_seconds": target_block_time_seconds_for_height(candidate_height, self.params)
+                * self.params.difficulty_adjustment_window,
             }
         window_start_height = max(0, candidate_height - self.params.difficulty_adjustment_window)
         previous_hash = self.headers.get_hash_at_height(previous_height)
@@ -3900,7 +3907,8 @@ class NodeService:
             "first_timestamp": None if first_header is None else first_header.timestamp,
             "last_timestamp": None if previous_header is None else previous_header.timestamp,
             "actual_timespan_seconds": actual_timespan_seconds,
-            "target_timespan_seconds": self.params.target_block_time_seconds * self.params.difficulty_adjustment_window,
+            "target_timespan_seconds": target_block_time_seconds_for_height(candidate_height, self.params)
+            * self.params.difficulty_adjustment_window,
         }
 
     def _next_retarget_height(self, next_height: int) -> int:

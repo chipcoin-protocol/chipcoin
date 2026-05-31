@@ -649,4 +649,5 @@ class SyncManager:
             previous_bits=previous_header.bits,
             actual_timespan_seconds=actual_timespan_seconds,
             params=self.node.params,
+            candidate_height=height,
         )

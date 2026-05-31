@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .params import ConsensusParams
+from .params import ConsensusParams, target_block_time_seconds_for_height
 from .hashes import hash_to_int
 from .models import BlockHeader
 from .serialization import serialize_block_header
@@ -70,10 +70,16 @@ def calculate_next_work_required(
     previous_bits: int,
     actual_timespan_seconds: int,
     params: ConsensusParams,
+    candidate_height: int | None = None,
 ) -> int:
     """Return retargeted compact bits using bounded timespan adjustment."""
 
-    target_timespan_seconds = params.target_block_time_seconds * params.difficulty_adjustment_window
+    target_block_time_seconds = (
+        params.target_block_time_seconds
+        if candidate_height is None
+        else target_block_time_seconds_for_height(candidate_height, params)
+    )
+    target_timespan_seconds = target_block_time_seconds * params.difficulty_adjustment_window
     bounded_timespan_seconds = max(target_timespan_seconds // 4, min(actual_timespan_seconds, target_timespan_seconds * 4))
     previous_target = bits_to_target(previous_bits)
     next_target = (previous_target * bounded_timespan_seconds) // target_timespan_seconds

@@ -35,6 +35,19 @@ class ConsensusParams:
     max_attestation_bundles_per_block: int
     max_attestations_per_bundle: int
     max_attestations_per_verifier_per_window: int
+    target_block_time_activation_height: int = 0
+    legacy_target_block_time_seconds: int | None = None
+
+
+def target_block_time_seconds_for_height(height: int, params: ConsensusParams) -> int:
+    """Return the block-time target that applies to one candidate height."""
+
+    if (
+        params.legacy_target_block_time_seconds is not None
+        and height < params.target_block_time_activation_height
+    ):
+        return params.legacy_target_block_time_seconds
+    return params.target_block_time_seconds
 
 
 MAINNET_PARAMS = ConsensusParams(
@@ -124,4 +137,6 @@ TESTNET_PARAMS = ConsensusParams(
     max_attestation_bundles_per_block=4,
     max_attestations_per_bundle=24,
     max_attestations_per_verifier_per_window=1,
+    target_block_time_activation_height=4_500,
+    legacy_target_block_time_seconds=300,
 )

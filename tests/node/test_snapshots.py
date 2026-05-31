@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from chipcoin.consensus.epoch_settlement import RewardAttestation, RewardAttestationBundle, RewardSettlement, RewardSettlementEntry
 from chipcoin.consensus.models import Block
 from chipcoin.consensus.nodes import NodeRecord
+from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, snapshot_checksum, write_snapshot_file
 from chipcoin.node.service import NodeService
@@ -17,9 +18,9 @@ from chipcoin.node.sync import SyncManager
 from chipcoin.storage.native_rewards import StoredEpochSettlement, StoredRewardAttestationBundle
 
 
-def _make_service(database_path: Path, *, start_time: int) -> NodeService:
+def _make_service(database_path: Path, *, start_time: int, params=None) -> NodeService:
     timestamps = iter(range(start_time, start_time + 50_000))
-    return NodeService.open_sqlite(database_path, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, params=params, time_provider=lambda: next(timestamps))
 
 
 def _mine_block(block: Block) -> Block:
@@ -78,6 +79,32 @@ def test_snapshot_export_import_roundtrip_preserves_anchor_and_utxo_state() -> N
         assert target.chainstate.list_utxos() == source.chainstate.list_utxos()
         assert target.node_registry.list_records() == source.node_registry.list_records()
         assert metadata["format_version"] == 2
+
+
+def test_snapshot_import_honors_target_block_time_activation_schedule() -> None:
+    params = replace(
+        MAINNET_PARAMS,
+        coinbase_maturity=0,
+        difficulty_adjustment_window=3,
+        target_block_time_seconds=600,
+        target_block_time_activation_height=6,
+        legacy_target_block_time_seconds=300,
+    )
+
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000, params=params)
+        _mine_chain(source, 7, "CHCminer-source")
+        snapshot_path = Path(tempdir) / "activation.snapshot"
+        source.export_snapshot_file(snapshot_path)
+
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000, params=params)
+        target.import_snapshot_file(snapshot_path)
+
+        assert target.chain_tip() is not None
+        assert source.chain_tip() is not None
+        assert target.chain_tip().block_hash == source.chain_tip().block_hash
+        assert target.snapshot_anchor() is not None
+        assert target.snapshot_anchor().height == 6
         assert snapshot_path.read_bytes().startswith(b"CHCSNP2\n")
 
 

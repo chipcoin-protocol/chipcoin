@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 from chipcoin.consensus.models import BlockHeader
+
 from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.consensus.pow import (
     bits_to_target,
@@ -69,3 +70,29 @@ def test_calculate_next_work_required_decreases_difficulty_when_blocks_are_slow(
     )
 
     assert bits_to_target(slower_bits) >= bits_to_target(MAINNET_PARAMS.genesis_bits)
+
+
+def test_calculate_next_work_required_uses_activation_height_schedule() -> None:
+    params = replace(
+        MAINNET_PARAMS,
+        difficulty_adjustment_window=10,
+        target_block_time_seconds=600,
+        target_block_time_activation_height=100,
+        legacy_target_block_time_seconds=300,
+    )
+
+    legacy_bits = calculate_next_work_required(
+        previous_bits=MAINNET_PARAMS.genesis_bits,
+        actual_timespan_seconds=3_000,
+        params=params,
+        candidate_height=90,
+    )
+    activated_bits = calculate_next_work_required(
+        previous_bits=MAINNET_PARAMS.genesis_bits,
+        actual_timespan_seconds=3_000,
+        params=params,
+        candidate_height=100,
+    )
+
+    assert legacy_bits == MAINNET_PARAMS.genesis_bits
+    assert bits_to_target(activated_bits) < bits_to_target(MAINNET_PARAMS.genesis_bits)
