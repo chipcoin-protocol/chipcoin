@@ -42,6 +42,24 @@ genesis or public launch. These are not testnet operations notes.
 - Confirm node reward epoch length and miner subsidy cadence are coherent with
   the target block time.
 
+## Mempool Policy
+
+- Replace count-only sizing with explicit byte or weight limits before mainnet.
+  The current testnet policy caps transaction count and transaction size, but
+  does not expose a direct total mempool byte budget.
+- Define and test saturation behavior:
+  - which transactions are evicted first
+  - whether fee rate, age, or dependency structure drives eviction
+  - how the node behaves when a peer floods near-limit transactions
+- Expose operator metrics in status/API:
+  - transaction count
+  - estimated serialized bytes
+  - estimated weight units
+  - configured mempool limit
+  - eviction count or pressure signal
+- Add regression tests for mempool limits, TTL expiry, eviction ordering, and
+  restart persistence under a full mempool.
+
 ## Observability
 
 - Keep server-side funnel metrics for downloads, snapshot bootstrap, public peer
