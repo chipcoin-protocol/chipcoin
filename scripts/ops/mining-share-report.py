@@ -12,13 +12,23 @@ from chipcoin.node.service import NodeService
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=(
+            "Examples:\n"
+            "  mining-share-report.py 5000 5781\n"
+            "  mining-share-report.py --last 700\n"
+            "  mining-share-report.py 5000 5781 --json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("range", nargs="*", type=int, metavar="HEIGHT", help="Optional positional range: START END.")
     parser.add_argument("--data", type=Path, default=Path("/runtime/node.sqlite3"), help="SQLite node database path.")
     parser.add_argument("--network", default="testnet", choices=("mainnet", "testnet", "devnet"))
     range_group = parser.add_mutually_exclusive_group()
     range_group.add_argument("--last", type=int, help="Count the last N blocks ending at the current tip.")
-    range_group.add_argument("--start", type=int, help="Start height, inclusive. Requires --end unless --end defaults to tip.")
-    parser.add_argument("--end", type=int, help="End height, inclusive. Defaults to tip with --start.")
+    range_group.add_argument("--start", type=int, help="Start height, inclusive. Use positional START END by default.")
+    parser.add_argument("--end", type=int, help="End height, inclusive. Defaults to tip with --start or --last.")
     parser.add_argument(
         "--label",
         action="append",
@@ -44,7 +54,26 @@ def parse_labels(values: list[str]) -> dict[str, str]:
     return labels
 
 
-def resolve_range(*, tip_height: int, last: int | None, start: int | None, end: int | None) -> tuple[int, int]:
+def resolve_range(
+    *,
+    tip_height: int,
+    positional_range: list[int],
+    last: int | None,
+    start: int | None,
+    end: int | None,
+) -> tuple[int, int]:
+    if len(positional_range) not in {0, 2}:
+        raise SystemExit("provide either positional START END, --last N, or --start HEIGHT [--end HEIGHT]")
+    if positional_range and (last is not None or start is not None or end is not None):
+        raise SystemExit("positional START END cannot be combined with --last, --start, or --end")
+    if positional_range:
+        resolved_start, resolved_end = positional_range
+        if resolved_start < 0:
+            raise SystemExit("START must be non-negative")
+        if resolved_end < resolved_start:
+            raise SystemExit("END must be greater than or equal to START")
+        return resolved_start, resolved_end
+
     if last is not None:
         if last <= 0:
             raise SystemExit("--last must be greater than zero")
@@ -53,7 +82,7 @@ def resolve_range(*, tip_height: int, last: int | None, start: int | None, end: 
         return resolved_start, resolved_end
 
     if start is None:
-        raise SystemExit("provide --last N or --start HEIGHT")
+        raise SystemExit("provide positional START END, --last N, or --start HEIGHT")
     if start < 0:
         raise SystemExit("--start must be non-negative")
     resolved_end = tip_height if end is None else end
@@ -70,7 +99,13 @@ def main() -> int:
     if tip is None:
         raise SystemExit("no chain tip")
 
-    start, end = resolve_range(tip_height=tip.height, last=args.last, start=args.start, end=args.end)
+    start, end = resolve_range(
+        tip_height=tip.height,
+        positional_range=args.range,
+        last=args.last,
+        start=args.start,
+        end=args.end,
+    )
     counts: Counter[str] = Counter()
     missing_heights: list[int] = []
 
