@@ -1712,7 +1712,11 @@ def test_runtime_allows_block_download_from_peer_covering_current_window(monkeyp
             outbound=True,
             sync_target_height=5788,
         )
-        monkeypatch.setattr(runtime.sync_manager, "block_download_window_end_height", lambda **_kwargs: 5788)
+        monkeypatch.setattr(
+            runtime.sync_manager,
+            "sync_status",
+            lambda: {"download_window": {"start_height": 5788, "end_height": 5813, "size": 26}},
+        )
 
         assert runtime._session_can_download_blocks(session, best_header_height=5813) is True
 

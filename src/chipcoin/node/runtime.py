@@ -1467,8 +1467,19 @@ class NodeRuntime:
         if not sessions:
             return
         peer_ids = tuple(self._sync_peer_id(session) for session in sessions)
+        for request in self.sync_manager.release_unavailable_peer_requests(peer_ids):
+            self.logger.info(
+                "sync block request released peer=%s block=%s reason=peer_not_eligible",
+                request.peer_id,
+                request.block_hash,
+            )
+        peer_heights = {
+            self._sync_peer_id(session): self._session_advertised_sync_height(session)
+            for session in sessions
+        }
         assignments = self.sync_manager.reserve_block_downloads(
             peer_ids=peer_ids,
+            peer_heights=peer_heights,
             max_window_size=self.block_download_window_size,
             max_inflight_per_peer=self.block_max_inflight_per_peer,
             timeout_seconds=self.block_request_timeout_seconds,
@@ -1617,13 +1628,14 @@ class NodeRuntime:
         remote = session.state.remote_version
         if remote is None:
             return False
-        advertised_height = max(remote.start_height, self._sync_target_height(session))
-        required_height = self.sync_manager.block_download_window_end_height(
-            max_window_size=self.block_download_window_size
-        )
-        if required_height is None:
-            required_height = best_header_height
-        return advertised_height >= required_height or advertised_height >= max(0, required_height - 1)
+        advertised_height = self._session_advertised_sync_height(session)
+        status = self.sync_manager.sync_status()
+        download_window = status.get("download_window")
+        if isinstance(download_window, dict):
+            start_height = download_window.get("start_height")
+            if isinstance(start_height, int):
+                return advertised_height >= start_height
+        return advertised_height >= best_header_height
 
     def _sync_session_rank_key(self, session: PeerProtocol) -> tuple[int, int, int, str]:
         """Prefer healthier peers for header and block sync work."""
@@ -1649,6 +1661,13 @@ class NodeRuntime:
         if endpoint is not None:
             return f"{endpoint.host}:{endpoint.port}"
         return f"session:{id(session)}"
+
+    def _session_advertised_sync_height(self, session: PeerProtocol) -> int:
+        """Return the highest block height this peer is expected to serve."""
+
+        remote = session.state.remote_version
+        remote_height = -1 if remote is None else int(remote.start_height)
+        return max(remote_height, self._sync_target_height(session))
 
     def _session_for_sync_peer(self, peer_id: str) -> PeerProtocol | None:
         """Return the active session matching one scheduler peer identifier."""

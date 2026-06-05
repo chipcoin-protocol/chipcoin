@@ -280,6 +280,7 @@ class SyncManager:
         self,
         *,
         peer_ids: tuple[str, ...],
+        peer_heights: dict[str, int] | None = None,
         max_window_size: int,
         max_inflight_per_peer: int,
         timeout_seconds: float,
@@ -298,6 +299,7 @@ class SyncManager:
         max_window_size = max(1, max_window_size)
         max_inflight_per_peer = max(1, max_inflight_per_peer)
         window_hashes = missing_blocks[:max_window_size]
+        peer_heights = peer_heights or {}
         inflight_by_peer: dict[str, int] = {peer_id: 0 for peer_id in peer_ids}
         for request in self._inflight_blocks.values():
             if request.peer_id in inflight_by_peer:
@@ -310,8 +312,17 @@ class SyncManager:
                 continue
             if block_hash in self._inflight_blocks:
                 continue
+            record = self.node.headers.get_record(block_hash)
+            block_height = None if record is None else int(record.height)
+            eligible_peers = [
+                peer_id
+                for peer_id in peer_cycle
+                if block_height is None or peer_heights.get(peer_id, block_height) >= block_height
+            ]
+            if not eligible_peers:
+                break
             candidate_peers = sorted(
-                peer_cycle,
+                eligible_peers,
                 key=lambda peer_id: (
                     inflight_by_peer.get(peer_id, 0),
                     self._stalled_peer_counts.get(peer_id, 0),
@@ -345,6 +356,18 @@ class SyncManager:
                 )
             )
         return tuple(assignments)
+
+    def release_unavailable_peer_requests(self, peer_ids: tuple[str, ...]) -> tuple[BlockRequestState, ...]:
+        """Release in-flight requests assigned to peers that are no longer active."""
+
+        active_peer_ids = set(peer_ids)
+        released: list[BlockRequestState] = []
+        for block_hash, request in list(self._inflight_blocks.items()):
+            if request.peer_id in active_peer_ids:
+                continue
+            released.append(request)
+            self._inflight_blocks.pop(block_hash, None)
+        return tuple(released)
 
     def block_download_window_end_height(self, *, max_window_size: int) -> int | None:
         """Return the highest header height inside the current block download window."""

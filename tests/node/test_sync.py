@@ -253,6 +253,52 @@ def test_sync_manager_reassigns_expired_block_requests() -> None:
         assert [assignment.peer_id for assignment in reassigned] == ["peer-b", "peer-b"]
 
 
+def test_sync_manager_respects_peer_advertised_heights_when_assigning_blocks() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 5, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+
+        assignments = manager.reserve_block_downloads(
+            peer_ids=("peer-low", "peer-high"),
+            peer_heights={"peer-low": 1, "peer-high": 4},
+            max_window_size=5,
+            max_inflight_per_peer=5,
+            timeout_seconds=5.0,
+            now=100.0,
+        )
+
+        assignments_by_hash = {assignment.block_hash: assignment.peer_id for assignment in assignments}
+        assert assignments_by_hash[blocks[0].block_hash()] == "peer-high"
+        assert assignments_by_hash[blocks[1].block_hash()] == "peer-low"
+        assert assignments_by_hash[blocks[2].block_hash()] == "peer-high"
+        assert assignments_by_hash[blocks[3].block_hash()] == "peer-high"
+        assert assignments_by_hash[blocks[4].block_hash()] == "peer-high"
+
+
+def test_sync_manager_releases_requests_for_unavailable_peers() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 2, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        manager.reserve_block_downloads(
+            peer_ids=("peer-a",),
+            max_window_size=2,
+            max_inflight_per_peer=2,
+            timeout_seconds=5.0,
+            now=100.0,
+        )
+
+        released = manager.release_unavailable_peer_requests(("peer-b",))
+
+        assert [request.block_hash for request in released] == [block.block_hash() for block in blocks]
+        assert manager.sync_status()["inflight_block_count"] == 0
+
+
 def test_sync_manager_activates_best_contiguous_prefix_before_full_tip_is_available() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
