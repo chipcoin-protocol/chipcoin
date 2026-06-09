@@ -134,6 +134,51 @@ def test_runtime_desired_outbound_peers_does_not_reload_peers_per_filter() -> No
         assert desired
 
 
+def test_runtime_canonicalizes_inbound_peer_when_canonical_record_is_stale() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.record_peer_observation(
+            host="8.8.8.8",
+            port=8333,
+            source="manual",
+            handshake_complete=False,
+            node_id="old-node",
+            last_error="Peer connection closed while reading frame.",
+        )
+        runtime = NodeRuntime(service=service)
+
+        canonical = runtime._canonicalize_reusable_inbound_endpoint(
+            PeerEndpoint("8.8.8.8", 53124),
+            inbound=True,
+            node_id="new-node",
+        )
+
+        assert canonical == OutboundPeer("8.8.8.8", 8333)
+
+
+def test_runtime_does_not_reassign_active_canonical_peer_to_different_node_id() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.record_peer_observation(
+            host="8.8.4.4",
+            port=8333,
+            source="manual",
+            handshake_complete=True,
+            node_id="active-node",
+            last_success=1_700_000_000,
+            last_error=None,
+        )
+        runtime = NodeRuntime(service=service)
+
+        canonical = runtime._canonicalize_reusable_inbound_endpoint(
+            PeerEndpoint("8.8.4.4", 53124),
+            inbound=True,
+            node_id="other-node",
+        )
+
+        assert canonical is None
+
+
 def test_node_service_opens_devnet_with_devnet_params() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")

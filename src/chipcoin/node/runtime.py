@@ -2079,7 +2079,13 @@ class NodeRuntime:
             return None
         canonical = OutboundPeer(endpoint.host, get_network_config(self.service.network).default_p2p_port)
         existing = self._known_peer_info(canonical.host, canonical.port)
-        if existing is not None and existing.node_id is not None and node_id is not None and existing.node_id != node_id:
+        if (
+            existing is not None
+            and existing.node_id is not None
+            and node_id is not None
+            and existing.node_id != node_id
+            and existing.handshake_complete is True
+        ):
             return None
         return canonical
 
