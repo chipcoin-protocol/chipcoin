@@ -21,7 +21,7 @@ from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
-from chipcoin.node.messages import AddrMessage, GetDataMessage, HeadersMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
+from chipcoin.node.messages import AddrMessage, GetDataMessage, HeadersMessage, InvMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
 from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
 from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
@@ -1675,6 +1675,47 @@ def test_runtime_requests_headers_from_parallel_peers_up_to_limit() -> None:
             assert requested == ["peer-0", "peer-1"]
 
     sent_messages: list[tuple[str, str]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_tx_inventory_uses_mempool_lookup_without_chain_scan(monkeypatch) -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = None
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = False
+        state = _FakeSessionState()
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            sent_messages.append(message)
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service)
+            txid = "aa" * 32
+
+            def fail_historical_lookup(_txid: str):
+                raise AssertionError("tx inventory must not scan historical blocks")
+
+            monkeypatch.setattr(service, "get_transaction", fail_historical_lookup)
+
+            await runtime._on_peer_message(
+                _FakeSession(),
+                MessageEnvelope(
+                    command="inv",
+                    payload=InvMessage(items=(InventoryVector(object_type="tx", object_hash=txid),)),
+                ),
+            )
+
+            assert [message.command for message in sent_messages] == ["getdata"]
+            assert sent_messages[0].payload.items == (InventoryVector(object_type="tx", object_hash=txid),)
+
+    sent_messages: list[MessageEnvelope] = []
     asyncio.run(scenario())
 
 

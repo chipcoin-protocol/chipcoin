@@ -1188,7 +1188,7 @@ class NodeRuntime:
                     if self.service.headers.get_record(item.object_hash) is None and self.service.get_block_by_hash(item.object_hash) is None:
                         needed.append(item)
                 elif item.object_type == "tx":
-                    if self.service.get_transaction(item.object_hash) is None:
+                    if self.service.find_mempool_transaction(item.object_hash) is None:
                         needed.append(item)
             if needed:
                 await session.send_message(MessageEnvelope(command="getdata", payload=GetDataMessage(items=tuple(needed))))
@@ -1219,7 +1219,7 @@ class NodeRuntime:
                         served_blocks += 1
                         await session.send_message(MessageEnvelope(command="block", payload=BlockMessage(block=block)))
                 elif item.object_type == "tx":
-                    transaction = self.service.get_transaction(item.object_hash)
+                    transaction = self.service.find_mempool_transaction(item.object_hash)
                     if transaction is not None:
                         served_txs += 1
                         await session.send_message(MessageEnvelope(command="tx", payload=TransactionMessage(transaction=transaction)))

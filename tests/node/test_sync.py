@@ -264,6 +264,32 @@ def test_sync_manager_reuses_missing_block_scan_between_scheduler_ticks(monkeypa
         assert calls == 1
 
 
+def test_sync_manager_reuses_ready_tip_scan_between_scheduler_ticks(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 5, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        original_path_to_root = target.headers.path_to_root
+        calls = 0
+
+        def counted_path_to_root(tip_hash: str):
+            nonlocal calls
+            calls += 1
+            return original_path_to_root(tip_hash)
+
+        monkeypatch.setattr(target.headers, "path_to_root", counted_path_to_root)
+        manager._ready_tip_cache.clear()
+
+        first = manager.activate_best_chain_if_ready()
+        second = manager.activate_best_chain_if_ready()
+
+        assert first.activated_tip is None
+        assert second.activated_tip is None
+        assert calls == 1
+
+
 def test_sync_manager_reassigns_expired_block_requests() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)

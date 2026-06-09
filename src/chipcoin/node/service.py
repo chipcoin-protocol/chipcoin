@@ -968,14 +968,14 @@ class NodeService:
     def find_transaction(self, txid: str) -> dict | None:
         """Find a transaction in the mempool or active chain."""
 
-        for entry in self.mempool.list_transactions():
-            if entry.transaction.txid() == txid:
-                return {
-                    "location": "mempool",
-                    "transaction": entry.transaction,
-                    "block_hash": None,
-                    "height": None,
-                }
+        transaction = self.find_mempool_transaction(txid)
+        if transaction is not None:
+            return {
+                "location": "mempool",
+                "transaction": transaction,
+                "block_hash": None,
+                "height": None,
+            }
 
         tip = self.chain_tip()
         if tip is None:
@@ -999,6 +999,14 @@ class NodeService:
 
         result = self.find_transaction(txid)
         return None if result is None else result["transaction"]
+
+    def find_mempool_transaction(self, txid: str) -> Transaction | None:
+        """Return a mempool transaction without scanning historical blocks."""
+
+        for entry in self.mempool.list_transactions():
+            if entry.transaction.txid() == txid:
+                return entry.transaction
+        return None
 
     def add_peer(self, host: str, port: int, *, source: str = "discovered") -> PeerInfo:
         """Add a peer to the in-memory local peerbook."""

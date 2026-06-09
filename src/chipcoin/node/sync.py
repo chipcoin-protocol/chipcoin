@@ -92,6 +92,7 @@ class SyncManager:
         self._header_peer_counts: dict[str, int] = {}
         self._stalled_peer_counts: dict[str, int] = {}
         self._missing_blocks_cache: dict[tuple[str, str | None], tuple[str, ...]] = {}
+        self._ready_tip_cache: dict[tuple[str, str | None], str | None] = {}
 
     def best_header_record(self):
         """Return the best-known header record."""
@@ -198,7 +199,7 @@ class SyncManager:
         parent_unknown = None
         previous_header_in_batch = None
         if headers:
-            self._missing_blocks_cache.clear()
+            self._clear_chain_progress_caches()
         for header in headers:
             block_hash = header.block_hash()
             if self.node.headers.get_record(block_hash) is not None:
@@ -270,6 +271,10 @@ class SyncManager:
         best_tip = self.node.headers.find_best_tip()
         if best_tip is None:
             return None
+        current_tip = self.node.chain_tip()
+        cache_key = (best_tip.block_hash, None if current_tip is None else current_tip.block_hash)
+        if cache_key in self._ready_tip_cache:
+            return self._ready_tip_cache[cache_key]
         path_hashes = self.node.headers.path_to_root(best_tip.block_hash)
         snapshot_anchor = None
         if hasattr(self.node, "snapshot_anchor"):
@@ -284,6 +289,7 @@ class SyncManager:
             if self.node.get_block_by_hash(block_hash) is None:
                 break
             ready_tip = block_hash
+        self._ready_tip_cache = {cache_key: ready_tip}
         return ready_tip
 
     def reserve_block_downloads(
@@ -492,7 +498,7 @@ class SyncManager:
         """Store a received block and activate the best chain when possible."""
 
         block_hash = block.block_hash()
-        self._missing_blocks_cache.clear()
+        self._clear_chain_progress_caches()
         self.clear_block_request(block_hash)
         if self.node.get_block_by_hash(block_hash) is not None:
             activation = self.activate_best_chain_if_ready()
@@ -647,6 +653,12 @@ class SyncManager:
             result = self.receive_block(child)
             accepted += result.accepted_blocks
         return accepted
+
+    def _clear_chain_progress_caches(self) -> None:
+        """Invalidate path-scan caches after headers or blocks change."""
+
+        self._missing_blocks_cache.clear()
+        self._ready_tip_cache.clear()
 
     def _validate_header_candidate(self, header: BlockHeader, *, parent_record, height: int) -> None:
         """Perform header-only checks before block download."""
