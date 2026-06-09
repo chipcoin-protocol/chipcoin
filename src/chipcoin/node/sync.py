@@ -93,6 +93,7 @@ class SyncManager:
         self._stalled_peer_counts: dict[str, int] = {}
         self._missing_blocks_cache: dict[tuple[str, str | None], tuple[str, ...]] = {}
         self._ready_tip_cache: dict[tuple[str, str | None], str | None] = {}
+        self._invalid_activation_tips: dict[str, str] = {}
 
     def best_header_record(self):
         """Return the best-known header record."""
@@ -439,7 +440,7 @@ class SyncManager:
 
         self._inflight_blocks.pop(block_hash, None)
 
-    def activate_best_chain_if_ready(self) -> SyncResult:
+    def activate_best_chain_if_ready(self, *, raise_on_invalid: bool = False) -> SyncResult:
         """Activate the strongest contiguous chain segment whose blocks are available."""
 
         best_tip = self.node.headers.find_best_tip()
@@ -467,6 +468,14 @@ class SyncManager:
                 parent_unknown=None,
                 reorged=False,
             )
+        if ready_tip_hash in self._invalid_activation_tips:
+            return SyncResult(
+                headers_received=0,
+                blocks_fetched=0,
+                activated_tip=current_tip.block_hash if current_tip is not None else None,
+                parent_unknown=None,
+                reorged=False,
+            )
         ready_tip = self.node.headers.get_record(ready_tip_hash)
         if ready_tip is None or ready_tip.cumulative_work is None or ready_tip.cumulative_work <= current_work:
             return SyncResult(
@@ -481,7 +490,19 @@ class SyncManager:
         reorged = False
         if previous_tip_hash is not None and ready_tip.block_hash != previous_tip_hash:
             reorged = previous_tip_hash not in self.node.headers.path_to_root(ready_tip.block_hash)
-        activation = self.node.activate_chain(ready_tip.block_hash)
+        try:
+            activation = self.node.activate_chain(ready_tip.block_hash)
+        except (StatelessValidationError, ContextualValidationError, ValueError) as exc:
+            self._invalid_activation_tips[ready_tip.block_hash] = str(exc)
+            if raise_on_invalid:
+                raise
+            return SyncResult(
+                headers_received=0,
+                blocks_fetched=0,
+                activated_tip=current_tip.block_hash if current_tip is not None else None,
+                parent_unknown=None,
+                reorged=False,
+            )
         return SyncResult(
             headers_received=0,
             blocks_fetched=0,
@@ -501,7 +522,7 @@ class SyncManager:
         self._clear_chain_progress_caches()
         self.clear_block_request(block_hash)
         if self.node.get_block_by_hash(block_hash) is not None:
-            activation = self.activate_best_chain_if_ready()
+            activation = self.activate_best_chain_if_ready(raise_on_invalid=True)
             accepted_blocks = self._accept_pending_children(block_hash)
             return BlockIngestResult(
                 block_hash=block_hash,
@@ -541,7 +562,7 @@ class SyncManager:
 
         self.node.blocks.put(block)
         accepted_blocks = 1 + self._accept_pending_children(block_hash)
-        activation = self.activate_best_chain_if_ready()
+        activation = self.activate_best_chain_if_ready(raise_on_invalid=True)
         return BlockIngestResult(
             block_hash=block_hash,
             activated_tip=activation.activated_tip,

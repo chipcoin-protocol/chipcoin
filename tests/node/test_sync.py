@@ -290,6 +290,32 @@ def test_sync_manager_reuses_ready_tip_scan_between_scheduler_ticks(monkeypatch)
         assert calls == 1
 
 
+def test_sync_manager_quarantines_invalid_ready_tip_between_scheduler_ticks(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        block = _mine_chain(source, 1, "CHCminer-source")[0]
+        manager = SyncManager(node=target)
+        manager.ingest_headers((block.header,), peer_id="peer-a")
+        target.blocks.put(block)
+        calls = 0
+
+        def fail_activation(_tip_hash: str):
+            nonlocal calls
+            calls += 1
+            raise ContextualValidationError("invalid reward settlement")
+
+        monkeypatch.setattr(target, "activate_chain", fail_activation)
+
+        first = manager.activate_best_chain_if_ready()
+        second = manager.activate_best_chain_if_ready()
+
+        assert first.activated_tip is None
+        assert second.activated_tip is None
+        assert calls == 1
+        assert manager._invalid_activation_tips == {block.block_hash(): "invalid reward settlement"}
+
+
 def test_sync_manager_reassigns_expired_block_requests() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
