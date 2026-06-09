@@ -2,7 +2,7 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 
-from chipcoin.storage.db import SQLiteRuntimeConfig, _ensure_column, initialize_database, sqlite_config_from_env, sqlite_transaction
+from chipcoin.storage.db import LockedSQLiteConnection, SQLiteRuntimeConfig, _ensure_column, initialize_database, sqlite_config_from_env, sqlite_transaction
 
 
 def test_initialize_database_creates_expected_tables() -> None:
@@ -30,6 +30,7 @@ def test_initialize_database_returns_sqlite_connection() -> None:
         connection = initialize_database(Path(tempdir) / "chipcoin.sqlite3")
         try:
             assert isinstance(connection, sqlite3.Connection)
+            assert isinstance(connection, LockedSQLiteConnection)
         finally:
             connection.close()
 

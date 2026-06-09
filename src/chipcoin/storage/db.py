@@ -8,11 +8,40 @@ import logging
 import os
 from pathlib import Path
 import sqlite3
+import threading
 import time
 
 
 logger = logging.getLogger(__name__)
 _WRITE_METRICS: dict[int, "SQLiteWriteMetrics"] = {}
+
+
+class LockedSQLiteConnection(sqlite3.Connection):
+    """SQLite connection serialized for safe cross-thread node access."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._chipcoin_lock = threading.RLock()
+
+    def execute(self, *args, **kwargs):
+        with self._chipcoin_lock:
+            return super().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        with self._chipcoin_lock:
+            return super().executemany(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        with self._chipcoin_lock:
+            return super().executescript(*args, **kwargs)
+
+    def commit(self) -> None:
+        with self._chipcoin_lock:
+            return super().commit()
+
+    def rollback(self) -> None:
+        with self._chipcoin_lock:
+            return super().rollback()
 
 
 SCHEMA_STATEMENTS = (
@@ -235,7 +264,7 @@ def create_connection(path: Path, *, config: SQLiteRuntimeConfig | None = None) 
     """Open a SQLite connection with row access by column name."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
+    connection = sqlite3.connect(path, check_same_thread=False, timeout=30.0, factory=LockedSQLiteConnection)
     connection.row_factory = sqlite3.Row
     apply_sqlite_pragmas(connection, config or sqlite_config_from_env())
     _WRITE_METRICS[id(connection)] = SQLiteWriteMetrics()
@@ -297,17 +326,21 @@ def apply_sqlite_pragmas(connection: sqlite3.Connection, config: SQLiteRuntimeCo
 def sqlite_transaction(connection: sqlite3.Connection, *, phase: str | None = None):
     """Open one write transaction, reusing an outer transaction when present."""
 
-    if connection.in_transaction:
-        yield
-        return
-    started_at = time.monotonic()
-    try:
-        with connection:
+    lock = getattr(connection, "_chipcoin_lock", None)
+    if lock is None:
+        lock = _NullLock()
+    with lock:
+        if connection.in_transaction:
             yield
-    finally:
-        metrics = _WRITE_METRICS.get(id(connection))
-        if metrics is not None:
-            metrics.record_transaction(duration_seconds=time.monotonic() - started_at, phase=phase)
+            return
+        started_at = time.monotonic()
+        try:
+            with connection:
+                yield
+        finally:
+            metrics = _WRITE_METRICS.get(id(connection))
+            if metrics is not None:
+                metrics.record_transaction(duration_seconds=time.monotonic() - started_at, phase=phase)
 
 
 def checkpoint_wal(connection: sqlite3.Connection, *, mode: str = "PASSIVE", phase: str | None = None) -> None:
@@ -372,3 +405,11 @@ def _parse_bool_env(raw: str | None) -> bool:
     if raw is None:
         return False
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+class _NullLock:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
