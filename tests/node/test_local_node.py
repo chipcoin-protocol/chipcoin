@@ -105,6 +105,35 @@ def test_runtime_peerbook_trim_does_not_reload_peers_per_sort_key() -> None:
         assert len(original_list_peers()) == 16
 
 
+def test_runtime_desired_outbound_peers_does_not_reload_peers_per_filter() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        for index in range(24):
+            service.record_peer_observation(
+                host=f"node-{index}.example",
+                port=18444,
+                source="manual",
+                success_count=1,
+                last_success=1_700_000_000 + index,
+                score=1,
+            )
+        runtime = NodeRuntime(service=service)
+        original_list_peers = service.list_peers
+        calls = 0
+
+        def counted_list_peers():
+            nonlocal calls
+            calls += 1
+            return original_list_peers()
+
+        service.list_peers = counted_list_peers  # type: ignore[method-assign]
+
+        desired = runtime._desired_outbound_peers()
+
+        assert calls == 1
+        assert desired
+
+
 def test_node_service_opens_devnet_with_devnet_params() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")

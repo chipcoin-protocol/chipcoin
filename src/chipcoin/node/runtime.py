@@ -1945,11 +1945,22 @@ class NodeRuntime:
     def _desired_outbound_peers(self) -> list[OutboundPeer]:
         """Return configured and persisted peers excluding the local listener."""
 
-        persisted_peers = [peer for peer in self.service.list_peers() if self._is_dialable_peer(peer)]
+        known_peers = self.service.list_peers()
+        now = self.service.time_provider()
+        banned_hosts = {
+            peer.host
+            for peer in known_peers
+            if peer.ban_until is not None and peer.ban_until > now
+        }
+        persisted_peers = [peer for peer in known_peers if self._is_dialable_peer(peer, banned_hosts=banned_hosts)]
         peers = set()
         use_configured_fallback = True
         if self.peer_discovery_startup_prefer_persisted:
-            healthy_persisted = [peer for peer in persisted_peers if self._is_healthy_persisted_peer(peer)]
+            healthy_persisted = [
+                peer
+                for peer in persisted_peers
+                if self._is_healthy_persisted_peer(peer, banned_hosts=banned_hosts)
+            ]
             if healthy_persisted:
                 peers.update(OutboundPeer(peer.host, peer.port) for peer in healthy_persisted)
                 peers.update(OutboundPeer(peer.host, peer.port) for peer in persisted_peers if peer.source == "manual")
@@ -1960,12 +1971,26 @@ class NodeRuntime:
             peers.update(OutboundPeer(peer.host, peer.port) for peer in persisted_peers)
         if use_configured_fallback:
             peers.update(self._outbound_targets.values())
+        known_by_endpoint = {
+            (peer.host, peer.port): peer
+            for peer in known_peers
+        }
+
+        def rank_key(peer: OutboundPeer) -> tuple[int, int, int, int, str, int]:
+            info = known_by_endpoint.get((peer.host, peer.port))
+            source = None if info is None else info.source
+            source_rank = {"manual": 0, "discovered": 1, "seed": 2}.get(source, 3)
+            success_count = 0 if info is None or info.success_count is None else info.success_count
+            score = 0 if info is None or info.score is None else info.score
+            last_success = 0 if info is None or info.last_success is None else info.last_success
+            return (source_rank, -success_count, -score, -last_success, peer.host, peer.port)
+
         deduped: dict[str, OutboundPeer] = {}
         unnamed: list[OutboundPeer] = []
-        for peer in sorted(peers, key=self._outbound_peer_rank_key):
+        for peer in sorted(peers, key=rank_key):
             if self._is_local_listener_alias(peer):
                 continue
-            info = self._known_peer_info(peer.host, peer.port)
+            info = known_by_endpoint.get((peer.host, peer.port))
             if info is None or info.node_id is None:
                 unnamed.append(peer)
                 continue
@@ -1974,14 +1999,15 @@ class NodeRuntime:
             current = deduped.get(info.node_id)
             if current is None or (peer.host, peer.port) in self._outbound_targets:
                 deduped[info.node_id] = peer
-        return sorted([*self._dedupe_unidentified_outbound_peers(unnamed), *deduped.values()], key=self._outbound_peer_rank_key)
+        return sorted([*self._dedupe_unidentified_outbound_peers(unnamed), *deduped.values()], key=rank_key)
 
-    def _is_healthy_persisted_peer(self, peer) -> bool:
+    def _is_healthy_persisted_peer(self, peer, *, banned_hosts: set[str] | None = None) -> bool:
         """Return whether one persisted peer is good enough to outrank manual seed fallback."""
 
         if peer.source not in {"manual", "seed", "discovered"}:
             return False
-        if self._is_peer_currently_banned(peer.host, peer.port):
+        is_banned = peer.host in banned_hosts if banned_hosts is not None else self._is_peer_currently_banned(peer.host, peer.port)
+        if is_banned:
             return False
         if self._is_stale_peer(peer):
             return False
@@ -2002,12 +2028,13 @@ class NodeRuntime:
         last_success = 0 if info is None or info.last_success is None else info.last_success
         return (source_rank, -success_count, -score, -last_success, peer.host, peer.port)
 
-    def _is_dialable_peer(self, peer) -> bool:
+    def _is_dialable_peer(self, peer, *, banned_hosts: set[str] | None = None) -> bool:
         """Return whether a persisted peer is safe to use for outbound dialing."""
 
         if peer.direction == "inbound" or peer.port <= 0:
             return False
-        if self._is_peer_currently_banned(peer.host, peer.port):
+        is_banned = peer.host in banned_hosts if banned_hosts is not None else self._is_peer_currently_banned(peer.host, peer.port)
+        if is_banned:
             return False
         if peer.source in {"manual", "seed"}:
             return self._is_valid_peer_host(peer.host)
