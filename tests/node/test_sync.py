@@ -224,6 +224,46 @@ def test_sync_manager_skips_missing_block_scan_when_best_header_is_active_tip(mo
         assert assignments == ()
 
 
+def test_sync_manager_reuses_missing_block_scan_between_scheduler_ticks(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 5, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        original_path_to_root = target.headers.path_to_root
+        calls = 0
+
+        def counted_path_to_root(tip_hash: str):
+            nonlocal calls
+            calls += 1
+            return original_path_to_root(tip_hash)
+
+        monkeypatch.setattr(target.headers, "path_to_root", counted_path_to_root)
+        manager._missing_blocks_cache.clear()
+
+        first = manager.reserve_block_downloads(
+            peer_ids=("peer-a",),
+            max_window_size=2,
+            max_inflight_per_peer=2,
+            timeout_seconds=5.0,
+            now=100.0,
+        )
+        second = manager.reserve_block_downloads(
+            peer_ids=("peer-a",),
+            max_window_size=2,
+            max_inflight_per_peer=2,
+            timeout_seconds=5.0,
+            now=101.0,
+        )
+        status = manager.sync_status()
+
+        assert len(first) == 2
+        assert second == ()
+        assert status["missing_block_count"] == 5
+        assert calls == 1
+
+
 def test_sync_manager_reassigns_expired_block_requests() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)

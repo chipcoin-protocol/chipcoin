@@ -91,6 +91,7 @@ class SyncManager:
         self._block_peer_counts: dict[str, int] = {}
         self._header_peer_counts: dict[str, int] = {}
         self._stalled_peer_counts: dict[str, int] = {}
+        self._missing_blocks_cache: dict[tuple[str, str | None], tuple[str, ...]] = {}
 
     def best_header_record(self):
         """Return the best-known header record."""
@@ -196,6 +197,8 @@ class SyncManager:
         stored_headers = 0
         parent_unknown = None
         previous_header_in_batch = None
+        if headers:
+            self._missing_blocks_cache.clear()
         for header in headers:
             block_hash = header.block_hash()
             if self.node.headers.get_record(block_hash) is not None:
@@ -244,6 +247,11 @@ class SyncManager:
     def missing_blocks_for_tip(self, tip_hash: str) -> tuple[str, ...]:
         """Return missing blocks needed to activate a candidate chain tip."""
 
+        current_tip = self.node.chain_tip()
+        cache_key = (tip_hash, None if current_tip is None else current_tip.block_hash)
+        cached = self._missing_blocks_cache.get(cache_key)
+        if cached is not None:
+            return cached
         path_hashes = self.node.headers.path_to_root(tip_hash)
         snapshot_anchor = None
         if hasattr(self.node, "snapshot_anchor"):
@@ -252,7 +260,9 @@ class SyncManager:
             if snapshot_anchor.height >= len(path_hashes) or path_hashes[snapshot_anchor.height] != snapshot_anchor.block_hash:
                 raise ValueError("snapshot anchor mismatch")
             path_hashes = path_hashes[snapshot_anchor.height + 1 :]
-        return tuple(block_hash for block_hash in path_hashes if self.node.get_block_by_hash(block_hash) is None)
+        missing = tuple(block_hash for block_hash in path_hashes if self.node.get_block_by_hash(block_hash) is None)
+        self._missing_blocks_cache = {cache_key: missing}
+        return missing
 
     def best_ready_tip(self) -> str | None:
         """Return the strongest contiguous header tip whose blocks are locally available."""
@@ -482,6 +492,7 @@ class SyncManager:
         """Store a received block and activate the best chain when possible."""
 
         block_hash = block.block_hash()
+        self._missing_blocks_cache.clear()
         self.clear_block_request(block_hash)
         if self.node.get_block_by_hash(block_hash) is not None:
             activation = self.activate_best_chain_if_ready()
