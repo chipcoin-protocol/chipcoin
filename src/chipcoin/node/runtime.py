@@ -1798,11 +1798,18 @@ class NodeRuntime:
             remaining = self.peer_addr_max_per_message
         remote = session.state.remote_version
         relay_cap = min(self.peer_addr_max_per_message, remaining)
+        peers = self.service.list_peers()
+        now_timestamp = self.service.time_provider()
+        banned_hosts = {
+            peer.host
+            for peer in peers
+            if peer.ban_until is not None and peer.ban_until > now_timestamp
+        }
         advertised_peers = sorted(
             (
                 peer
-                for peer in self.service.list_peers()
-                if self._is_advertisable_peer(peer)
+                for peer in peers
+                if self._is_advertisable_peer(peer, banned_hosts=banned_hosts)
                 and not self._is_stale_peer(peer)
                 and peer.node_id != self.node_id
                 and (remote is None or peer.node_id != remote.node_id)
@@ -2246,10 +2253,11 @@ class NodeRuntime:
             return False
         return True
 
-    def _is_advertisable_peer(self, peer) -> bool:
+    def _is_advertisable_peer(self, peer, *, banned_hosts: set[str] | None = None) -> bool:
         """Return whether a persisted peer should be re-announced to other peers."""
 
-        if peer.direction == "inbound" or peer.port <= 0 or self._is_peer_currently_banned(peer.host, peer.port):
+        is_banned = peer.host in banned_hosts if banned_hosts is not None else self._is_peer_currently_banned(peer.host, peer.port)
+        if peer.direction == "inbound" or peer.port <= 0 or is_banned:
             return False
         if peer.source == "discovered" and not self._is_reusable_discovered_peer(peer):
             return False

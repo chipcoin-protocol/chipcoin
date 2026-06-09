@@ -1277,6 +1277,57 @@ def test_runtime_does_not_relay_banned_peers_in_addr_messages() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_send_known_peers_does_not_reload_peers_per_filter() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = NodeService.open_sqlite(
+                Path(tempdir) / "chipcoin-devnet.sqlite3",
+                network="devnet",
+                time_provider=lambda: 1_700_000_100,
+            )
+            for index in range(24):
+                service.record_peer_observation(
+                    host=f"198.51.100.{index}",
+                    port=18444,
+                    source="discovered",
+                    success_count=1,
+                    last_success=1_700_000_000 + index,
+                )
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+            original_list_peers = service.list_peers
+            calls = 0
+
+            def counted_list_peers():
+                nonlocal calls
+                calls += 1
+                return original_list_peers()
+
+            service.list_peers = counted_list_peers  # type: ignore[method-assign]
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+
+                async def send_message(self, message: MessageEnvelope) -> None:
+                    pass
+
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=False)
+
+            await runtime._send_known_peers(session)
+
+            assert calls == 1
+
+    asyncio.run(scenario())
+
+
 def test_runtime_dedupes_unidentified_outbound_aliases(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
