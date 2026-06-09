@@ -7,6 +7,7 @@ from sqlite3 import Connection
 from ..consensus.models import ChipbitAmount, OutPoint
 from ..consensus.utxo import UtxoEntry, UtxoView
 from ..consensus.models import TxOutput
+from .db import sqlite_transaction
 
 
 class ChainStateRepository:
@@ -71,7 +72,7 @@ class SQLiteChainStateRepository(ChainStateRepository, UtxoView):
     def put_utxo(self, outpoint: OutPoint, entry: UtxoEntry) -> None:
         """Persist or replace a UTXO entry."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="utxo_put"):
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO utxos(
@@ -96,7 +97,7 @@ class SQLiteChainStateRepository(ChainStateRepository, UtxoView):
     def spend_utxo(self, outpoint: OutPoint) -> None:
         """Delete a UTXO entry for a spent output."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="utxo_spend"):
             self.connection.execute(
                 "DELETE FROM utxos WHERE txid = ? AND output_index = ?",
                 (outpoint.txid, outpoint.index),
@@ -127,7 +128,7 @@ class SQLiteChainStateRepository(ChainStateRepository, UtxoView):
     def replace_all(self, entries: list[tuple[OutPoint, UtxoEntry]]) -> None:
         """Replace the entire persisted UTXO set atomically."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="utxo_replace_all"):
             self.connection.execute("DELETE FROM utxos")
             self.connection.executemany(
                 """

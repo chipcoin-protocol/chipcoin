@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from dataclasses import dataclass
+import logging
+import os
 from pathlib import Path
 import sqlite3
+import time
+
+
+logger = logging.getLogger(__name__)
+_WRITE_METRICS: dict[int, "SQLiteWriteMetrics"] = {}
 
 
 SCHEMA_STATEMENTS = (
@@ -154,21 +163,91 @@ SCHEMA_STATEMENTS = (
 )
 
 
-def create_connection(path: Path) -> sqlite3.Connection:
+@dataclass(frozen=True)
+class SQLiteRuntimeConfig:
+    """SQLite durability and write-behaviour knobs for node storage."""
+
+    journal_mode: str = "WAL"
+    synchronous: str = "FULL"
+    wal_autocheckpoint: int = 1000
+    busy_timeout_ms: int = 30000
+    cache_size: int = -20000
+    temp_store: str = "MEMORY"
+    batch_size: int = 250
+    checkpoint_interval: int = 1000
+    io_throttle_ms: int = 0
+    profile: str = "default"
+
+
+class SQLiteWriteMetrics:
+    """Low-overhead transaction metrics for diagnosing write storms."""
+
+    def __init__(self, *, log_interval_seconds: float = 60.0) -> None:
+        self.log_interval_seconds = log_interval_seconds
+        self.transaction_count = 0
+        self.total_transaction_seconds = 0.0
+        self._last_log_at = time.monotonic()
+
+    def record_transaction(self, *, duration_seconds: float, phase: str | None = None) -> None:
+        self.transaction_count += 1
+        self.total_transaction_seconds += duration_seconds
+        now = time.monotonic()
+        if now - self._last_log_at < self.log_interval_seconds:
+            return
+        elapsed = max(now - self._last_log_at, 0.001)
+        average_ms = (self.total_transaction_seconds / max(self.transaction_count, 1)) * 1000.0
+        logger.info(
+            "sqlite write metrics phase=%s transactions=%s tx_per_sec=%.2f avg_transaction_ms=%.2f",
+            phase or "unknown",
+            self.transaction_count,
+            self.transaction_count / elapsed,
+            average_ms,
+        )
+        self.transaction_count = 0
+        self.total_transaction_seconds = 0.0
+        self._last_log_at = now
+
+
+def sqlite_config_from_env() -> SQLiteRuntimeConfig:
+    """Build SQLite runtime configuration from environment variables."""
+
+    profile = os.getenv("CHIPCOIN_SQLITE_PROFILE", "default").strip().lower() or "default"
+    safe_laptop = profile in {"safe_laptop", "laptop", "weak_ssd"} or _parse_bool_env(os.getenv("CHIPCOIN_SQLITE_SAFE_LAPTOP"))
+    default_sync = "NORMAL" if safe_laptop else "FULL"
+    default_wal_autocheckpoint = 4000 if safe_laptop else 1000
+    default_batch_size = 500 if safe_laptop else 250
+    default_io_throttle_ms = 5 if safe_laptop else 0
+    return SQLiteRuntimeConfig(
+        journal_mode=_normalize_journal_mode(os.getenv("CHIPCOIN_SQLITE_JOURNAL_MODE", "WAL")),
+        synchronous=_normalize_sync_mode(os.getenv("CHIPCOIN_SQLITE_SYNC_MODE", default_sync)),
+        wal_autocheckpoint=max(0, _int_env("CHIPCOIN_SQLITE_WAL_AUTOCHECKPOINT", default_wal_autocheckpoint)),
+        busy_timeout_ms=max(0, _int_env("CHIPCOIN_SQLITE_BUSY_TIMEOUT_MS", 30000)),
+        cache_size=_int_env("CHIPCOIN_SQLITE_CACHE_SIZE", -20000),
+        temp_store=_normalize_temp_store(os.getenv("CHIPCOIN_SQLITE_TEMP_STORE", "MEMORY")),
+        batch_size=max(1, _int_env("CHIPCOIN_SQLITE_BATCH_SIZE", default_batch_size)),
+        checkpoint_interval=max(0, _int_env("CHIPCOIN_SQLITE_CHECKPOINT_INTERVAL", default_wal_autocheckpoint)),
+        io_throttle_ms=max(0, _int_env("CHIPCOIN_IO_THROTTLE_MS", default_io_throttle_ms)),
+        profile="safe_laptop" if safe_laptop else profile,
+    )
+
+
+def create_connection(path: Path, *, config: SQLiteRuntimeConfig | None = None) -> sqlite3.Connection:
     """Open a SQLite connection with row access by column name."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout = 30000")
+    apply_sqlite_pragmas(connection, config or sqlite_config_from_env())
+    _WRITE_METRICS[id(connection)] = SQLiteWriteMetrics()
     return connection
 
 
-def initialize_database(path: Path) -> sqlite3.Connection:
+def initialize_database(path: Path, *, config: SQLiteRuntimeConfig | None = None) -> sqlite3.Connection:
     """Create the initial storage schema if it does not exist."""
 
-    connection = create_connection(path)
-    with connection:
+    runtime_config = config or sqlite_config_from_env()
+    connection = create_connection(path, config=runtime_config)
+    with sqlite_transaction(connection, phase="schema"):
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
         _ensure_column(connection, table="peers", column="direction", definition="TEXT")
@@ -203,6 +282,48 @@ def initialize_database(path: Path) -> sqlite3.Connection:
     return connection
 
 
+def apply_sqlite_pragmas(connection: sqlite3.Connection, config: SQLiteRuntimeConfig) -> None:
+    """Apply SQLite knobs before node repositories start using the connection."""
+
+    connection.execute(f"PRAGMA busy_timeout = {int(config.busy_timeout_ms)}")
+    connection.execute(f"PRAGMA journal_mode = {config.journal_mode}")
+    connection.execute(f"PRAGMA synchronous = {config.synchronous}")
+    connection.execute(f"PRAGMA wal_autocheckpoint = {int(config.wal_autocheckpoint)}")
+    connection.execute(f"PRAGMA cache_size = {int(config.cache_size)}")
+    connection.execute(f"PRAGMA temp_store = {config.temp_store}")
+
+
+@contextmanager
+def sqlite_transaction(connection: sqlite3.Connection, *, phase: str | None = None):
+    """Open one write transaction, reusing an outer transaction when present."""
+
+    if connection.in_transaction:
+        yield
+        return
+    started_at = time.monotonic()
+    try:
+        with connection:
+            yield
+    finally:
+        metrics = _WRITE_METRICS.get(id(connection))
+        if metrics is not None:
+            metrics.record_transaction(duration_seconds=time.monotonic() - started_at, phase=phase)
+
+
+def checkpoint_wal(connection: sqlite3.Connection, *, mode: str = "PASSIVE", phase: str | None = None) -> None:
+    """Run and log a WAL checkpoint for controlled maintenance paths."""
+
+    started_at = time.monotonic()
+    rows = connection.execute(f"PRAGMA wal_checkpoint({mode})").fetchall()
+    logger.info(
+        "sqlite wal checkpoint phase=%s mode=%s duration_ms=%.2f result=%s",
+        phase or "unknown",
+        mode,
+        (time.monotonic() - started_at) * 1000.0,
+        [tuple(row) for row in rows],
+    )
+
+
 def _ensure_column(connection: sqlite3.Connection, *, table: str, column: str, definition: str) -> None:
     """Add a column to an existing SQLite table when missing."""
 
@@ -217,3 +338,37 @@ def _ensure_column(connection: sqlite3.Connection, *, table: str, column: str, d
         # during container startup. Treat duplicate-column races as success.
         if f"duplicate column name: {column}" not in str(exc).lower():
             raise
+
+
+def _normalize_sync_mode(value: str) -> str:
+    normalized = (value or "FULL").strip().upper()
+    if normalized in {"FULL", "NORMAL", "OFF"}:
+        return normalized
+    raise ValueError("CHIPCOIN_SQLITE_SYNC_MODE must be one of: full, normal, off")
+
+
+def _normalize_journal_mode(value: str) -> str:
+    normalized = (value or "WAL").strip().upper()
+    if normalized in {"WAL", "DELETE", "TRUNCATE", "PERSIST", "MEMORY", "OFF"}:
+        return normalized
+    raise ValueError("CHIPCOIN_SQLITE_JOURNAL_MODE must be one of: wal, delete, truncate, persist, memory, off")
+
+
+def _normalize_temp_store(value: str) -> str:
+    normalized = (value or "MEMORY").strip().upper()
+    if normalized in {"DEFAULT", "FILE", "MEMORY"}:
+        return normalized
+    raise ValueError("CHIPCOIN_SQLITE_TEMP_STORE must be one of: default, file, memory")
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return int(raw)
+
+
+def _parse_bool_env(raw: str | None) -> bool:
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}

@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 from ..node.peers import PeerInfo
+from .db import sqlite_transaction
 
 
 class PeerRepository:
@@ -45,7 +46,7 @@ class SQLitePeerRepository(PeerRepository):
     def add(self, peer: PeerInfo) -> None:
         """Persist a peer endpoint idempotently."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="peer_add"):
             self.connection.execute(
                 """
                 INSERT INTO peers(
@@ -258,7 +259,7 @@ class SQLitePeerRepository(PeerRepository):
     def remove(self, *, host: str, port: int, network: str) -> None:
         """Delete one persisted peer endpoint."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="peer_remove"):
             self.connection.execute(
                 "DELETE FROM peers WHERE host = ? AND port = ? AND network = ?",
                 (host, port, network),
@@ -267,7 +268,7 @@ class SQLitePeerRepository(PeerRepository):
     def reset_session_state(self, *, network: str) -> None:
         """Clear runtime-only session markers after a node process restart."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="peer_reset_session_state"):
             self.connection.execute(
                 """
                 UPDATE peers

@@ -6,6 +6,7 @@ from sqlite3 import Connection
 
 from ..consensus.models import Block
 from ..consensus.serialization import deserialize_block, serialize_block
+from .db import sqlite_transaction
 
 
 class BlockRepository:
@@ -31,7 +32,7 @@ class SQLiteBlockRepository(BlockRepository):
     def put(self, block: Block) -> None:
         """Persist a full block payload."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="block_put"):
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO blocks(block_hash, raw_block)

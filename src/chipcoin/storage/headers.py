@@ -7,6 +7,7 @@ from sqlite3 import Connection
 
 from ..consensus.models import BlockHeader
 from ..consensus.serialization import deserialize_block_header, serialize_block_header
+from .db import sqlite_transaction
 
 
 class HeaderRepository:
@@ -112,7 +113,7 @@ class SQLiteHeaderRepository(HeaderRepository):
         """Persist a header along with optional chain index metadata."""
 
         block_hash = header.block_hash()
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="header_put"):
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO headers (
@@ -178,7 +179,7 @@ class SQLiteHeaderRepository(HeaderRepository):
     def set_tip(self, block_hash: str, height: int) -> None:
         """Persist the chain tip hash and mark the header as main chain."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="header_set_tip"):
             self.connection.execute(
                 """
                 INSERT INTO chain_meta(key, value) VALUES('chain_tip_hash', ?)
@@ -299,7 +300,7 @@ class SQLiteHeaderRepository(HeaderRepository):
     def set_main_chain(self, path_hashes: tuple[str, ...]) -> None:
         """Mark an entire path as the active main chain and store its tip."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="header_set_main_chain"):
             self.connection.execute("UPDATE headers SET is_main_chain = 0")
             for height, block_hash in enumerate(path_hashes):
                 self.connection.execute(

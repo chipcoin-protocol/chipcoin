@@ -9,6 +9,7 @@ import ipaddress
 import json
 from pathlib import Path
 import secrets
+import time
 
 from ..config import get_network_config
 from ..consensus.models import Block, OutPoint, Transaction, TxOutput
@@ -59,7 +60,7 @@ from ..consensus.utxo import InMemoryUtxoView, OverlayUtxoView
 from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block
 from ..storage.blocks import SQLiteBlockRepository
 from ..storage.chainstate import SQLiteChainStateRepository
-from ..storage.db import initialize_database
+from ..storage.db import SQLiteRuntimeConfig, checkpoint_wal, initialize_database, sqlite_config_from_env, sqlite_transaction
 from ..storage.headers import ChainTip, SQLiteHeaderRepository
 from ..storage.mempool import SQLiteMempoolRepository
 from ..storage.native_rewards import (
@@ -278,6 +279,7 @@ class NodeService:
         peerbook: PeerManager | None = None,
         time_provider=unix_time,
         connection=None,
+        sqlite_config: SQLiteRuntimeConfig | None = None,
     ) -> None:
         self.network = network
         self.params = params
@@ -291,6 +293,8 @@ class NodeService:
         self.peerbook = peerbook or PeerManager()
         self.time_provider = time_provider
         self.connection = connection
+        self.sqlite_config = sqlite_config or SQLiteRuntimeConfig()
+        self._heavy_write_commit_count = 0
         self.mempool = MempoolManager(
             repository=mempool_repository,
             chainstate=chainstate,
@@ -320,7 +324,8 @@ class NodeService:
         """Open a local node backed by a SQLite database."""
 
         resolved_params = get_network_config(network).params if params is None else params
-        connection = initialize_database(path)
+        sqlite_config = sqlite_config_from_env()
+        connection = initialize_database(path, config=sqlite_config)
         return cls(
             network=network,
             params=resolved_params,
@@ -334,6 +339,7 @@ class NodeService:
             peer_repository=SQLitePeerRepository(connection),
             time_provider=time_provider,
             connection=connection,
+            sqlite_config=sqlite_config,
         )
 
     def start(self) -> None:
@@ -421,7 +427,7 @@ class NodeService:
         existing_tip = self.chain_tip()
         if existing_tip is not None and not reset_existing:
             raise ValueError("snapshot import requires an empty chain or reset_existing=True")
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="snapshot_import"):
             self.connection.execute("DELETE FROM mempool_transactions")
             self.connection.execute("DELETE FROM blocks")
             self.connection.execute("DELETE FROM headers")
@@ -434,29 +440,30 @@ class NodeService:
             self.connection.execute(
                 "DELETE FROM chain_meta WHERE key LIKE 'snapshot_%' OR key = 'chain_tip_hash'"
             )
-        for record in snapshot.headers:
-            self.headers.put(
-                record.header,
-                height=record.height,
-                cumulative_work=record.cumulative_work,
-                is_main_chain=True,
-            )
-        for block in snapshot.blocks:
-            self.blocks.put(block)
-        self.headers.set_tip(snapshot.anchor.block_hash, snapshot.anchor.height)
-        self.chainstate.replace_all(list(snapshot.utxos))
-        self.node_registry.replace_all(list(snapshot.node_registry_records))
-        self.reward_attestations.replace_all(list(snapshot.reward_attestation_bundles))
-        self.reward_settlements.replace_all(list(snapshot.epoch_settlements))
-        self._set_chain_meta("snapshot_height", str(snapshot.anchor.height))
-        self._set_chain_meta("snapshot_block_hash", snapshot.anchor.block_hash)
-        self._set_chain_meta("snapshot_checksum_sha256", str(snapshot.metadata["checksum_sha256"]))
-        self._set_chain_meta("snapshot_format_version", str(snapshot.metadata["format_version"]))
-        self._set_chain_meta("snapshot_signature_verified", "true" if snapshot.valid_signature_count > 0 else "false")
-        self._set_chain_meta("snapshot_valid_signature_count", str(snapshot.valid_signature_count))
-        self._set_chain_meta("snapshot_trusted_signature_count", str(snapshot.trusted_signature_count))
-        self._set_chain_meta("snapshot_accepted_signer_pubkeys", json.dumps(list(snapshot.accepted_signer_pubkeys)))
-        self._set_chain_meta("snapshot_trust_warnings", json.dumps(list(snapshot.warnings)))
+            for record in snapshot.headers:
+                self.headers.put(
+                    record.header,
+                    height=record.height,
+                    cumulative_work=record.cumulative_work,
+                    is_main_chain=True,
+                )
+            for block in snapshot.blocks:
+                self.blocks.put(block)
+            self.headers.set_tip(snapshot.anchor.block_hash, snapshot.anchor.height)
+            self.chainstate.replace_all(list(snapshot.utxos))
+            self.node_registry.replace_all(list(snapshot.node_registry_records))
+            self.reward_attestations.replace_all(list(snapshot.reward_attestation_bundles))
+            self.reward_settlements.replace_all(list(snapshot.epoch_settlements))
+            self._set_chain_meta("snapshot_height", str(snapshot.anchor.height))
+            self._set_chain_meta("snapshot_block_hash", snapshot.anchor.block_hash)
+            self._set_chain_meta("snapshot_checksum_sha256", str(snapshot.metadata["checksum_sha256"]))
+            self._set_chain_meta("snapshot_format_version", str(snapshot.metadata["format_version"]))
+            self._set_chain_meta("snapshot_signature_verified", "true" if snapshot.valid_signature_count > 0 else "false")
+            self._set_chain_meta("snapshot_valid_signature_count", str(snapshot.valid_signature_count))
+            self._set_chain_meta("snapshot_trusted_signature_count", str(snapshot.trusted_signature_count))
+            self._set_chain_meta("snapshot_accepted_signer_pubkeys", json.dumps(list(snapshot.accepted_signer_pubkeys)))
+            self._set_chain_meta("snapshot_trust_warnings", json.dumps(list(snapshot.warnings)))
+        self._after_heavy_write("snapshot_import")
         self.invalidate_supply_snapshot()
         self.invalidate_mining_templates()
         self.set_runtime_sync_status(None)
@@ -759,18 +766,34 @@ class NodeService:
         )
         total_fees = validate_block(block, context)
 
-        self.headers.put(
-            block.header,
-            height=height,
-            cumulative_work=previous_cumulative_work + header_work(block.header),
-            is_main_chain=True,
-        )
-        self.blocks.put(block)
-        self.chainstate.apply_block(block, height)
-        self._apply_node_registry_block(block, height)
-        self._apply_native_reward_block(block, height)
-        self.headers.set_tip(block.block_hash(), height)
-        self.mempool.reconcile()
+        if self.connection is None:
+            self.headers.put(
+                block.header,
+                height=height,
+                cumulative_work=previous_cumulative_work + header_work(block.header),
+                is_main_chain=True,
+            )
+            self.blocks.put(block)
+            self.chainstate.apply_block(block, height)
+            self._apply_node_registry_block(block, height)
+            self._apply_native_reward_block(block, height)
+            self.headers.set_tip(block.block_hash(), height)
+            self.mempool.reconcile()
+        else:
+            with sqlite_transaction(self.connection, phase="apply_block"):
+                self.headers.put(
+                    block.header,
+                    height=height,
+                    cumulative_work=previous_cumulative_work + header_work(block.header),
+                    is_main_chain=True,
+                )
+                self.blocks.put(block)
+                self.chainstate.apply_block(block, height)
+                self._apply_node_registry_block(block, height)
+                self._apply_native_reward_block(block, height)
+                self.headers.set_tip(block.block_hash(), height)
+                self.mempool.reconcile()
+        self._after_heavy_write("apply_block")
         self.invalidate_supply_snapshot()
         self.invalidate_mining_templates()
         return total_fees
@@ -934,13 +957,23 @@ class NodeService:
             median_time_past = block.header.timestamp
             applied_blocks += 1
 
-        self.chainstate.replace_all(utxo_view.list_entries())
-        self.node_registry.replace_all(node_registry_view.list_records())
-        self.reward_attestations.replace_all(reward_attestation_bundles)
-        self.reward_settlements.replace_all(reward_settlements)
-        self.headers.set_main_chain(path_hashes)
         disconnected_transactions = self._disconnected_branch_transactions(previous_tip, tip_hash)
-        self.mempool.reconcile(extra_transactions=disconnected_transactions)
+        if self.connection is None:
+            self.chainstate.replace_all(utxo_view.list_entries())
+            self.node_registry.replace_all(node_registry_view.list_records())
+            self.reward_attestations.replace_all(reward_attestation_bundles)
+            self.reward_settlements.replace_all(reward_settlements)
+            self.headers.set_main_chain(path_hashes)
+            self.mempool.reconcile(extra_transactions=disconnected_transactions)
+        else:
+            with sqlite_transaction(self.connection, phase="activate_chain"):
+                self.chainstate.replace_all(utxo_view.list_entries())
+                self.node_registry.replace_all(node_registry_view.list_records())
+                self.reward_attestations.replace_all(reward_attestation_bundles)
+                self.reward_settlements.replace_all(reward_settlements)
+                self.headers.set_main_chain(path_hashes)
+                self.mempool.reconcile(extra_transactions=disconnected_transactions)
+        self._after_heavy_write("activate_chain")
         self.invalidate_supply_snapshot()
         self.invalidate_mining_templates()
         return ChainActivationResult(
@@ -3868,7 +3901,7 @@ class NodeService:
 
         if self.connection is None:
             raise ValueError("chain metadata persistence requires a writable SQLite-backed node service")
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="chain_meta_set"):
             self.connection.execute(
                 """
                 INSERT INTO chain_meta(key, value) VALUES(?, ?)
@@ -3876,6 +3909,21 @@ class NodeService:
                 """,
                 (key, value),
             )
+
+    def _after_heavy_write(self, phase: str) -> None:
+        """Apply optional WAL maintenance and laptop/weak-SSD backpressure."""
+
+        self._heavy_write_commit_count += 1
+        if (
+            self.connection is not None
+            and self.sqlite_config.journal_mode == "WAL"
+            and self.sqlite_config.checkpoint_interval > 0
+            and self._heavy_write_commit_count % self.sqlite_config.checkpoint_interval == 0
+        ):
+            checkpoint_wal(self.connection, mode="PASSIVE", phase=phase)
+        if self.sqlite_config.io_throttle_ms <= 0:
+            return
+        time.sleep(self.sqlite_config.io_throttle_ms / 1000.0)
 
     def _retarget_window_for_candidate(self, candidate_height: int) -> dict[str, object]:
         """Return the window inputs that determine the candidate bits."""

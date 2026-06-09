@@ -7,6 +7,7 @@ from sqlite3 import Connection
 
 from ..consensus.models import Transaction
 from ..consensus.serialization import deserialize_transaction, serialize_transaction
+from .db import sqlite_transaction
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ class SQLiteMempoolRepository(MempoolRepository):
     def add(self, transaction: Transaction, *, fee: int, added_at: int) -> None:
         """Persist a mempool transaction and associated metadata."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="mempool_add"):
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO mempool_transactions(txid, raw_transaction, fee, added_at)
@@ -110,11 +111,11 @@ class SQLiteMempoolRepository(MempoolRepository):
     def remove(self, txid: str) -> None:
         """Delete a transaction from the persisted mempool."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="mempool_remove"):
             self.connection.execute("DELETE FROM mempool_transactions WHERE txid = ?", (txid,))
 
     def clear(self) -> None:
         """Delete all persisted mempool entries."""
 
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="mempool_clear"):
             self.connection.execute("DELETE FROM mempool_transactions")

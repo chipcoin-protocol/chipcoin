@@ -2,7 +2,7 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 
-from chipcoin.storage.db import _ensure_column, initialize_database
+from chipcoin.storage.db import SQLiteRuntimeConfig, _ensure_column, initialize_database, sqlite_config_from_env, sqlite_transaction
 
 
 def test_initialize_database_creates_expected_tables() -> None:
@@ -56,6 +56,62 @@ def test_initialize_database_adds_peer_misbehavior_columns() -> None:
         "last_penalty_reason",
         "last_penalty_at",
     } <= columns
+
+
+def test_initialize_database_applies_sqlite_runtime_pragmas() -> None:
+    with TemporaryDirectory() as tempdir:
+        connection = initialize_database(
+            Path(tempdir) / "chipcoin.sqlite3",
+            config=SQLiteRuntimeConfig(
+                journal_mode="WAL",
+                synchronous="NORMAL",
+                wal_autocheckpoint=4096,
+                busy_timeout_ms=12000,
+                cache_size=-64000,
+                temp_store="MEMORY",
+            ),
+        )
+        try:
+            journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+            synchronous = connection.execute("PRAGMA synchronous").fetchone()[0]
+            wal_autocheckpoint = connection.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+            busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+            cache_size = connection.execute("PRAGMA cache_size").fetchone()[0]
+            temp_store = connection.execute("PRAGMA temp_store").fetchone()[0]
+        finally:
+            connection.close()
+
+    assert journal_mode == "wal"
+    assert synchronous == 1
+    assert wal_autocheckpoint == 4096
+    assert busy_timeout == 12000
+    assert cache_size == -64000
+    assert temp_store == 2
+
+
+def test_sqlite_safe_laptop_profile_uses_less_aggressive_sync(monkeypatch) -> None:
+    monkeypatch.setenv("CHIPCOIN_SQLITE_PROFILE", "safe_laptop")
+
+    config = sqlite_config_from_env()
+
+    assert config.profile == "safe_laptop"
+    assert config.synchronous == "NORMAL"
+    assert config.wal_autocheckpoint > 1000
+    assert config.io_throttle_ms > 0
+
+
+def test_sqlite_transaction_reuses_outer_transaction() -> None:
+    with TemporaryDirectory() as tempdir:
+        connection = initialize_database(Path(tempdir) / "chipcoin.sqlite3")
+        try:
+            with sqlite_transaction(connection, phase="outer"):
+                connection.execute("INSERT INTO chain_meta(key, value) VALUES('outer', '1')")
+                with sqlite_transaction(connection, phase="inner"):
+                    connection.execute("INSERT INTO chain_meta(key, value) VALUES('inner', '1')")
+                assert connection.in_transaction is True
+            assert connection.in_transaction is False
+        finally:
+            connection.close()
 
 
 def test_ensure_column_ignores_duplicate_column_race() -> None:

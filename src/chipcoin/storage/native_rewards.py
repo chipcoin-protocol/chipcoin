@@ -15,6 +15,7 @@ from ..consensus.epoch_settlement import (
     parse_reward_attestation_bundle_metadata,
     parse_reward_settlement_metadata,
 )
+from .db import sqlite_transaction
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class SQLiteRewardAttestationRepository:
             sort_keys=True,
             separators=(",", ":"),
         )
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="reward_attestation_add"):
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO reward_attestation_bundles(
@@ -175,11 +176,11 @@ class SQLiteRewardAttestationRepository:
         }
 
     def replace_all(self, bundles: list[StoredRewardAttestationBundle]) -> None:
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="reward_attestation_replace_all"):
             self.connection.execute("DELETE FROM reward_attestation_entries")
             self.connection.execute("DELETE FROM reward_attestation_bundles")
-        for stored in bundles:
-            self.add_bundle(txid=stored.txid, block_height=stored.block_height, bundle=stored.bundle)
+            for stored in bundles:
+                self.add_bundle(txid=stored.txid, block_height=stored.block_height, bundle=stored.bundle)
 
 
 class SQLiteEpochSettlementRepository:
@@ -204,7 +205,7 @@ class SQLiteEpochSettlementRepository:
             sort_keys=True,
             separators=(",", ":"),
         )
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="epoch_settlement_add"):
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO epoch_settlements(
@@ -331,11 +332,11 @@ class SQLiteEpochSettlementRepository:
         return 0 if row is None else int(row["total"])
 
     def replace_all(self, settlements: list[StoredEpochSettlement]) -> None:
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="epoch_settlement_replace_all"):
             self.connection.execute("DELETE FROM epoch_settlement_entries")
             self.connection.execute("DELETE FROM epoch_settlements")
-        for stored in settlements:
-            self.add_settlement(txid=stored.txid, block_height=stored.block_height, settlement=stored.settlement)
+            for stored in settlements:
+                self.add_settlement(txid=stored.txid, block_height=stored.block_height, settlement=stored.settlement)
 
 
 def settlement_reward_total_chipbits(settlement: RewardSettlement) -> int:

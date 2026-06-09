@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 from ..consensus.nodes import InMemoryNodeRegistryView, NodeRecord, NodeRegistryView
+from .db import sqlite_transaction
 
 
 class NodeRegistryRepository(NodeRegistryView):
@@ -69,7 +70,7 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
         )
 
     def upsert(self, record: NodeRecord) -> None:
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="node_registry_upsert"):
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO node_registry(
@@ -122,7 +123,7 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
         ]
 
     def replace_all(self, records: list[NodeRecord]) -> None:
-        with self.connection:
+        with sqlite_transaction(self.connection, phase="node_registry_replace_all"):
             self.connection.execute("DELETE FROM node_registry")
             self.connection.executemany(
                 """
