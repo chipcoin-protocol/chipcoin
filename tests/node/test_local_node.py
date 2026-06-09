@@ -75,6 +75,36 @@ def test_peer_manager_keeps_local_peerbook() -> None:
     assert peerbook.list_all() == []
 
 
+def test_runtime_peerbook_trim_does_not_reload_peers_per_sort_key() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        for index in range(24):
+            service.record_peer_observation(
+                host=f"198.51.100.{index}",
+                port=18444,
+                source="discovered",
+                handshake_complete=False,
+                first_seen=1_700_000_000 + index,
+                score=-index,
+                last_error="Peer connection closed while reading frame.",
+            )
+        runtime = NodeRuntime(service=service, peerbook_max_size=16)
+        original_list_peers = service.list_peers
+        calls = 0
+
+        def counted_list_peers():
+            nonlocal calls
+            calls += 1
+            return original_list_peers()
+
+        service.list_peers = counted_list_peers  # type: ignore[method-assign]
+
+        runtime._trim_peerbook_to_capacity()
+
+        assert calls == 1
+        assert len(original_list_peers()) == 16
+
+
 def test_node_service_opens_devnet_with_devnet_params() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")

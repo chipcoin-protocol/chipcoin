@@ -2087,11 +2087,11 @@ class NodeRuntime:
             self.service.remove_peer(peer.host, peer.port)
             self.logger.info("removed stale peer=%s:%s source=%s", peer.host, peer.port, peer.source)
 
-    def _peerbook_trim_sort_key(self, peer) -> tuple[int, int, int, int, int, str, int]:
+    def _peerbook_trim_sort_key(self, peer, *, banned_hosts: set[str] | None = None) -> tuple[int, int, int, int, int, str, int]:
         """Order peers from worst to best when trimming the persistent peerbook."""
 
         source_rank = {"discovered": 0, "seed": 1, "manual": 2}.get(peer.source, -1)
-        banned_rank = 1 if self._is_peer_currently_banned(peer.host, peer.port) else 0
+        banned_rank = 1 if banned_hosts is not None and peer.host in banned_hosts else 0
         success_count = 0 if peer.success_count is None else peer.success_count
         score = 0 if peer.score is None else peer.score
         last_seen = 0 if peer.last_seen is None else peer.last_seen
@@ -2103,9 +2103,15 @@ class NodeRuntime:
         peers = self.service.list_peers()
         if len(peers) <= self.peerbook_max_size:
             return
+        now = self.service.time_provider()
+        banned_hosts = {
+            peer.host
+            for peer in peers
+            if peer.ban_until is not None and peer.ban_until > now
+        }
         removable = sorted(
             [peer for peer in peers if peer.source != "manual"],
-            key=self._peerbook_trim_sort_key,
+            key=lambda peer: self._peerbook_trim_sort_key(peer, banned_hosts=banned_hosts),
         )
         overflow = len(peers) - self.peerbook_max_size
         for peer in removable[:overflow]:
