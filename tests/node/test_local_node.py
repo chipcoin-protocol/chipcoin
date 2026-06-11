@@ -17,6 +17,7 @@ from chipcoin.consensus.validation import (
     transaction_signature_digest,
 )
 from chipcoin.consensus.utxo import InMemoryUtxoView
+from chipcoin.crypto.keys import parse_private_key_hex
 from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
@@ -30,7 +31,7 @@ from chipcoin.node.service import NodeService
 from chipcoin.node.sync import BlockDownloadAssignment, BlockIngestResult, BlockRequestState, HeaderIngestResult
 from chipcoin.storage.peers import SQLitePeerRepository
 from chipcoin.storage.mempool import MempoolEntry
-from chipcoin.wallet.signer import TransactionSigner
+from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_private_key
 from tests.helpers import put_wallet_utxo, signed_payment, spend_candidates_for_wallet, wallet_key
 
 
@@ -2558,6 +2559,107 @@ def test_node_service_accepts_transaction_and_builds_candidate_block() -> None:
         assert template.total_fees == 10
         assert template.block.transactions[1] == transaction
         assert int(template.block.transactions[0].outputs[0].value) == 50 * 100_000_000 + 10
+
+
+def test_node_service_rejects_duplicate_pending_reward_node_registration() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        registration_fee = int(service.reward_node_fee_schedule()["register_fee_chipbits"])
+        first = TransactionSigner(wallet_key(0)).build_register_reward_node_transaction(
+            node_id="node-farm-1",
+            payout_address=wallet_key(0).address,
+            node_public_key_hex=wallet_key(0).public_key.hex(),
+            declared_host="42.115.140.51",
+            declared_port=28444,
+            registration_fee_chipbits=registration_fee,
+        )
+        duplicate = TransactionSigner(wallet_key(1)).build_register_reward_node_transaction(
+            node_id="node-farm-1",
+            payout_address=wallet_key(1).address,
+            node_public_key_hex=wallet_key(1).public_key.hex(),
+            declared_host="42.115.140.51",
+            declared_port=28444,
+            registration_fee_chipbits=registration_fee,
+        )
+
+        service.receive_transaction(first)
+        try:
+            service.receive_transaction(duplicate)
+        except ValidationError as exc:
+            assert "node_id" in str(exc)
+        else:
+            raise AssertionError("Expected duplicate reward-node registration to be rejected.")
+
+        assert service.list_mempool_transactions() == [first]
+
+
+def test_node_service_limits_pending_reward_node_registration_burst() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.mempool.policy = MempoolPolicy(max_register_reward_node_transactions=3)
+        registration_fee = int(service.reward_node_fee_schedule()["register_fee_chipbits"])
+        limit = service.mempool.policy.max_register_reward_node_transactions
+        for index in range(limit):
+            wallet = wallet_key_from_private_key(parse_private_key_hex(f"{index + 10:064x}"))
+            transaction = TransactionSigner(wallet).build_register_reward_node_transaction(
+                node_id=f"node-farm-{index}",
+                payout_address=wallet.address,
+                node_public_key_hex=wallet.public_key.hex(),
+                declared_host="42.115.140.51",
+                declared_port=28080 + index,
+                registration_fee_chipbits=registration_fee,
+            )
+            service.receive_transaction(transaction)
+
+        rejected_wallet = wallet_key_from_private_key(parse_private_key_hex(f"{limit + 10:064x}"))
+        rejected = TransactionSigner(rejected_wallet).build_register_reward_node_transaction(
+            node_id=f"node-farm-{limit}",
+            payout_address=rejected_wallet.address,
+            node_public_key_hex=rejected_wallet.public_key.hex(),
+            declared_host="42.115.140.51",
+            declared_port=28080 + limit,
+            registration_fee_chipbits=registration_fee,
+        )
+        try:
+            service.receive_transaction(rejected)
+        except ValidationError as exc:
+            assert "limit exceeded" in str(exc)
+        else:
+            raise AssertionError("Expected reward-node registration burst to be capped.")
+
+        assert len(service.list_mempool_transactions()) == limit
+
+
+def test_node_service_prunes_invalid_special_node_transaction_before_template() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        registration_fee = int(service.reward_node_fee_schedule()["register_fee_chipbits"])
+        first = TransactionSigner(wallet_key(0)).build_register_reward_node_transaction(
+            node_id="node-farm-1",
+            payout_address=wallet_key(0).address,
+            node_public_key_hex=wallet_key(0).public_key.hex(),
+            declared_host="42.115.140.51",
+            declared_port=28444,
+            registration_fee_chipbits=registration_fee,
+        )
+        duplicate = TransactionSigner(wallet_key(1)).build_register_reward_node_transaction(
+            node_id="node-farm-1",
+            payout_address=wallet_key(1).address,
+            node_public_key_hex=wallet_key(1).public_key.hex(),
+            declared_host="42.115.140.51",
+            declared_port=28444,
+            registration_fee_chipbits=registration_fee,
+        )
+        service.mempool.repository.add(first, fee=0, added_at=1)
+        service.mempool.repository.add(duplicate, fee=0, added_at=2)
+
+        template = service.build_candidate_block("CHCminer")
+        template_txids = {transaction.txid() for transaction in template.block.transactions}
+
+        assert first.txid() in template_txids
+        assert duplicate.txid() not in template_txids
+        assert service.mempool.repository.get(first.txid()) is not None
+        assert service.mempool.repository.get(duplicate.txid()) is None
 
 
 def test_node_service_rejects_conflicting_mempool_spends_by_policy() -> None:

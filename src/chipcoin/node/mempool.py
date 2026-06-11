@@ -8,7 +8,7 @@ from typing import Iterable
 from ..consensus.models import Transaction
 from ..consensus.serialization import serialize_transaction
 from ..consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND, REWARD_SETTLE_EPOCH_KIND
-from ..consensus.nodes import is_special_node_transaction
+from ..consensus.nodes import is_register_reward_node_transaction, is_renew_reward_node_transaction, is_special_node_transaction
 from ..consensus.utxo import OverlayUtxoView, UtxoView
 from ..consensus.validation import ValidationError, is_coinbase_transaction, validate_transaction
 from ..crypto.addresses import is_valid_address
@@ -33,6 +33,9 @@ class MempoolPolicy:
     max_transaction_inputs: int = 128
     max_transaction_outputs: int = 128
     max_mempool_transactions: int = 1_000
+    max_special_node_transactions: int = 32
+    max_register_reward_node_transactions: int = 8
+    max_renew_reward_node_transactions: int = 16
     transaction_ttl_seconds: int = 72 * 60 * 60
 
 
@@ -67,6 +70,7 @@ class MempoolManager:
         if self._is_known_on_chain(txid):
             raise ValidationError("Transaction is already confirmed in the active chain.")
 
+        self._enforce_special_node_mempool_policy(transaction)
         self._ensure_no_mempool_double_spend(transaction)
 
         snapshot = self._snapshot_with_mempool_applied()
@@ -150,6 +154,65 @@ class MempoolManager:
                 raise ValidationError("Transaction outputs must be positive for mempool policy.")
             if not is_valid_address(output.recipient):
                 raise ValidationError("Transaction output recipient is not a valid CHC address.")
+
+    def _enforce_special_node_mempool_policy(self, transaction: Transaction) -> None:
+        """Limit zero-IO node-registry control traffic before it can poison templates."""
+
+        if not is_special_node_transaction(transaction):
+            return
+
+        entries = self.repository.list_all()
+        special_entries = [entry for entry in entries if is_special_node_transaction(entry.transaction)]
+        if len(special_entries) >= self.policy.max_special_node_transactions:
+            raise ValidationError("Mempool special-node transaction limit exceeded.")
+
+        if is_register_reward_node_transaction(transaction):
+            register_entries = [
+                entry
+                for entry in special_entries
+                if is_register_reward_node_transaction(entry.transaction)
+            ]
+            if len(register_entries) >= self.policy.max_register_reward_node_transactions:
+                raise ValidationError("Mempool register_reward_node transaction limit exceeded.")
+            self._ensure_no_duplicate_register_reward_node_action(transaction, register_entries)
+            return
+
+        if is_renew_reward_node_transaction(transaction):
+            renew_entries = [
+                entry
+                for entry in special_entries
+                if is_renew_reward_node_transaction(entry.transaction)
+            ]
+            if len(renew_entries) >= self.policy.max_renew_reward_node_transactions:
+                raise ValidationError("Mempool renew_reward_node transaction limit exceeded.")
+            self._ensure_no_duplicate_renew_reward_node_action(transaction, renew_entries)
+
+    def _ensure_no_duplicate_register_reward_node_action(self, transaction: Transaction, entries: list[MempoolEntry]) -> None:
+        """Reject duplicate pending registrations for the same registry identity."""
+
+        metadata = transaction.metadata
+        node_id = metadata.get("node_id")
+        owner_pubkey_hex = metadata.get("owner_pubkey_hex")
+        node_pubkey_hex = metadata.get("node_pubkey_hex")
+        for entry in entries:
+            existing = entry.transaction.metadata
+            if existing.get("node_id") == node_id:
+                raise ValidationError("Mempool already contains a register_reward_node transaction for this node_id.")
+            if existing.get("owner_pubkey_hex") == owner_pubkey_hex:
+                raise ValidationError("Mempool already contains a register_reward_node transaction for this owner_pubkey.")
+            if existing.get("node_pubkey_hex") == node_pubkey_hex:
+                raise ValidationError("Mempool already contains a register_reward_node transaction for this node_pubkey.")
+
+    def _ensure_no_duplicate_renew_reward_node_action(self, transaction: Transaction, entries: list[MempoolEntry]) -> None:
+        """Reject duplicate pending renewals for the same node and epoch."""
+
+        metadata = transaction.metadata
+        node_id = metadata.get("node_id")
+        renewal_epoch = metadata.get("renewal_epoch")
+        for entry in entries:
+            existing = entry.transaction.metadata
+            if existing.get("node_id") == node_id and existing.get("renewal_epoch") == renewal_epoch:
+                raise ValidationError("Mempool already contains a renew_reward_node transaction for this node_id and epoch.")
 
     def _prune_expired(self, *, now: int) -> None:
         """Remove mempool entries older than the configured TTL."""

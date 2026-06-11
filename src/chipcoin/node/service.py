@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import hashlib
 import ipaddress
 import json
+import logging
 from pathlib import Path
 import secrets
 import time
@@ -57,7 +58,7 @@ from ..consensus.economics import (
     subsidy_totals_through_height,
 )
 from ..consensus.utxo import InMemoryUtxoView, OverlayUtxoView
-from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block
+from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block, validate_transaction
 from ..storage.blocks import SQLiteBlockRepository
 from ..storage.chainstate import SQLiteChainStateRepository
 from ..storage.db import SQLiteRuntimeConfig, checkpoint_wal, initialize_database, sqlite_config_from_env, sqlite_transaction
@@ -90,6 +91,7 @@ from ..wallet.models import SpendCandidate
 
 PEERBOOK_CLEAN_STALE_AFTER_SECONDS = 604800
 PEERBOOK_CLEAN_STALE_FAILURE_THRESHOLD = 100
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -480,6 +482,7 @@ class NodeService:
     def receive_transaction(self, transaction: Transaction) -> AcceptedTransaction:
         """Validate and stage a transaction into the local mempool."""
 
+        self._validate_special_node_mempool_sequence(candidate_transaction=transaction)
         accepted = self.mempool.accept(transaction)
         self.invalidate_mining_templates()
         return accepted
@@ -501,6 +504,7 @@ class NodeService:
         previous_block_hash = "00" * 32 if tip is None else tip.block_hash
         expected_bits = self._expected_bits_for_height(height)
         mempool_entries = self.mempool.list_transactions()
+        mempool_entries = self._filter_template_mempool_entries(mempool_entries)
         preferred_settlement = self._preferred_native_reward_settlement_transaction(height=height, mempool_entries=mempool_entries)
         if preferred_settlement is not None:
             mempool_entries = [
@@ -3560,21 +3564,89 @@ class NodeService:
             rows.reverse()
         return rows[:limit]
 
-    def _validation_context_for_view(self, utxo_view) -> ValidationContext:
+    def _validation_context_for_view(
+        self,
+        utxo_view,
+        *,
+        node_registry_view: InMemoryNodeRegistryView | None = None,
+        reward_fee_registry_count: int | None = None,
+    ) -> ValidationContext:
         """Build a validation context for mempool admission against a given UTXO view."""
 
         tip = self.headers.get_tip()
+        registry_view = self.node_registry.snapshot() if node_registry_view is None else node_registry_view
         return ValidationContext(
             height=0 if tip is None else tip.height + 1,
             median_time_past=0 if tip is None else self.headers.get(tip.block_hash).timestamp,
             params=self.params,
             utxo_view=utxo_view,
-            node_registry_view=self.node_registry.snapshot(),
+            node_registry_view=registry_view,
             reward_attestation_identities=frozenset(self.reward_attestations.attestation_identities()),
             reward_attestation_bundles=tuple(stored.bundle for stored in self.reward_attestations.list_bundles()),
             settled_epoch_indexes=frozenset(self.reward_settlements.settled_epoch_indexes()),
             epoch_seed_by_index=self._epoch_seed_map(0 if tip is None else tip.height + 1),
+            reward_fee_registry_count=(
+                reward_registered_node_count(registry_view)
+                if reward_fee_registry_count is None
+                else reward_fee_registry_count
+            ),
         )
+
+    def _validate_special_node_mempool_sequence(self, *, candidate_transaction: Transaction) -> None:
+        """Validate a candidate special-node transaction after pending mempool special-node state."""
+
+        if not is_special_node_transaction(candidate_transaction):
+            return
+        staged_registry = self.node_registry.snapshot()
+        fee_registry_count = reward_registered_node_count(staged_registry)
+        context = self._validation_context_for_view(
+            OverlayUtxoView(self.chainstate),
+            node_registry_view=staged_registry,
+            reward_fee_registry_count=fee_registry_count,
+        )
+        for entry in self.mempool.list_transactions():
+            transaction = entry.transaction
+            if not is_special_node_transaction(transaction):
+                continue
+            validate_transaction(transaction, context)
+            apply_special_node_transaction(transaction, height=context.height, registry_view=staged_registry)
+        validate_transaction(candidate_transaction, context)
+
+    def _filter_template_mempool_entries(self, mempool_entries: list) -> list:
+        """Drop special-node mempool entries that cannot validate in block order."""
+
+        staged_registry = self.node_registry.snapshot()
+        fee_registry_count = reward_registered_node_count(staged_registry)
+        context = self._validation_context_for_view(
+            OverlayUtxoView(self.chainstate),
+            node_registry_view=staged_registry,
+            reward_fee_registry_count=fee_registry_count,
+        )
+        filtered_entries = []
+        pruned_txids: list[str] = []
+        for entry in mempool_entries:
+            transaction = entry.transaction
+            if not is_special_node_transaction(transaction):
+                filtered_entries.append(entry)
+                continue
+            try:
+                validate_transaction(transaction, context)
+                apply_special_node_transaction(transaction, height=context.height, registry_view=staged_registry)
+            except ValidationError as exc:
+                txid = transaction.txid()
+                pruned_txids.append(txid)
+                LOGGER.info(
+                    "pruned invalid special-node mempool transaction txid=%s tx_type=%s reason=%s",
+                    txid,
+                    transaction.metadata.get("kind", "unknown"),
+                    exc,
+                )
+                continue
+            filtered_entries.append(entry)
+        if pruned_txids:
+            self.mempool.remove_many(pruned_txids)
+            self.invalidate_mining_templates()
+        return filtered_entries
 
     def _find_transaction_in_active_chain(self, txid: str) -> Transaction | None:
         """Return a confirmed active-chain transaction when present."""
