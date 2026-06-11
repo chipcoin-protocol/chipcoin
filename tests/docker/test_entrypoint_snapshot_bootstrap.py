@@ -93,6 +93,46 @@ node_database_bootstrap_state "$SQLITE_UNDER_TEST"
     )
 
 
+def _run_prepare_via_symlink(symlink_path: Path, target_path: Path, template_db: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+download_snapshot_file() {{
+  : > "$2"
+}}
+chipcoin() {{
+  cp "$VALID_DB_TEMPLATE" "$SQLITE_TARGET"
+  printf '%s\\n' '{{"ok":true}}'
+}}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_SYMLINK"
+test -L "$SQLITE_SYMLINK"
+node_database_bootstrap_state "$SQLITE_TARGET"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "CHIPCOIN_NETWORK": "testnet",
+        "NODE_BOOTSTRAP_MODE": "snapshot",
+        "NODE_SNAPSHOT_FILE": str(tmp_path / "node.snapshot"),
+        "NODE_SNAPSHOT_SELECTED_URL": "https://example.invalid/snapshot",
+        "NODE_SNAPSHOT_SELECTED_HEIGHT": "9",
+        "NODE_SNAPSHOT_SELECTED_HASH": "restored-tip",
+        "VALID_DB_TEMPLATE": str(template_db),
+        "SQLITE_SYMLINK": str(symlink_path),
+        "SQLITE_TARGET": str(target_path),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+    return subprocess.run(
+        ["bash", "-lc", script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
 def test_entrypoint_restores_snapshot_when_database_is_missing(tmp_path: Path) -> None:
     template_db = tmp_path / "restored.sqlite3"
     sqlite_path = tmp_path / "missing.sqlite3"
@@ -103,6 +143,21 @@ def test_entrypoint_restores_snapshot_when_database_is_missing(tmp_path: Path) -
     assert result.returncode == 0, result.stderr
     assert "Snapshot bootstrap required" in result.stdout
     assert "Snapshot bootstrap imported" in result.stdout
+    assert "initialized\tok\t9\trestored-tip" in result.stdout
+
+
+def test_entrypoint_restores_snapshot_without_replacing_sqlite_symlink(tmp_path: Path) -> None:
+    template_db = tmp_path / "restored.sqlite3"
+    target_path = tmp_path / "configured.sqlite3"
+    symlink_path = tmp_path / "runtime.sqlite3"
+    symlink_path.symlink_to(target_path)
+    _write_minimal_node_db(template_db, tip_hash="restored-tip", height=9, genesis_bits=TESTNET_GENESIS_BITS)
+
+    result = _run_prepare_via_symlink(symlink_path, target_path, template_db, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert symlink_path.is_symlink()
+    assert symlink_path.resolve(strict=False) == target_path
     assert "initialized\tok\t9\trestored-tip" in result.stdout
 
 

@@ -276,6 +276,15 @@ sqlite_file_is_pristine() {
   [[ ! -s "$path" ]]
 }
 
+sqlite_storage_path() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    readlink -m "$path"
+    return 0
+  fi
+  printf '%s\n' "$path"
+}
+
 node_database_bootstrap_state() {
   local path="$1"
   NODE_SQLITE_PATH_VALUE="$path" \
@@ -485,7 +494,8 @@ PY
 }
 
 prepare_snapshot_bootstrap_if_needed() {
-  local sqlite_path="$1"
+  local sqlite_path
+  sqlite_path="$(sqlite_storage_path "$1")"
   local mode="${NODE_BOOTSTRAP_MODE:-full}"
 
   case "$mode" in
@@ -629,6 +639,7 @@ run_node() {
   : "${NODE_P2P_BIND_PORT:?missing NODE_P2P_BIND_PORT}"
   : "${NODE_HTTP_BIND_PORT:?missing NODE_HTTP_BIND_PORT}"
 
+  local node_sqlite_path="${NODE_DATA_PATH:-/runtime/node.sqlite3}"
   prepare_node_sqlite_file
   configure_discovery_env_for_role node
   log "Starting node network=${CHIPCOIN_NETWORK} p2p_port=${NODE_P2P_BIND_PORT} http_port=${NODE_HTTP_BIND_PORT} node_wallet_runtime=not_used_in_phase_1"
@@ -659,9 +670,9 @@ run_node() {
     fi
   fi
 
-  apply_initial_sync_defaults_if_needed /runtime/node.sqlite3 "node" "$startup_peer_count"
-  prepare_snapshot_bootstrap_if_needed /runtime/node.sqlite3
-  ensure_sqlite_file /runtime/node.sqlite3 "Node SQLite"
+  apply_initial_sync_defaults_if_needed "$node_sqlite_path" "node" "$startup_peer_count"
+  prepare_snapshot_bootstrap_if_needed "$node_sqlite_path"
+  ensure_sqlite_file "$node_sqlite_path" "Node SQLite"
 
   if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
     warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."
