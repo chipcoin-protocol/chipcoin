@@ -37,8 +37,6 @@ class ConsensusParams:
     max_attestations_per_verifier_per_window: int
     target_block_time_activation_height: int = 0
     legacy_target_block_time_seconds: int | None = None
-    min_difficulty_activation_height: int | None = None
-    min_difficulty_delay_seconds: int | None = None
 
 
 def target_block_time_seconds_for_height(height: int, params: ConsensusParams) -> int:
@@ -141,6 +139,4 @@ TESTNET_PARAMS = ConsensusParams(
     max_attestations_per_verifier_per_window=1,
     target_block_time_activation_height=4_500,
     legacy_target_block_time_seconds=300,
-    min_difficulty_activation_height=7_182,
-    min_difficulty_delay_seconds=1_200,
 )

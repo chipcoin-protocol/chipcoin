@@ -16,7 +16,7 @@ from ..consensus.models import Block, BlockHeader, OutPoint, TxOutput
 from ..consensus.epoch_settlement import parse_reward_attestation_bundle_metadata, parse_reward_settlement_metadata
 from ..consensus.nodes import NodeRecord
 from ..consensus.params import ConsensusParams
-from ..consensus.pow import calculate_next_work_required, header_work, should_use_minimum_difficulty, verify_proof_of_work
+from ..consensus.pow import calculate_next_work_required, header_work, verify_proof_of_work
 from ..consensus.serialization import deserialize_block, deserialize_block_header, serialize_block, serialize_block_header
 from ..consensus.utxo import UtxoEntry
 from ..storage.native_rewards import StoredEpochSettlement, StoredRewardAttestationBundle
@@ -661,14 +661,7 @@ def _validate_snapshot_headers(records: list[SnapshotHeaderRecord], *, params: C
             if header.timestamp < previous_header.timestamp:
                 raise ValueError("snapshot header timestamp is below the previous header timestamp")
             expected_bits = previous_header.bits
-            if should_use_minimum_difficulty(
-                params=params,
-                candidate_height=index,
-                previous_timestamp=previous_header.timestamp,
-                candidate_timestamp=header.timestamp,
-            ):
-                expected_bits = params.genesis_bits
-            elif index % params.difficulty_adjustment_window == 0:
+            if index % params.difficulty_adjustment_window == 0:
                 window_start_height = max(0, index - params.difficulty_adjustment_window)
                 first_header = validated_headers[window_start_height]
                 actual_timespan_seconds = max(1, previous_header.timestamp - first_header.timestamp)

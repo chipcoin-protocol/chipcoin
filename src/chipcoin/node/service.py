@@ -43,7 +43,7 @@ from ..consensus.nodes import (
     select_rewarded_nodes,
 )
 from ..consensus.params import ConsensusParams, target_block_time_seconds_for_height
-from ..consensus.pow import bits_to_target, calculate_next_work_required, header_work, should_use_minimum_difficulty
+from ..consensus.pow import bits_to_target, calculate_next_work_required, header_work
 from ..consensus.serialization import deserialize_block, deserialize_transaction, serialize_transaction
 from ..consensus.economics import (
     CHCBITS_PER_CHC,
@@ -504,7 +504,7 @@ class NodeService:
         tip = self.headers.get_tip()
         height = 0 if tip is None else tip.height + 1
         previous_block_hash = "00" * 32 if tip is None else tip.block_hash
-        expected_bits = self._expected_bits_for_height(height, candidate_timestamp=self.time_provider())
+        expected_bits = self._expected_bits_for_height(height)
         mempool_entries = self.mempool.list_transactions()
         mempool_entries = self._filter_template_mempool_entries(mempool_entries)
         preferred_settlement = self._preferred_native_reward_settlement_transaction(height=height, mempool_entries=mempool_entries)
@@ -768,7 +768,7 @@ class NodeService:
             settled_epoch_indexes=frozenset(self.reward_settlements.settled_epoch_indexes()),
             epoch_seed_by_index=self._epoch_seed_map(height),
             expected_previous_block_hash=previous_hash,
-            expected_bits=self._expected_bits_for_height(height, candidate_timestamp=block.header.timestamp),
+            expected_bits=self._expected_bits_for_height(height),
         )
         total_fees = validate_block(block, context)
 
@@ -945,11 +945,7 @@ class NodeService:
                 settled_epoch_indexes=frozenset(settled_epoch_indexes),
                 epoch_seed_by_index=self._epoch_seed_map(height, path_hashes=path_hashes),
                 expected_previous_block_hash=previous_hash,
-                expected_bits=self._expected_bits_for_candidate_height(
-                    height,
-                    validated_headers,
-                    candidate_timestamp=block.header.timestamp,
-                ),
+                expected_bits=self._expected_bits_for_candidate_height(height, validated_headers),
             )
             validate_block(block, context)
             utxo_view.apply_block(block, height)
@@ -3735,7 +3731,7 @@ class NodeService:
 
         return {outpoint.txid for outpoint, _entry in self.chainstate.list_utxos()}
 
-    def _expected_bits_for_height(self, height: int, *, candidate_timestamp: int | None = None) -> int:
+    def _expected_bits_for_height(self, height: int) -> int:
         """Return the required compact target for a candidate block height."""
 
         if height <= 0:
@@ -3745,13 +3741,6 @@ class NodeService:
             return self.params.genesis_bits
         previous_header = self.headers.get(previous_hash)
         if previous_header is None:
-            return self.params.genesis_bits
-        if candidate_timestamp is not None and should_use_minimum_difficulty(
-            params=self.params,
-            candidate_height=height,
-            previous_timestamp=previous_header.timestamp,
-            candidate_timestamp=candidate_timestamp,
-        ):
             return self.params.genesis_bits
         if height % self.params.difficulty_adjustment_window != 0:
             return previous_header.bits
@@ -3771,26 +3760,13 @@ class NodeService:
             candidate_height=height,
         )
 
-    def _expected_bits_for_candidate_height(
-        self,
-        height: int,
-        validated_headers: list,
-        *,
-        candidate_timestamp: int | None = None,
-    ) -> int:
+    def _expected_bits_for_candidate_height(self, height: int, validated_headers: list) -> int:
         """Return required bits while validating a candidate branch path."""
 
         if height <= 0 or not validated_headers:
             return self.params.genesis_bits
 
         previous_header = validated_headers[-1]
-        if candidate_timestamp is not None and should_use_minimum_difficulty(
-            params=self.params,
-            candidate_height=height,
-            previous_timestamp=previous_header.timestamp,
-            candidate_timestamp=candidate_timestamp,
-        ):
-            return self.params.genesis_bits
         if height % self.params.difficulty_adjustment_window != 0:
             return previous_header.bits
 

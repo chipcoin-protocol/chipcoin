@@ -85,23 +85,3 @@ def calculate_next_work_required(
     next_target = (previous_target * bounded_timespan_seconds) // target_timespan_seconds
     pow_limit_target = bits_to_target(params.genesis_bits)
     return target_to_bits(min(next_target, pow_limit_target))
-
-
-def should_use_minimum_difficulty(
-    *,
-    params: ConsensusParams,
-    candidate_height: int,
-    previous_timestamp: int,
-    candidate_timestamp: int,
-) -> bool:
-    """Return whether a delayed candidate may use the network minimum difficulty."""
-
-    activation_height = params.min_difficulty_activation_height
-    delay_seconds = params.min_difficulty_delay_seconds
-    if activation_height is None or delay_seconds is None:
-        return False
-    if candidate_height < activation_height:
-        return False
-    if candidate_height <= 0 or candidate_height % params.difficulty_adjustment_window == 0:
-        return False
-    return candidate_timestamp >= previous_timestamp + delay_seconds

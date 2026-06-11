@@ -5,9 +5,9 @@ from unittest.mock import patch
 import asyncio
 import logging
 
-from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS, TESTNET_PARAMS
-from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxInput, TxOutput
-from chipcoin.consensus.pow import bits_to_target, target_to_bits, verify_proof_of_work
+from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
+from chipcoin.consensus.models import Block, OutPoint, Transaction, TxInput, TxOutput
+from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import serialize_transaction
 from chipcoin.consensus.validation import (
     ContextualValidationError,
@@ -61,37 +61,6 @@ def _spend_transaction(outpoint: OutPoint, *, input_value: int, output_value: in
         amount=output_value,
         fee=input_value - output_value,
     )
-
-
-def test_testnet_delayed_candidate_uses_minimum_difficulty() -> None:
-    with TemporaryDirectory() as tempdir:
-        parent_timestamp = 1_700_000_000
-        params = replace(
-            TESTNET_PARAMS,
-            min_difficulty_activation_height=1,
-            min_difficulty_delay_seconds=1_200,
-        )
-        service = NodeService.open_sqlite(
-            Path(tempdir) / "chipcoin.sqlite3",
-            network="testnet",
-            params=params,
-            time_provider=lambda: parent_timestamp + 1_200,
-        )
-        hard_bits = target_to_bits(bits_to_target(params.genesis_bits) // 100)
-        parent = BlockHeader(
-            version=1,
-            previous_block_hash="00" * 32,
-            merkle_root="11" * 32,
-            timestamp=parent_timestamp,
-            bits=hard_bits,
-            nonce=0,
-        )
-        service.headers.put(parent, height=0, cumulative_work=1, is_main_chain=True)
-        service.headers.set_tip(parent.block_hash(), 0)
-
-        assert service._expected_bits_for_height(1, candidate_timestamp=parent_timestamp + 1_199) == hard_bits
-        assert service._expected_bits_for_height(1, candidate_timestamp=parent_timestamp + 1_200) == params.genesis_bits
-        assert service.build_candidate_block("CHCminer").block.header.bits == params.genesis_bits
 
 
 def test_peer_manager_keeps_local_peerbook() -> None:
