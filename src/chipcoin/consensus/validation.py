@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass, field
 from string import hexdigits
 
@@ -53,6 +55,9 @@ from .params import ConsensusParams, MAINNET_PARAMS
 from .pow import bits_to_target, verify_proof_of_work
 from .serialization import serialize_transaction, serialize_transaction_for_signing
 from .utxo import UtxoView
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ValidationError(Exception):
@@ -253,7 +258,7 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
     staged_settled_epoch_indexes = set(context.settled_epoch_indexes)
     staged_epoch_settlement: RewardSettlement | None = None
 
-    for transaction in block.transactions[1:]:
+    for tx_index, transaction in enumerate(block.transactions[1:], start=1):
         if _is_reward_attestation_bundle_transaction(transaction):
             bundle = _parse_reward_attestation_bundle(transaction)
             for attestation in bundle.attestations:
@@ -288,7 +293,17 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
                 else reward_registered_node_count(context.node_registry_view)
             ),
         )
-        fee_chipbits = validate_transaction_stateful(transaction, staged_context)
+        try:
+            fee_chipbits = validate_transaction_stateful(transaction, staged_context)
+        except ContextualValidationError as exc:
+            _log_contextual_transaction_failure(
+                block=block,
+                transaction=transaction,
+                tx_index=tx_index,
+                context=staged_context,
+                error=exc,
+            )
+            raise
         total_fees_chipbits += fee_chipbits
         if is_special_node_transaction(transaction):
             apply_special_node_transaction(transaction, height=context.height, registry_view=staged_registry)
@@ -396,6 +411,174 @@ def _validate_coinbase_distribution(
         raise ContextualValidationError("Coinbase node reward split does not match the scheduled epoch reward.")
     if not rewarded_outputs and distributed_node_reward_chipbits != 0:
         raise ContextualValidationError("Coinbase must not mint node reward outputs when no nodes are eligible for the epoch.")
+
+
+def _log_contextual_transaction_failure(
+    *,
+    block: Block,
+    transaction: Transaction,
+    tx_index: int,
+    context: ValidationContext,
+    error: ContextualValidationError,
+) -> None:
+    """Log consensus-state details for block validation divergence triage."""
+
+    diagnostics = _transaction_failure_diagnostics(transaction, context)
+    LOGGER.warning(
+        "contextual transaction validation failed height=%s block_hash=%s tx_index=%s txid=%s tx_type=%s error=%s diagnostics=%s",
+        context.height,
+        block.block_hash(),
+        tx_index,
+        transaction.txid(),
+        transaction.metadata.get("kind", "standard"),
+        error,
+        json.dumps(diagnostics, sort_keys=True),
+    )
+
+
+def _transaction_failure_diagnostics(transaction: Transaction, context: ValidationContext) -> dict[str, object]:
+    metadata = transaction.metadata
+    tx_kind = metadata.get("kind", "standard")
+    records = context.node_registry_view.list_records()
+    reward_records = [record for record in records if record.reward_registration]
+    active_records = active_node_records(context.node_registry_view, height=context.height, params=context.params)
+    active_reward_records = [record for record in active_records if record.reward_registration]
+    diagnostics: dict[str, object] = {
+        "height": context.height,
+        "epoch": context.height // context.params.epoch_length_blocks,
+        "tx_kind": tx_kind,
+        "registry_count": len(records),
+        "reward_registry_count": len(reward_records),
+        "fee_registry_count": (
+            context.reward_fee_registry_count
+            if context.reward_fee_registry_count is not None
+            else reward_registered_node_count(context.node_registry_view)
+        ),
+        "active_reward_node_count": len(active_reward_records),
+        "active_reward_node_ids": [record.node_id for record in active_reward_records[:25]],
+        "settled_epoch_indexes": sorted(context.settled_epoch_indexes),
+        "reward_attestation_identity_count": len(context.reward_attestation_identities),
+        "reward_attestation_bundle_count": len(context.reward_attestation_bundles),
+    }
+
+    if is_register_node_transaction(transaction) or is_renew_node_transaction(transaction):
+        node_id = metadata.get("node_id", "")
+        owner_pubkey_hex = metadata.get("owner_pubkey_hex", "")
+        owner_pubkey = _bytes_from_hex_or_none(owner_pubkey_hex)
+        node_record = context.node_registry_view.get_by_node_id(node_id) if node_id else None
+        owner_record = context.node_registry_view.get_by_owner_pubkey(owner_pubkey) if owner_pubkey is not None else None
+        diagnostics.update(
+            {
+                "node_id": node_id,
+                "node_record": _registry_record_diagnostics(node_record, context),
+                "owner_record": _registry_record_diagnostics(owner_record, context),
+                "owner_pubkey_hex": owner_pubkey_hex,
+            }
+        )
+        if is_register_reward_node_transaction(transaction):
+            actual_fee = _int_metadata(metadata, "registration_fee_chipbits")
+            expected_fee = register_reward_node_fee_chipbits(
+                registered_reward_node_count=int(diagnostics["fee_registry_count"]),
+                params=context.params,
+            )
+            node_pubkey = _bytes_from_hex_or_none(metadata.get("node_pubkey_hex", ""))
+            node_pubkey_record = (
+                _find_registry_record_by_node_pubkey(context.node_registry_view, node_pubkey)
+                if node_pubkey is not None
+                else None
+            )
+            diagnostics.update(
+                {
+                    "actual_registration_fee_chipbits": actual_fee,
+                    "expected_registration_fee_chipbits": expected_fee,
+                    "node_pubkey_record": _registry_record_diagnostics(node_pubkey_record, context),
+                }
+            )
+        elif is_renew_reward_node_transaction(transaction):
+            actual_fee = _int_metadata(metadata, "renewal_fee_chipbits")
+            expected_fee = renew_reward_node_fee_chipbits(
+                registered_reward_node_count=int(diagnostics["fee_registry_count"]),
+                params=context.params,
+            )
+            diagnostics.update(
+                {
+                    "actual_renewal_fee_chipbits": actual_fee,
+                    "expected_renewal_fee_chipbits": expected_fee,
+                    "renewal_epoch": metadata.get("renewal_epoch", ""),
+                    "expected_renewal_epoch": str(context.height // context.params.epoch_length_blocks),
+                }
+            )
+    elif _is_reward_attestation_bundle_transaction(transaction):
+        try:
+            bundle = _parse_reward_attestation_bundle(transaction)
+            submitter_record = context.node_registry_view.get_by_node_id(bundle.bundle_submitter_node_id)
+            diagnostics.update(
+                {
+                    "bundle_epoch_index": bundle.epoch_index,
+                    "bundle_window_index": bundle.bundle_window_index,
+                    "bundle_submitter_node_id": bundle.bundle_submitter_node_id,
+                    "bundle_submitter_record": _registry_record_diagnostics(submitter_record, context),
+                    "bundle_submitter_active": submitter_record in active_reward_records if submitter_record is not None else False,
+                    "bundle_attestation_count": len(bundle.attestations),
+                    "bundle_attestation_identities": [
+                        list(attestation_identity(attestation)) for attestation in bundle.attestations[:25]
+                    ],
+                    "epoch_seed_available": bundle.epoch_index in context.epoch_seed_by_index,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            diagnostics["bundle_parse_error"] = str(exc)
+    elif _is_reward_settle_epoch_transaction(transaction):
+        try:
+            settlement = _parse_reward_settlement(transaction)
+            diagnostics.update(
+                {
+                    "settlement_epoch_index": settlement.epoch_index,
+                    "settlement_epoch_start_height": settlement.epoch_start_height,
+                    "settlement_epoch_end_height": settlement.epoch_end_height,
+                    "settlement_rewarded_node_count": settlement.rewarded_node_count,
+                    "settlement_reward_entry_node_ids": [
+                        entry.node_id for entry in settlement.reward_entries[:25]
+                    ],
+                    "settlement_distributed_node_reward_chipbits": settlement.distributed_node_reward_chipbits,
+                    "settlement_undistributed_node_reward_chipbits": settlement.undistributed_node_reward_chipbits,
+                    "epoch_seed_available": settlement.epoch_index in context.epoch_seed_by_index,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            diagnostics["settlement_parse_error"] = str(exc)
+    return diagnostics
+
+
+def _registry_record_diagnostics(record, context: ValidationContext) -> dict[str, object] | None:
+    if record is None:
+        return None
+    return {
+        "node_id": record.node_id,
+        "payout_address": record.payout_address,
+        "registered_height": record.registered_height,
+        "last_renewed_height": record.last_renewed_height,
+        "reward_registration": record.reward_registration,
+        "declared_host": record.declared_host,
+        "declared_port": record.declared_port,
+        "owner_pubkey_hex": record.owner_pubkey.hex(),
+        "node_pubkey_hex": None if record.node_pubkey is None else record.node_pubkey.hex(),
+        "active_at_height": record in active_node_records(context.node_registry_view, height=context.height, params=context.params),
+    }
+
+
+def _bytes_from_hex_or_none(value: str) -> bytes | None:
+    try:
+        return bytes.fromhex(value)
+    except ValueError:
+        return None
+
+
+def _int_metadata(metadata: dict[str, str], key: str) -> int | None:
+    try:
+        return int(metadata.get(key, ""))
+    except ValueError:
+        return None
 
 
 def _validate_special_node_transaction_stateful(transaction: Transaction, context: ValidationContext) -> None:

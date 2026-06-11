@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROLE="${1:?missing role}"
+if [[ "${CHIPCOIN_ENTRYPOINT_SOURCE_ONLY:-false}" == "true" || "${CHIPCOIN_ENTRYPOINT_SOURCE_ONLY:-}" == "1" ]]; then
+  ROLE="${1:-node}"
+else
+  ROLE="${1:?missing role}"
+fi
 UNSET_SENTINEL="__CHIPCOIN_UNSET__"
 
 log() {
@@ -253,7 +257,10 @@ ensure_sqlite_file() {
 
 prepare_node_sqlite_file() {
   local configured_path="${NODE_DATA_PATH:-/runtime/node.sqlite3}"
-  ensure_sqlite_file "$configured_path" "Node SQLite"
+  mkdir -p "$(dirname "$configured_path")"
+  if [[ -e "$configured_path" && -d "$configured_path" ]]; then
+    die "Node SQLite path ${configured_path} is a directory. Expected a writable SQLite file path."
+  fi
 
   mkdir -p /runtime
   if [[ "$configured_path" != "/runtime/node.sqlite3" ]]; then
@@ -267,6 +274,111 @@ prepare_node_sqlite_file() {
 sqlite_file_is_pristine() {
   local path="$1"
   [[ ! -s "$path" ]]
+}
+
+node_database_bootstrap_state() {
+  local path="$1"
+  NODE_SQLITE_PATH_VALUE="$path" \
+  CHIPCOIN_NETWORK_VALUE="${CHIPCOIN_NETWORK:-}" \
+  python3 - <<'PY'
+import os
+import sqlite3
+from pathlib import Path
+
+from chipcoin.config import get_network_config
+
+path = Path(os.environ["NODE_SQLITE_PATH_VALUE"])
+network = os.environ.get("CHIPCOIN_NETWORK_VALUE", "")
+
+def emit(state: str, reason: str, height: str = "", tip_hash: str = "") -> None:
+    print("\t".join([state, reason, height, tip_hash]))
+
+if not path.exists():
+    emit("uninitialized", "missing")
+    raise SystemExit(0)
+if path.is_dir():
+    emit("invalid", "path_is_directory")
+    raise SystemExit(0)
+if path.stat().st_size == 0:
+    emit("uninitialized", "zero_byte")
+    raise SystemExit(0)
+
+try:
+    params = get_network_config(network).params
+except Exception as exc:  # noqa: BLE001
+    emit("invalid", f"unsupported_network:{exc}")
+    raise SystemExit(0)
+
+try:
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+except sqlite3.Error as exc:
+    emit("invalid", f"sqlite_open_failed:{exc}")
+    raise SystemExit(0)
+
+try:
+    table_rows = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    tables = {str(row["name"]) for row in table_rows}
+    required_tables = {"chain_meta", "headers", "blocks"}
+    if not required_tables.issubset(tables):
+        emit("uninitialized", "schema_missing")
+        raise SystemExit(0)
+
+    tip_row = connection.execute("SELECT value FROM chain_meta WHERE key = 'chain_tip_hash'").fetchone()
+    if tip_row is None or not str(tip_row["value"]):
+        emit("uninitialized", "chain_tip_missing")
+        raise SystemExit(0)
+    tip_hash = str(tip_row["value"])
+
+    tip_header = connection.execute(
+        "SELECT height FROM headers WHERE block_hash = ?",
+        (tip_hash,),
+    ).fetchone()
+    if tip_header is None:
+        emit("invalid", "chain_tip_header_missing")
+        raise SystemExit(0)
+    height = int(tip_header["height"])
+
+    genesis_header = connection.execute(
+        "SELECT bits, block_hash FROM headers WHERE height = 0 ORDER BY block_hash LIMIT 1"
+    ).fetchone()
+    if genesis_header is None:
+        emit("uninitialized", "genesis_header_missing")
+        raise SystemExit(0)
+    if int(genesis_header["bits"]) != int(params.genesis_bits):
+        emit("wrong_network", "genesis_bits_mismatch", str(height), tip_hash)
+        raise SystemExit(0)
+
+    tip_block = connection.execute("SELECT 1 FROM blocks WHERE block_hash = ? LIMIT 1", (tip_hash,)).fetchone()
+    if tip_block is None:
+        emit("invalid", "chain_tip_block_missing", str(height), tip_hash)
+        raise SystemExit(0)
+
+    emit("initialized", "ok", str(height), tip_hash)
+except sqlite3.DatabaseError as exc:
+    emit("invalid", f"sqlite_read_failed:{exc}")
+finally:
+    connection.close()
+PY
+}
+
+validate_snapshot_bootstrap_result() {
+  local sqlite_path="$1"
+  local expected_height="${2:-}"
+  local expected_hash="${3:-}"
+  local state_line state reason height tip_hash
+
+  state_line="$(node_database_bootstrap_state "$sqlite_path")"
+  IFS=$'\t' read -r state reason height tip_hash <<< "$state_line"
+  if [[ "$state" != "initialized" ]]; then
+    die "Snapshot bootstrap produced an unusable database: state=${state} reason=${reason} data_path=${sqlite_path}"
+  fi
+  if [[ -n "$expected_height" && "$height" != "$expected_height" ]]; then
+    die "Snapshot bootstrap height mismatch: expected=${expected_height} actual=${height} data_path=${sqlite_path}"
+  fi
+  if [[ -n "$expected_hash" && "$tip_hash" != "$expected_hash" ]]; then
+    die "Snapshot bootstrap hash mismatch: expected=${expected_hash} actual=${tip_hash} data_path=${sqlite_path}"
+  fi
 }
 
 select_snapshot_from_manifest() {
@@ -387,10 +499,25 @@ prepare_snapshot_bootstrap_if_needed() {
       ;;
   esac
 
-  if ! sqlite_file_is_pristine "$sqlite_path"; then
-    log "Snapshot bootstrap skipped mode=${mode} reason=node_database_already_initialized data_path=${sqlite_path}"
-    return 0
-  fi
+  local state_line state reason existing_height existing_tip_hash
+  state_line="$(node_database_bootstrap_state "$sqlite_path")"
+  IFS=$'\t' read -r state reason existing_height existing_tip_hash <<< "$state_line"
+  case "$state" in
+    initialized)
+      log "Snapshot bootstrap skipped mode=${mode} reason=node_database_already_initialized data_path=${sqlite_path} height=${existing_height} hash=${existing_tip_hash}"
+      return 0
+      ;;
+    wrong_network)
+      die "Snapshot bootstrap refused to overwrite wrong-network database data_path=${sqlite_path} reason=${reason} height=${existing_height} hash=${existing_tip_hash}"
+      ;;
+    uninitialized|invalid)
+      log "Snapshot bootstrap required mode=${mode} reason=${reason} state=${state} data_path=${sqlite_path}"
+      rm -f -- "$sqlite_path" "$sqlite_path-shm" "$sqlite_path-wal"
+      ;;
+    *)
+      die "Snapshot bootstrap could not classify database data_path=${sqlite_path} state=${state} reason=${reason}"
+      ;;
+  esac
 
   local snapshot_path="${NODE_SNAPSHOT_FILE:-}"
   if [[ -z "$snapshot_path" ]]; then
@@ -452,12 +579,12 @@ prepare_snapshot_bootstrap_if_needed() {
   if ! import_output="$(chipcoin "${import_args[@]}" 2>&1)"; then
     if [[ "$mode" == "auto" ]]; then
       rm -f -- "$sqlite_path" "$sqlite_path-shm" "$sqlite_path-wal"
-      touch "$sqlite_path" || die "Could not reset node database after failed snapshot import: ${sqlite_path}"
       warn "Snapshot import failed: ${import_output}. Falling back to full sync."
       return 0
     fi
     die "Snapshot import failed: ${import_output}"
   fi
+  validate_snapshot_bootstrap_result "$sqlite_path" "$snapshot_height" "$snapshot_hash"
   log "Snapshot bootstrap imported data_path=${sqlite_path} file=${snapshot_path} result=${import_output}"
 }
 
@@ -534,6 +661,7 @@ run_node() {
 
   apply_initial_sync_defaults_if_needed /runtime/node.sqlite3 "node" "$startup_peer_count"
   prepare_snapshot_bootstrap_if_needed /runtime/node.sqlite3
+  ensure_sqlite_file /runtime/node.sqlite3 "Node SQLite"
 
   if awk 'BEGIN { exit !('"${BLOCK_REQUEST_TIMEOUT_SECONDS:-15}"' < 5) }'; then
     warn "BLOCK_REQUEST_TIMEOUT_SECONDS=${BLOCK_REQUEST_TIMEOUT_SECONDS:-15} is unusually low and may cause unnecessary block reassignment churn."
@@ -629,14 +757,16 @@ run_miner() {
     "${miner_id_args[@]}"
 }
 
-case "$ROLE" in
-  node)
-    run_node
-    ;;
-  miner)
-    run_miner
-    ;;
-  *)
-    die "Unsupported role: ${ROLE}"
-    ;;
-esac
+if [[ "${CHIPCOIN_ENTRYPOINT_SOURCE_ONLY:-false}" != "true" && "${CHIPCOIN_ENTRYPOINT_SOURCE_ONLY:-}" != "1" ]]; then
+  case "$ROLE" in
+    node)
+      run_node
+      ;;
+    miner)
+      run_miner
+      ;;
+    *)
+      die "Unsupported role: ${ROLE}"
+      ;;
+  esac
+fi
