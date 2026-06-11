@@ -34,6 +34,10 @@ count_pattern() {
   grep -Eic "$pattern" "$file" 2>/dev/null || true
 }
 
+timestamp_iso8601() {
+  date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
 runtime_db_probe() {
   compose_cmd exec -T "$COMPOSE_SERVICE" sh -lc '
 set -eu
@@ -96,7 +100,7 @@ PY
 check_once() {
   mkdir -p "$LOG_DIR"
   local ts status logs_file db_probe
-  ts="$(date -Is)"
+  ts="$(timestamp_iso8601)"
   logs_file="$(mktemp)"
   trap 'rm -f "$logs_file"' RETURN
 
