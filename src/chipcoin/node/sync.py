@@ -131,7 +131,8 @@ class SyncManager:
 
         validated_tip = self.node.chain_tip()
         best_header = self.best_header_record()
-        missing = () if best_header is None or not self._best_header_needs_blocks(best_header) else self.missing_blocks_for_tip(best_header.block_hash)
+        best_header_can_advance = best_header is not None and self._best_header_needs_blocks(best_header)
+        missing = () if best_header is None or not best_header_can_advance else self.missing_blocks_for_tip(best_header.block_hash)
         queued_missing = tuple(block_hash for block_hash in missing if block_hash not in self._inflight_blocks)
         snapshot_anchor = self.node.snapshot_anchor()
         local_height = None if validated_tip is None else validated_tip.height
@@ -140,6 +141,10 @@ class SyncManager:
             mode = "idle"
         elif missing:
             mode = "blocks" if self._inflight_blocks else "headers"
+        elif best_header_can_advance:
+            # All candidate blocks may already be local; the scheduler still has
+            # work to do until the validated tip catches the strongest header.
+            mode = "blocks"
         else:
             mode = "synced"
         if snapshot_anchor is not None:
@@ -407,10 +412,16 @@ class SyncManager:
         current_tip = self.node.chain_tip()
         if current_tip is None:
             return True
+        if best_tip.block_hash == current_tip.block_hash:
+            return False
         current_record = self.node.headers.get_record(current_tip.block_hash)
         current_work = 0 if current_record is None or current_record.cumulative_work is None else current_record.cumulative_work
         best_work = 0 if best_tip.cumulative_work is None else best_tip.cumulative_work
-        return best_work > current_work
+        if best_work > current_work:
+            return True
+        if best_tip.height is not None and current_tip.height is not None and best_tip.height > current_tip.height:
+            return True
+        return False
 
     def expire_block_requests(self, *, now: float) -> tuple[BlockRequestState, ...]:
         """Expire overdue block requests so they can be reassigned."""
@@ -445,13 +456,8 @@ class SyncManager:
 
         best_tip = self.node.headers.find_best_tip()
         current_tip = self.node.chain_tip()
-        current_work = 0
-        if current_tip is not None:
-            current_record = self.node.headers.get_record(current_tip.block_hash)
-            if current_record is not None and current_record.cumulative_work is not None:
-                current_work = current_record.cumulative_work
 
-        if best_tip is None or best_tip.cumulative_work is None or best_tip.cumulative_work <= current_work:
+        if best_tip is None or not self._best_header_needs_blocks(best_tip):
             return SyncResult(
                 headers_received=0,
                 blocks_fetched=0,
@@ -477,7 +483,7 @@ class SyncManager:
                 reorged=False,
             )
         ready_tip = self.node.headers.get_record(ready_tip_hash)
-        if ready_tip is None or ready_tip.cumulative_work is None or ready_tip.cumulative_work <= current_work:
+        if ready_tip is None or not self._best_header_needs_blocks(ready_tip):
             return SyncResult(
                 headers_received=0,
                 blocks_fetched=0,

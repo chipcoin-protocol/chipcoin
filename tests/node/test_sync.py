@@ -224,6 +224,46 @@ def test_sync_manager_skips_missing_block_scan_when_best_header_is_active_tip(mo
         assert assignments == ()
 
 
+def test_sync_manager_does_not_report_synced_when_header_height_is_ahead_but_work_metadata_is_stale(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        active_blocks = _mine_chain(target, 2, "CHCminer-target")
+        remote_blocks = _mine_chain(source, 5, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in remote_blocks), peer_id="peer-a")
+
+        best_tip = target.headers.find_best_tip()
+        assert best_tip is not None
+        current_tip = target.chain_tip()
+        assert current_tip is not None
+        current_record = target.headers.get_record(current_tip.block_hash)
+        assert current_record is not None
+        # Reproduce a stale metadata condition observed in production: the best
+        # header height is ahead, but cumulative work no longer sorts above the
+        # active tip. Height/hash divergence must still force block sync.
+        stale_best_tip = replace(best_tip, cumulative_work=current_record.cumulative_work)
+        monkeypatch.setattr(target.headers, "find_best_tip", lambda: stale_best_tip)
+
+        status = manager.sync_status()
+        assignments = manager.reserve_block_downloads(
+            peer_ids=("peer-a",),
+            max_window_size=8,
+            max_inflight_per_peer=8,
+            timeout_seconds=5.0,
+            now=100.0,
+        )
+
+        assert active_blocks[-1].block_hash() == current_tip.block_hash
+        assert status["mode"] != "synced"
+        assert status["validated_tip_height"] == current_tip.height
+        assert status["best_header_height"] == best_tip.height
+        assert status["missing_block_count"] == len(remote_blocks)
+        assert [assignment.block_hash for assignment in assignments] == [
+            block.block_hash() for block in remote_blocks
+        ]
+
+
 def test_sync_manager_reuses_missing_block_scan_between_scheduler_ticks(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
