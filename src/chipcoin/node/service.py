@@ -876,6 +876,72 @@ class NodeService:
                 readded_transaction_count=0,
             )
 
+        def replay_activation_prefix(
+            prefix_length: int,
+        ) -> tuple[
+            InMemoryUtxoView,
+            InMemoryNodeRegistryView,
+            list[StoredRewardAttestationBundle],
+            list[StoredEpochSettlement],
+            set[tuple[int, int, str, str]],
+            set[int],
+            str,
+            int,
+            list,
+        ]:
+            utxo_view = InMemoryUtxoView()
+            node_registry_view = InMemoryNodeRegistryView()
+            reward_attestation_bundles: list[StoredRewardAttestationBundle] = []
+            reward_settlements: list[StoredEpochSettlement] = []
+            reward_attestation_identities: set[tuple[int, int, str, str]] = set()
+            settled_epoch_indexes: set[int] = set()
+            previous_hash = "00" * 32
+            median_time_past = 0
+            validated_headers = []
+            for height in range(prefix_length):
+                block_hash = path_hashes[height]
+                block = self.blocks.get(block_hash)
+                if block is None:
+                    raise ValueError(f"Cannot activate chain without stored block: {block_hash}")
+                context = ValidationContext(
+                    height=height,
+                    median_time_past=median_time_past,
+                    params=self.params,
+                    utxo_view=utxo_view,
+                    node_registry_view=node_registry_view,
+                    reward_attestation_identities=frozenset(reward_attestation_identities),
+                    reward_attestation_bundles=tuple(stored.bundle for stored in reward_attestation_bundles),
+                    settled_epoch_indexes=frozenset(settled_epoch_indexes),
+                    epoch_seed_by_index=self._epoch_seed_map(height, path_hashes=path_hashes),
+                    expected_previous_block_hash=previous_hash,
+                    expected_bits=self._expected_bits_for_candidate_height(height, validated_headers),
+                )
+                validate_block(block, context)
+                utxo_view.apply_block(block, height)
+                self._apply_node_registry_block(block, height, registry_view=node_registry_view)
+                self._collect_native_reward_block(
+                    block,
+                    height,
+                    attestation_bundles=reward_attestation_bundles,
+                    settled_epochs=reward_settlements,
+                    attestation_identities=reward_attestation_identities,
+                    settled_epoch_indexes=settled_epoch_indexes,
+                )
+                validated_headers.append(block.header)
+                previous_hash = block_hash
+                median_time_past = block.header.timestamp
+            return (
+                utxo_view,
+                node_registry_view,
+                reward_attestation_bundles,
+                reward_settlements,
+                reward_attestation_identities,
+                settled_epoch_indexes,
+                previous_hash,
+                median_time_past,
+                validated_headers,
+            )
+
         extends_current_tip = previous_tip is not None and common_prefix == len(old_path)
         if extends_current_tip:
             utxo_view = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
@@ -896,37 +962,19 @@ class NodeService:
                     raise ValueError(f"missing active chain header at height {height}")
                 validated_headers.append(header)
             start_height = common_prefix
-        elif snapshot_anchor is None:
-            utxo_view = InMemoryUtxoView()
-            node_registry_view = InMemoryNodeRegistryView()
-            reward_attestation_bundles: list[StoredRewardAttestationBundle] = []
-            reward_settlements: list[StoredEpochSettlement] = []
-            reward_attestation_identities: set[tuple[int, int, str, str]] = set()
-            settled_epoch_indexes: set[int] = set()
-            previous_hash = "00" * 32
-            median_time_past = 0
-            validated_headers = []
-            start_height = 0
         else:
-            utxo_view = InMemoryUtxoView.from_entries(self.chainstate.list_utxos())
-            node_registry_view = self.node_registry.snapshot()
-            reward_attestation_bundles = self.reward_attestations.list_bundles()
-            reward_settlements = self.reward_settlements.list_settlements()
-            reward_attestation_identities = self.reward_attestations.attestation_identities()
-            settled_epoch_indexes = self.reward_settlements.settled_epoch_indexes()
-            previous_hash = snapshot_anchor.block_hash
-            anchor_header = self.headers.get(snapshot_anchor.block_hash)
-            if anchor_header is None:
-                raise ValueError("missing trusted snapshot anchor header")
-            median_time_past = anchor_header.timestamp
-            validated_headers = []
-            for height in range(snapshot_anchor.height + 1):
-                anchor_hash = path_hashes[height]
-                header = self.headers.get(anchor_hash)
-                if header is None:
-                    raise ValueError(f"missing trusted snapshot header at height {height}")
-                validated_headers.append(header)
-            start_height = snapshot_anchor.height + 1
+            (
+                utxo_view,
+                node_registry_view,
+                reward_attestation_bundles,
+                reward_settlements,
+                reward_attestation_identities,
+                settled_epoch_indexes,
+                previous_hash,
+                median_time_past,
+                validated_headers,
+            ) = replay_activation_prefix(common_prefix)
+            start_height = common_prefix
         applied_blocks = 0
 
         for height in range(start_height, len(path_hashes)):

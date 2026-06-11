@@ -8,14 +8,16 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from chipcoin.consensus.epoch_settlement import RewardAttestation, RewardAttestationBundle, RewardSettlement, RewardSettlementEntry
-from chipcoin.consensus.models import Block
+from chipcoin.consensus.models import Block, OutPoint
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
+from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, snapshot_checksum, write_snapshot_file
 from chipcoin.node.service import NodeService
 from chipcoin.node.sync import SyncManager
 from chipcoin.storage.native_rewards import StoredEpochSettlement, StoredRewardAttestationBundle
+from tests.helpers import signed_payment, wallet_key
 
 
 def _make_service(database_path: Path, *, start_time: int, params=None) -> NodeService:
@@ -295,6 +297,50 @@ def test_sync_manager_activates_post_snapshot_delta_incrementally() -> None:
         assert target.chain_tip().block_hash == additional_blocks[0].block_hash()
         assert target.snapshot_anchor() is not None
         assert target.snapshot_anchor().block_hash == initial_blocks[-1].block_hash()
+
+
+def test_snapshot_node_reorgs_to_better_post_anchor_branch_from_common_state() -> None:
+    params = replace(MAINNET_PARAMS, coinbase_maturity=0)
+
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000, params=params)
+        initial_blocks = _mine_chain(source, 4, wallet_key(0).address)
+        snapshot_path = Path(tempdir) / "snapshot.json"
+        source.export_snapshot_file(snapshot_path)
+
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000, params=params)
+        target.import_snapshot_file(snapshot_path)
+        target.mempool.policy = MempoolPolicy(min_fee_chipbits_normal_tx=1)
+
+        alt = _make_service(Path(tempdir) / "alt.sqlite3", start_time=1_700_002_000, params=params)
+        alt.import_snapshot_file(snapshot_path)
+        alt.mempool.policy = MempoolPolicy(min_fee_chipbits_normal_tx=1)
+
+        spend = signed_payment(
+            OutPoint(txid=initial_blocks[-1].transactions[0].txid(), index=0),
+            value=int(initial_blocks[-1].transactions[0].outputs[0].value),
+            sender=wallet_key(0),
+            fee=10,
+        )
+
+        target.receive_transaction(spend)
+        branch_a = _mine_block(target.build_candidate_block(wallet_key(1).address).block)
+        target.apply_block(branch_a)
+
+        alt.receive_transaction(spend)
+        branch_b1 = _mine_block(alt.build_candidate_block(wallet_key(2).address).block)
+        alt.apply_block(branch_b1)
+        branch_b2 = _mine_block(alt.build_candidate_block(wallet_key(2).address).block)
+        alt.apply_block(branch_b2)
+
+        manager = SyncManager(node=target)
+        manager.receive_block(branch_b1)
+        result = manager.receive_block(branch_b2)
+
+        assert result.reorged is True
+        assert result.activated_tip == branch_b2.block_hash()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == branch_b2.block_hash()
 
 
 def test_snapshot_anchor_mismatch_is_rejected_before_delta_sync() -> None:
