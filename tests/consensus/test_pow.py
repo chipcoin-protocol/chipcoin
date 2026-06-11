@@ -2,11 +2,12 @@ from dataclasses import replace
 
 from chipcoin.consensus.models import BlockHeader
 
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.params import MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.pow import (
     bits_to_target,
     calculate_next_work_required,
     header_work,
+    should_use_minimum_difficulty,
     target_to_bits,
     verify_proof_of_work,
 )
@@ -96,3 +97,37 @@ def test_calculate_next_work_required_uses_activation_height_schedule() -> None:
 
     assert legacy_bits == MAINNET_PARAMS.genesis_bits
     assert bits_to_target(activated_bits) < bits_to_target(MAINNET_PARAMS.genesis_bits)
+
+
+def test_minimum_difficulty_escape_hatch_requires_activation_delay_and_non_retarget() -> None:
+    params = replace(
+        TESTNET_PARAMS,
+        difficulty_adjustment_window=500,
+        min_difficulty_activation_height=7_182,
+        min_difficulty_delay_seconds=1_200,
+    )
+
+    assert not should_use_minimum_difficulty(
+        params=params,
+        candidate_height=7_181,
+        previous_timestamp=1_000,
+        candidate_timestamp=3_000,
+    )
+    assert not should_use_minimum_difficulty(
+        params=params,
+        candidate_height=7_182,
+        previous_timestamp=1_000,
+        candidate_timestamp=2_199,
+    )
+    assert not should_use_minimum_difficulty(
+        params=params,
+        candidate_height=7_500,
+        previous_timestamp=1_000,
+        candidate_timestamp=3_000,
+    )
+    assert should_use_minimum_difficulty(
+        params=params,
+        candidate_height=7_182,
+        previous_timestamp=1_000,
+        candidate_timestamp=2_200,
+    )

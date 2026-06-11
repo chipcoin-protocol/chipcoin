@@ -6,7 +6,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from ..consensus.models import Block, BlockHeader
-from ..consensus.pow import calculate_next_work_required, header_work, verify_proof_of_work
+from ..consensus.pow import calculate_next_work_required, header_work, should_use_minimum_difficulty, verify_proof_of_work
 from ..consensus.validation import ContextualValidationError, StatelessValidationError
 from .messages import GetHeadersMessage
 
@@ -699,16 +699,27 @@ class SyncManager:
                 raise ContextualValidationError("Header does not connect to the expected parent.")
             if header.timestamp < parent_record.header.timestamp:
                 raise ContextualValidationError("Header timestamp is below the previous header timestamp.")
-        expected_bits = self._expected_bits_for_candidate_header(parent_record=parent_record, height=height)
+        expected_bits = self._expected_bits_for_candidate_header(
+            parent_record=parent_record,
+            height=height,
+            candidate_timestamp=header.timestamp,
+        )
         if header.bits != expected_bits:
             raise ContextualValidationError("Header bits do not match expected difficulty target.")
 
-    def _expected_bits_for_candidate_header(self, *, parent_record, height: int) -> int:
+    def _expected_bits_for_candidate_header(self, *, parent_record, height: int, candidate_timestamp: int | None = None) -> int:
         """Return the expected bits for one candidate header."""
 
         if height <= 0 or parent_record is None:
             return self.node.params.genesis_bits
         previous_header = parent_record.header
+        if candidate_timestamp is not None and should_use_minimum_difficulty(
+            params=self.node.params,
+            candidate_height=height,
+            previous_timestamp=previous_header.timestamp,
+            candidate_timestamp=candidate_timestamp,
+        ):
+            return self.node.params.genesis_bits
         if height % self.node.params.difficulty_adjustment_window != 0:
             return previous_header.bits
         path_hashes = self.node.headers.path_to_root(parent_record.block_hash)
