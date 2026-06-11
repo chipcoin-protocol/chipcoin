@@ -31,6 +31,8 @@ from ..consensus.nodes import (
     InMemoryNodeRegistryView,
     active_node_records,
     apply_special_node_transaction,
+    is_register_reward_node_transaction,
+    is_renew_reward_node_transaction,
     is_special_node_transaction,
     current_epoch,
     reward_node_eligible_from_height,
@@ -3624,29 +3626,90 @@ class NodeService:
         )
         filtered_entries = []
         pruned_txids: list[str] = []
+        included_special_count = 0
+        included_register_reward_count = 0
+        included_renew_reward_count = 0
         for entry in mempool_entries:
             transaction = entry.transaction
             if not is_special_node_transaction(transaction):
                 filtered_entries.append(entry)
                 continue
+            prune_reason = self._special_node_template_policy_rejection(
+                transaction,
+                included_special_count=included_special_count,
+                included_register_reward_count=included_register_reward_count,
+                included_renew_reward_count=included_renew_reward_count,
+            )
+            if prune_reason is not None:
+                self._record_pruned_special_node_mempool_transaction(
+                    transaction,
+                    reason=prune_reason,
+                    pruned_txids=pruned_txids,
+                )
+                continue
             try:
                 validate_transaction(transaction, context)
                 apply_special_node_transaction(transaction, height=context.height, registry_view=staged_registry)
             except ValidationError as exc:
-                txid = transaction.txid()
-                pruned_txids.append(txid)
-                LOGGER.info(
-                    "pruned invalid special-node mempool transaction txid=%s tx_type=%s reason=%s",
-                    txid,
-                    transaction.metadata.get("kind", "unknown"),
-                    exc,
+                self._record_pruned_special_node_mempool_transaction(
+                    transaction,
+                    reason=str(exc),
+                    pruned_txids=pruned_txids,
                 )
                 continue
             filtered_entries.append(entry)
+            included_special_count += 1
+            if is_register_reward_node_transaction(transaction):
+                included_register_reward_count += 1
+            elif is_renew_reward_node_transaction(transaction):
+                included_renew_reward_count += 1
         if pruned_txids:
             self.mempool.remove_many(pruned_txids)
             self.invalidate_mining_templates()
         return filtered_entries
+
+    def _special_node_template_policy_rejection(
+        self,
+        transaction: Transaction,
+        *,
+        included_special_count: int,
+        included_register_reward_count: int,
+        included_renew_reward_count: int,
+    ) -> str | None:
+        """Return a local template-policy rejection reason for excess special-node txs."""
+
+        policy = self.mempool.policy
+        if included_special_count >= policy.max_special_node_transactions:
+            return "Mempool special-node transaction limit exceeded."
+        if (
+            is_register_reward_node_transaction(transaction)
+            and included_register_reward_count >= policy.max_register_reward_node_transactions
+        ):
+            return "Mempool register_reward_node transaction limit exceeded."
+        if (
+            is_renew_reward_node_transaction(transaction)
+            and included_renew_reward_count >= policy.max_renew_reward_node_transactions
+        ):
+            return "Mempool renew_reward_node transaction limit exceeded."
+        return None
+
+    def _record_pruned_special_node_mempool_transaction(
+        self,
+        transaction: Transaction,
+        *,
+        reason: str,
+        pruned_txids: list[str],
+    ) -> None:
+        """Record and log one special-node mempool prune."""
+
+        txid = transaction.txid()
+        pruned_txids.append(txid)
+        LOGGER.info(
+            "pruned invalid special-node mempool transaction txid=%s tx_type=%s reason=%s",
+            txid,
+            transaction.metadata.get("kind", "unknown"),
+            reason,
+        )
 
     def _find_transaction_in_active_chain(self, txid: str) -> Transaction | None:
         """Return a confirmed active-chain transaction when present."""

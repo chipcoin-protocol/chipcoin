@@ -2662,6 +2662,36 @@ def test_node_service_prunes_invalid_special_node_transaction_before_template() 
         assert service.mempool.repository.get(duplicate.txid()) is None
 
 
+def test_node_service_prunes_excess_special_node_transactions_before_template() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.mempool.policy = MempoolPolicy(max_register_reward_node_transactions=3)
+        registration_fee = int(service.reward_node_fee_schedule()["register_fee_chipbits"])
+        transactions = []
+        for index in range(5):
+            wallet = wallet_key_from_private_key(parse_private_key_hex(f"{index + 20:064x}"))
+            transaction = TransactionSigner(wallet).build_register_reward_node_transaction(
+                node_id=f"node-farm-{index}",
+                payout_address=wallet.address,
+                node_public_key_hex=wallet.public_key.hex(),
+                declared_host="42.115.140.51",
+                declared_port=28100 + index,
+                registration_fee_chipbits=registration_fee,
+            )
+            transactions.append(transaction)
+            service.mempool.repository.add(transaction, fee=0, added_at=index)
+
+        template = service.build_candidate_block("CHCminer")
+        template_txids = {transaction.txid() for transaction in template.block.transactions}
+
+        assert {transaction.txid() for transaction in transactions[:3]}.issubset(template_txids)
+        assert all(transaction.txid() not in template_txids for transaction in transactions[3:])
+        assert [transaction.txid() for transaction in service.list_mempool_transactions()] == [
+            transaction.txid()
+            for transaction in transactions[:3]
+        ]
+
+
 def test_node_service_rejects_conflicting_mempool_spends_by_policy() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
