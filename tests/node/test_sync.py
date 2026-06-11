@@ -356,6 +356,39 @@ def test_sync_manager_quarantines_invalid_ready_tip_between_scheduler_ticks(monk
         assert manager._invalid_activation_tips == {block.block_hash(): "invalid reward settlement"}
 
 
+def test_sync_manager_falls_back_to_ready_branch_after_invalid_best_tip(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        long_source = _make_service(Path(tempdir) / "long.sqlite3", start_time=1_700_000_000)
+        short_source = _make_service(Path(tempdir) / "short.sqlite3", start_time=1_700_001_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_002_000)
+        long_branch = _mine_chain(long_source, 2, "CHCminer-long")
+        short_branch = _mine_chain(short_source, 1, "CHCminer-short")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in long_branch), peer_id="peer-long")
+        manager.ingest_headers(tuple(block.header for block in short_branch), peer_id="peer-short")
+        for block in (*long_branch, *short_branch):
+            target.blocks.put(block)
+
+        original_activate_chain = target.activate_chain
+
+        def activate_chain(tip_hash: str):
+            if tip_hash == long_branch[-1].block_hash():
+                raise ContextualValidationError("invalid branch")
+            return original_activate_chain(tip_hash)
+
+        monkeypatch.setattr(target, "activate_chain", activate_chain)
+
+        first = manager.activate_best_chain_if_ready()
+        second = manager.activate_best_chain_if_ready()
+
+        assert first.activated_tip is None
+        assert second.activated_tip == short_branch[-1].block_hash()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == short_branch[-1].block_hash()
+        assert long_branch[0].block_hash() in manager._invalid_activation_tips
+        assert long_branch[-1].block_hash() in manager._invalid_activation_tips
+
+
 def test_sync_manager_reassigns_expired_block_requests() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)

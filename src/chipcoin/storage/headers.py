@@ -50,6 +50,11 @@ class HeaderRepository:
 
         raise NotImplementedError
 
+    def list_candidate_tips(self) -> tuple["HeaderRecord", ...]:
+        """Return known leaf headers ordered by cumulative work."""
+
+        raise NotImplementedError
+
     def list_locator_hashes(self, max_count: int = 32) -> tuple[str, ...]:
         """Return block locator hashes walking back from the current main tip."""
 
@@ -232,6 +237,25 @@ class SQLiteHeaderRepository(HeaderRepository):
         if row is None:
             return None
         return self.get_record(row["block_hash"])
+
+    def list_candidate_tips(self) -> tuple[HeaderRecord, ...]:
+        """Return all known leaf headers ordered by cumulative work and height."""
+
+        rows = self.connection.execute(
+            """
+            SELECT h.block_hash
+            FROM headers h
+            LEFT JOIN headers child ON child.previous_block_hash = h.block_hash
+            WHERE h.cumulative_work IS NOT NULL
+              AND child.block_hash IS NULL
+            ORDER BY LENGTH(h.cumulative_work) DESC,
+                     h.cumulative_work DESC,
+                     COALESCE(h.height, -1) DESC,
+                     h.block_hash DESC
+            """
+        ).fetchall()
+        records = [self.get_record(row["block_hash"]) for row in rows]
+        return tuple(record for record in records if record is not None)
 
     def list_locator_hashes(self, max_count: int = 32) -> tuple[str, ...]:
         """Return block locator hashes from main tip backwards."""

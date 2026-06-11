@@ -92,7 +92,7 @@ class SyncManager:
         self._header_peer_counts: dict[str, int] = {}
         self._stalled_peer_counts: dict[str, int] = {}
         self._missing_blocks_cache: dict[tuple[str, str | None], tuple[str, ...]] = {}
-        self._ready_tip_cache: dict[tuple[str, str | None], str | None] = {}
+        self._ready_tip_cache: dict[tuple[str, str | None, tuple[str, ...]], str | None] = {}
         self._invalid_activation_tips: dict[str, str] = {}
 
     def best_header_record(self):
@@ -274,27 +274,47 @@ class SyncManager:
     def best_ready_tip(self) -> str | None:
         """Return the strongest contiguous header tip whose blocks are locally available."""
 
-        best_tip = self.node.headers.find_best_tip()
-        if best_tip is None:
+        if hasattr(self.node.headers, "list_candidate_tips"):
+            candidate_tips = self.node.headers.list_candidate_tips()
+        else:
+            best_tip = self.node.headers.find_best_tip()
+            candidate_tips = () if best_tip is None else (best_tip,)
+        if not candidate_tips:
             return None
         current_tip = self.node.chain_tip()
-        cache_key = (best_tip.block_hash, None if current_tip is None else current_tip.block_hash)
+        cache_key = (
+            candidate_tips[0].block_hash,
+            None if current_tip is None else current_tip.block_hash,
+            tuple(sorted(self._invalid_activation_tips)),
+        )
         if cache_key in self._ready_tip_cache:
             return self._ready_tip_cache[cache_key]
-        path_hashes = self.node.headers.path_to_root(best_tip.block_hash)
-        snapshot_anchor = None
-        if hasattr(self.node, "snapshot_anchor"):
-            snapshot_anchor = self.node.snapshot_anchor()
-        if snapshot_anchor is not None:
-            if snapshot_anchor.height >= len(path_hashes) or path_hashes[snapshot_anchor.height] != snapshot_anchor.block_hash:
-                raise ValueError("snapshot anchor mismatch")
-            path_hashes = path_hashes[snapshot_anchor.height + 1 :]
 
-        ready_tip = snapshot_anchor.block_hash if snapshot_anchor is not None else None
-        for block_hash in path_hashes:
-            if self.node.get_block_by_hash(block_hash) is None:
-                break
-            ready_tip = block_hash
+        ready_tip = None
+        snapshot_anchor = self.node.snapshot_anchor() if hasattr(self.node, "snapshot_anchor") else None
+        invalid_hashes = set(self._invalid_activation_tips)
+        for candidate_tip in candidate_tips:
+            if not self._best_header_needs_blocks(candidate_tip):
+                continue
+            path_hashes = self.node.headers.path_to_root(candidate_tip.block_hash)
+            if snapshot_anchor is not None:
+                if snapshot_anchor.height >= len(path_hashes) or path_hashes[snapshot_anchor.height] != snapshot_anchor.block_hash:
+                    continue
+                path_hashes = path_hashes[snapshot_anchor.height + 1 :]
+            if any(block_hash in invalid_hashes for block_hash in path_hashes):
+                continue
+            candidate_ready_tip = snapshot_anchor.block_hash if snapshot_anchor is not None else None
+            for block_hash in path_hashes:
+                if self.node.get_block_by_hash(block_hash) is None:
+                    break
+                candidate_ready_tip = block_hash
+            if candidate_ready_tip is None or candidate_ready_tip in invalid_hashes:
+                continue
+            record = self.node.headers.get_record(candidate_ready_tip)
+            if record is None or not self._best_header_needs_blocks(record):
+                continue
+            ready_tip = candidate_ready_tip
+            break
         self._ready_tip_cache = {cache_key: ready_tip}
         return ready_tip
 
@@ -499,7 +519,11 @@ class SyncManager:
         try:
             activation = self.node.activate_chain(ready_tip.block_hash)
         except (StatelessValidationError, ContextualValidationError, ValueError) as exc:
-            self._invalid_activation_tips[ready_tip.block_hash] = str(exc)
+            current_path = set(() if current_tip is None else self.node.headers.path_to_root(current_tip.block_hash))
+            for block_hash in self.node.headers.path_to_root(ready_tip.block_hash):
+                if block_hash not in current_path:
+                    self._invalid_activation_tips[block_hash] = str(exc)
+            self._ready_tip_cache.clear()
             if raise_on_invalid:
                 raise
             return SyncResult(
