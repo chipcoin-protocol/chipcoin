@@ -2979,6 +2979,45 @@ def test_block_template_excludes_child_if_parent_is_absent() -> None:
         assert len(template.block.transactions) == 1
 
 
+def test_block_template_builder_skips_registry_conflicting_special_node_transactions() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        registration_fee = int(service.reward_node_fee_schedule()["register_fee_chipbits"])
+        first = TransactionSigner(wallet_key(0)).build_register_reward_node_transaction(
+            node_id="node-farm-1",
+            payout_address=wallet_key(0).address,
+            node_public_key_hex=wallet_key(0).public_key.hex(),
+            declared_host="42.115.140.51",
+            declared_port=28444,
+            registration_fee_chipbits=registration_fee,
+        )
+        duplicate = TransactionSigner(wallet_key(1)).build_register_reward_node_transaction(
+            node_id="node-farm-1",
+            payout_address=wallet_key(1).address,
+            node_public_key_hex=wallet_key(1).public_key.hex(),
+            declared_host="42.115.140.51",
+            declared_port=28444,
+            registration_fee_chipbits=registration_fee,
+        )
+
+        template = service.mining.build_block_template(
+            previous_block_hash="00" * 32,
+            height=0,
+            miner_address=wallet_key(2).address,
+            bits=service.params.genesis_bits,
+            mempool_entries=[
+                MempoolEntry(transaction=first, fee=0, added_at=1),
+                MempoolEntry(transaction=duplicate, fee=0, added_at=2),
+            ],
+            node_registry_view=service.node_registry.snapshot(),
+            confirmed_transaction_ids=set(),
+        )
+
+        template_txids = {transaction.txid() for transaction in template.block.transactions}
+        assert first.txid() in template_txids
+        assert duplicate.txid() not in template_txids
+
+
 def test_built_block_remains_consensus_valid_under_weight_limit() -> None:
     with TemporaryDirectory() as tempdir:
         params = replace(MAINNET_PARAMS, coinbase_maturity=0)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import cmp_to_key
 
-from ..consensus.economics import subsidy_split_chipbits
+from ..consensus.economics import reward_registered_node_count, subsidy_split_chipbits
 from ..consensus.epoch_settlement import (
     REWARD_ATTESTATION_BUNDLE_KIND,
     REWARD_SETTLE_EPOCH_KIND,
@@ -16,10 +16,12 @@ from ..consensus.epoch_settlement import (
 )
 from ..consensus.merkle import merkle_root
 from ..consensus.models import Block, BlockHeader, Transaction, TxOutput
-from ..consensus.nodes import NodeRegistryView
+from ..consensus.nodes import NodeRegistryView, apply_special_node_transaction, is_special_node_transaction
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
+from ..consensus.utxo import InMemoryUtxoView
+from ..consensus.validation import ValidationContext, ValidationError, validate_transaction
 from ..storage.mempool import MempoolEntry
 
 
@@ -111,8 +113,10 @@ class MiningCoordinator:
         max_transaction_weight_units = max(0, self.params.max_block_weight - coinbase_weight_units - system_transaction_weight_units)
         selected_entries = self._select_mempool_entries(
             mempool_entries,
+            height=height,
             max_transaction_weight_units=max_transaction_weight_units,
             confirmed_transaction_ids=confirmed_transaction_ids or set(),
+            node_registry_view=node_registry_view,
         )
         total_fees_chipbits = sum(entry.fee for entry in selected_entries)
         miner_amount_chipbits = miner_subsidy_chipbits + total_fees_chipbits
@@ -163,8 +167,10 @@ class MiningCoordinator:
         self,
         mempool_entries: list[MempoolEntry],
         *,
+        height: int,
         max_transaction_weight_units: int,
         confirmed_transaction_ids: set[str],
+        node_registry_view: NodeRegistryView,
     ) -> list[MempoolEntry]:
         """Select mempool transactions by fee-rate with basic ancestor ordering."""
 
@@ -187,6 +193,15 @@ class MiningCoordinator:
         included_attestation_bundle_count = 0
         included_attestation_identities: set[tuple[int, int, str, str]] = set()
         included_verifier_window_counts: dict[tuple[int, str], int] = {}
+        staged_registry = node_registry_view.clone()
+        special_node_context = ValidationContext(
+            height=height,
+            median_time_past=0,
+            params=self.params,
+            utxo_view=InMemoryUtxoView(),
+            node_registry_view=staged_registry,
+            reward_fee_registry_count=reward_registered_node_count(node_registry_view),
+        )
 
         while pending:
             progressed = False
@@ -222,6 +237,16 @@ class MiningCoordinator:
                         continue
                 if current_weight_units + selection.weight_units > max_transaction_weight_units:
                     continue
+                if is_special_node_transaction(selection.transaction):
+                    try:
+                        validate_transaction(selection.transaction, special_node_context)
+                        apply_special_node_transaction(
+                            selection.transaction,
+                            height=height,
+                            registry_view=staged_registry,
+                        )
+                    except (ValidationError, ValueError):
+                        continue
                 included_entries.append(selection.entry)
                 included_txids.add(selection.transaction.txid())
                 current_weight_units += selection.weight_units
