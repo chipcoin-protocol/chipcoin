@@ -36,14 +36,22 @@ printf 'Log file: %s\n' "$monitor_log"
 printf 'Press Ctrl-C to stop.\n\n'
 
 while true; do
-  NODE_NAME="$node_name" \
-  STATUS_URL="$status_url" \
-  COMPOSE_FILE="$compose_file" \
-  COMPOSE_PROJECT="$compose_project" \
-  LOG_SINCE="${LOG_SINCE:-10m}" \
-  LOG_DIR="$log_dir" \
-  MONITOR_LOG="$monitor_log" \
-  "$MONITOR_SCRIPT" check
+  sample="$(
+    NODE_NAME="$node_name" \
+    STATUS_URL="$status_url" \
+    COMPOSE_FILE="$compose_file" \
+    COMPOSE_PROJECT="$compose_project" \
+    LOG_SINCE="${LOG_SINCE:-10m}" \
+    LOG_DIR="$log_dir" \
+    MONITOR_LOG="$monitor_log" \
+    "$MONITOR_SCRIPT" check
+  )"
+
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "$sample" | jq .
+  else
+    printf '%s\n' "$sample"
+  fi
 
   sleep "$interval_seconds"
 done
