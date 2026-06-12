@@ -50,11 +50,18 @@ class HttpApiApp:
         allowed_origins: set[str] | None = None,
         mining_submit_handler=None,
         tx_submit_handler=None,
+        status_cache_ttl_seconds: float | None = None,
     ) -> None:
         self.service = service
         self.allowed_origins = set() if allowed_origins is None else {origin for origin in allowed_origins if origin}
         self.logger = logging.getLogger("chipcoin.http_api")
         self._request_lock = threading.RLock()
+        self.status_cache_ttl_seconds = (
+            _status_cache_ttl_from_env() if status_cache_ttl_seconds is None else max(0.0, status_cache_ttl_seconds)
+        )
+        self._status_cache_lock = threading.RLock()
+        self._status_cache_payload: dict[str, object] | None = None
+        self._status_cache_expires_at = 0.0
         self.mining_submit_handler = mining_submit_handler
         self.tx_submit_handler = tx_submit_handler
 
@@ -76,6 +83,9 @@ class HttpApiApp:
         try:
             if method == "OPTIONS" and (path.startswith("/v1/") or path.startswith("/mining/")):
                 return self._options_response(start_response_with_status, origin)
+            cached_status = self._cached_status_payload(method=method, path=path)
+            if cached_status is not None:
+                return self._json_response(start_response_with_status, 200, cached_status, origin=origin)
             with self._request_lock:
                 payload = self._dispatch(method=method, path=path, environ=environ)
             return self._json_response(start_response_with_status, 200, payload, origin=origin)
@@ -103,7 +113,7 @@ class HttpApiApp:
             return {"status": "ok", "api_version": self.API_VERSION, "network": self.service.network}
 
         if method == "GET" and path == "/v1/status":
-            return {"api_version": self.API_VERSION, **self.service.status(include_supply=False)}
+            return self._fresh_status_payload()
 
         if method == "GET" and path == "/v1/supply":
             return {"api_version": self.API_VERSION, **self.service.supply_snapshot()}
@@ -211,6 +221,23 @@ class HttpApiApp:
             return self._handle_address(method=method, path=path, environ=environ)
 
         raise ApiError(404, "not_found", "not found")
+
+    def _cached_status_payload(self, *, method: str, path: str) -> dict[str, object] | None:
+        if method != "GET" or path != "/v1/status" or self.status_cache_ttl_seconds <= 0:
+            return None
+        now = time.monotonic()
+        with self._status_cache_lock:
+            if self._status_cache_payload is None or now >= self._status_cache_expires_at:
+                return None
+            return dict(self._status_cache_payload)
+
+    def _fresh_status_payload(self) -> dict[str, object]:
+        payload = {"api_version": self.API_VERSION, **self.service.status(include_supply=False)}
+        if self.status_cache_ttl_seconds > 0:
+            with self._status_cache_lock:
+                self._status_cache_payload = dict(payload)
+                self._status_cache_expires_at = time.monotonic() + self.status_cache_ttl_seconds
+        return payload
 
     def _handle_blocks(self, environ) -> list[dict[str, object]]:
         query = parse_qs(environ.get("QUERY_STRING", ""))
@@ -479,6 +506,14 @@ def load_allowed_origins_from_env() -> set[str]:
 
     raw = os.environ.get("CHIPCOIN_HTTP_ALLOWED_ORIGINS", "")
     return {origin.strip() for origin in raw.split(",") if origin.strip()}
+
+
+def _status_cache_ttl_from_env() -> float:
+    raw = os.environ.get("CHIPCOIN_HTTP_STATUS_CACHE_TTL_SECONDS", "1.0")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 1.0
 
 
 def create_app(

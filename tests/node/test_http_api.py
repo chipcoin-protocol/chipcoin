@@ -135,6 +135,34 @@ def test_http_api_health_status_and_tip() -> None:
         assert tip_body == {"height": None, "block_hash": None}
 
 
+def test_http_api_status_uses_short_lived_cache() -> None:
+    class CountingService:
+        network = "mainnet"
+
+        def __init__(self) -> None:
+            self.status_calls = 0
+
+        def status(self, *, include_supply: bool) -> dict[str, object]:
+            self.status_calls += 1
+            return {
+                "network": "mainnet",
+                "height": self.status_calls,
+                "sync": {"mode": "synced"},
+                "operator_summary": {},
+            }
+
+    service = CountingService()
+    app = HttpApiApp(service, status_cache_ttl_seconds=60.0)
+
+    first_status, _, first_body = _call_wsgi(app, method="GET", path="/v1/status")
+    second_status, _, second_body = _call_wsgi(app, method="GET", path="/v1/status")
+
+    assert first_status == "200 OK"
+    assert second_status == "200 OK"
+    assert service.status_calls == 1
+    assert first_body == second_body
+
+
 def test_http_api_status_and_supply_report_testnet_network() -> None:
     with TemporaryDirectory() as tempdir:
         service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-testnet.sqlite3", network="testnet")
