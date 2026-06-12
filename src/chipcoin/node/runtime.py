@@ -1237,12 +1237,29 @@ class NodeRuntime:
 
         if message.command == "block":
             block_hash = message.payload.block.block_hash()
+            known_block = self.service.get_block_by_hash(block_hash)
             self.logger.info(
                 "block received peer=%s block=%s inflight_before=%s",
                 self._format_peer_for_logs(session),
                 block_hash,
                 len(self._sessions.get(session).inflight_block_hashes) if self._sessions.get(session) is not None else 0,
             )
+            if known_block is not None:
+                record = self.service.headers.get_record(block_hash)
+                self._record_session_known_height(session, None if record is None else int(record.height))
+                self._clear_inflight_block_hash(block_hash)
+                handle = self._sessions.get(session)
+                if handle is not None:
+                    handle.block_stall_count = 0
+                    handle.last_block_progress_at = asyncio.get_running_loop().time()
+                self.logger.info(
+                    "duplicate block ignored peer=%s height=%s block=%s",
+                    self._format_peer_for_logs(session),
+                    None if record is None else int(record.height),
+                    block_hash,
+                )
+                self._update_sync_status()
+                return
             try:
                 result = self.sync_manager.receive_block(message.payload.block)
             except ValidationError as exc:

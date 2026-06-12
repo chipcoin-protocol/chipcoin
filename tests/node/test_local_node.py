@@ -22,7 +22,7 @@ from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
-from chipcoin.node.messages import AddrMessage, GetDataMessage, HeadersMessage, InvMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
+from chipcoin.node.messages import AddrMessage, BlockMessage, GetDataMessage, HeadersMessage, InvMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
 from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
 from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
@@ -2045,6 +2045,45 @@ def test_runtime_logs_side_branch_stored_distinctly(caplog) -> None:
         assert f"activated_tip={main_block.block_hash()}" in caplog.text
         assert "accepted_blocks=1" in caplog.text
         assert "reorged=False" in caplog.text
+
+
+def test_runtime_ignores_duplicate_known_block_payload(caplog) -> None:
+    async def scenario() -> None:
+        class _FakeSessionState:
+            closed = False
+            handshake_complete = True
+            remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 0})()
+
+        class _FakeSession:
+            state = _FakeSessionState()
+
+            async def send_message(self, message: MessageEnvelope) -> None:
+                raise AssertionError("duplicate known blocks must not be rebroadcast")
+
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(
+                protocol=session,
+                outbound=True,
+                endpoint=OutboundPeer("127.0.0.1", 18444),
+            )
+            mined = _mine_block(service.build_candidate_block("miner").block)
+            service.apply_block(mined)
+            runtime.sync_manager.receive_block = lambda block: (_ for _ in ()).throw(  # type: ignore[method-assign]
+                AssertionError("known duplicate block should not enter sync ingestion")
+            )
+
+            with caplog.at_level(logging.INFO):
+                await runtime._on_peer_message(
+                    session,
+                    MessageEnvelope(command="block", payload=BlockMessage(block=mined)),
+                )
+
+            assert "duplicate block ignored peer=127.0.0.1:18444/peer-a height=0" in caplog.text
+
+    asyncio.run(scenario())
 
 
 def test_runtime_does_not_classify_post_handshake_timeouts_as_misbehavior() -> None:
