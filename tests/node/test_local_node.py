@@ -125,6 +125,15 @@ def test_runtime_clamps_tight_loop_intervals() -> None:
         assert runtime.handshake_timeout == 1.0
 
 
+def test_runtime_stack_dump_signal_registration_is_best_effort() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service)
+
+        with patch("chipcoin.node.runtime.faulthandler.register", side_effect=RuntimeError("unavailable")):
+            runtime._enable_stack_dump_signal()
+
+
 def test_runtime_desired_outbound_peers_does_not_reload_peers_per_filter() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

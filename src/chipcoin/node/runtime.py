@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import faulthandler
 import hashlib
 import ipaddress
 import json
 import logging
 import os
 import secrets
+import signal
 import socket
 import threading
 from collections import OrderedDict
@@ -327,6 +329,7 @@ class NodeRuntime:
         if self._running:
             return
         configure_logging()
+        self._enable_stack_dump_signal()
         self._event_loop = asyncio.get_running_loop()
         self.service.reset_peer_session_state()
         self._server = await asyncio.start_server(self._handle_inbound_connection, self.listen_host, self.listen_port)
@@ -362,6 +365,16 @@ class NodeRuntime:
             self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop")
         if self.reward_automation is not None and (self.reward_automation.auto_renew_enabled or self.reward_automation.auto_attest_enabled):
             self._spawn_task(self._reward_automation_loop(), "reward-automation-loop")
+
+    def _enable_stack_dump_signal(self) -> None:
+        """Allow operators to dump Python stacks with SIGUSR1 during live incidents."""
+
+        if os.name != "posix":
+            return
+        try:
+            faulthandler.register(signal.SIGUSR1, all_threads=True)
+        except (RuntimeError, ValueError, OSError):
+            self.logger.debug("runtime stack dump signal registration skipped", exc_info=True)
 
     async def stop(self) -> None:
         """Stop listener, background tasks, and active sessions."""
