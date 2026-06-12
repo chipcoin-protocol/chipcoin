@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ..consensus.merkle import merkle_root
@@ -79,7 +79,7 @@ class MinerWorker:
                 continue
             solved_block, active_template = self._mine_batch(active_template)
             if solved_block is None:
-                refresh_decision = self._template_refresh_decision(active_template)
+                refresh_decision, active_template = self._template_refresh_decision(active_template)
                 if refresh_decision is not None:
                     self._log_template_refresh(active_template, refresh_decision)
                     active_template = None
@@ -138,7 +138,6 @@ class MinerWorker:
             index = (self._active_client_index + offset) % len(self.clients)
             client = self.clients[index]
             try:
-                status = client.status()
                 template = client.get_block_template(
                     payout_address=self.config.payout_address,
                     miner_id=self.config.miner_id,
@@ -163,7 +162,7 @@ class MinerWorker:
             self.logger.info(
                 "mining template acquired node=%s tip=%s height=%s template_id=%s stale_template_count=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
                 client.base_url,
-                status.get("best_tip_hash"),
+                template.get("previous_block_hash"),
                 template.get("height"),
                 template.get("template_id"),
                 self.stale_template_count,
@@ -228,43 +227,60 @@ class MinerWorker:
             miner_id=self.config.miner_id,
         )
 
-    def _template_refresh_decision(self, active_template: ActiveTemplate) -> TemplateRefreshDecision | None:
+    def _template_refresh_decision(
+        self, active_template: ActiveTemplate
+    ) -> tuple[TemplateRefreshDecision | None, ActiveTemplate]:
         """Return why the current template should be replaced, if needed."""
 
         now = self.time.time()
         expiry_at = int(active_template.payload["template_expiry"])
         if now >= expiry_at - self.config.template_refresh_skew_seconds:
-            return TemplateRefreshDecision(
-                reason="expired",
-                details={"template_expiry": expiry_at, "now": int(now)},
+            return (
+                TemplateRefreshDecision(
+                    reason="expired",
+                    details={"template_expiry": expiry_at, "now": int(now)},
+                ),
+                active_template,
             )
-        if self.time.monotonic() < active_template.next_status_check_at:
-            return None
+        monotonic_now = self.time.monotonic()
+        if monotonic_now < active_template.next_status_check_at:
+            return None, active_template
         client = self.clients[self._active_client_index]
         try:
             status = client.status()
         except MiningApiError as exc:
-            return TemplateRefreshDecision(
-                reason="status_refresh_failed",
-                details={"error": str(exc)},
+            return (
+                TemplateRefreshDecision(
+                    reason="status_refresh_failed",
+                    details={"error": str(exc)},
+                ),
+                active_template,
             )
+        refreshed_template = replace(
+            active_template,
+            next_status_check_at=monotonic_now + self.config.polling_interval_seconds,
+        )
         current_tip_hash = str(status["best_tip_hash"])
         template_previous_hash = str(active_template.payload["previous_block_hash"])
         if current_tip_hash != template_previous_hash:
-            return TemplateRefreshDecision(
-                reason="tip_changed",
-                details={
-                    "template_previous_block_hash": template_previous_hash,
-                    "current_best_tip_hash": current_tip_hash,
-                    "current_best_height": int(status["best_height"]),
-                },
+            return (
+                TemplateRefreshDecision(
+                    reason="tip_changed",
+                    details={
+                        "template_previous_block_hash": template_previous_hash,
+                        "current_best_tip_hash": current_tip_hash,
+                        "current_best_height": int(status["best_height"]),
+                    },
+                ),
+                refreshed_template,
             )
-        return None
+        return None, refreshed_template
 
     def _template_is_stale(self, active_template: ActiveTemplate) -> bool:
         """Backwards-compatible boolean helper for tests and callers."""
 
-        return self._template_refresh_decision(active_template) is not None
+        decision, _ = self._template_refresh_decision(active_template)
+        return decision is not None
 
     def _log_template_refresh(self, active_template: ActiveTemplate, decision: TemplateRefreshDecision) -> None:
         """Emit one precise refresh log line for the active template."""

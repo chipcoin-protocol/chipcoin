@@ -80,8 +80,10 @@ class FakeMiningClient:
         self.service = service
         self.base_url = base_url
         self.fail = fail
+        self.status_calls = 0
 
     def status(self) -> dict[str, object]:
+        self.status_calls += 1
         if self.fail:
             raise MiningApiError("node unavailable")
         return self.service.mining_status()
@@ -150,7 +152,7 @@ def test_miner_worker_marks_template_stale_after_tip_change() -> None:
         fake_time._monotonic = template.next_status_check_at
 
         assert worker._template_is_stale(template) is True
-        decision = worker._template_refresh_decision(template)
+        decision, _ = worker._template_refresh_decision(template)
         assert decision is not None
         assert decision.reason == "tip_changed"
         assert decision.details["current_best_height"] == 0
@@ -176,11 +178,41 @@ def test_miner_worker_marks_template_expired_after_ttl() -> None:
         template = worker._acquire_template()
         fake_time._now = int(template.payload["template_expiry"])
 
-        decision = worker._template_refresh_decision(template)
+        decision, _ = worker._template_refresh_decision(template)
 
         assert decision is not None
         assert decision.reason == "expired"
         assert decision.details["template_expiry"] == int(template.payload["template_expiry"])
+
+
+def test_miner_worker_throttles_unchanged_tip_status_checks() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "node.sqlite3")
+        fake_time = FakeTime(monotonic_value=10.0)
+        worker = MinerWorker(
+            MinerWorkerConfig(
+                network="mainnet",
+                payout_address=wallet_key(0).address,
+                node_urls=("memory://node",),
+                miner_id="worker-a",
+                nonce_batch_size=1000,
+                polling_interval_seconds=2.0,
+                run_seconds=0.1,
+            ),
+            time_module=fake_time,
+        )
+        client = FakeMiningClient(service)
+        worker.clients = [client]
+        template = worker._acquire_template()
+        fake_time._monotonic = template.next_status_check_at
+
+        decision, refreshed = worker._template_refresh_decision(template)
+        repeated_decision, repeated = worker._template_refresh_decision(refreshed)
+
+        assert decision is None
+        assert repeated_decision is None
+        assert repeated.next_status_check_at == refreshed.next_status_check_at
+        assert client.status_calls == 1
 
 
 def test_miner_worker_fails_over_to_secondary_node() -> None:
