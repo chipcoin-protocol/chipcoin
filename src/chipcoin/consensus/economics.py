@@ -110,17 +110,57 @@ def subsidy_totals_through_height(height: int, params: ConsensusParams) -> tuple
     if height < 0:
         return 0, 0
 
+    miner_total, node_total = _uncapped_subsidy_totals_through_height(height, params)
+    if miner_total + node_total <= params.max_money_chipbits:
+        return miner_total, node_total
+
+    low = 0
+    high = height
+    while low < high:
+        midpoint = (low + high) // 2
+        midpoint_miner, midpoint_node = _uncapped_subsidy_totals_through_height(midpoint, params)
+        if midpoint_miner + midpoint_node >= params.max_money_chipbits:
+            high = midpoint
+        else:
+            low = midpoint + 1
+
+    cap_height = low
+    miner_before, node_before = _uncapped_subsidy_totals_through_height(cap_height - 1, params)
+    remaining_supply = max(0, params.max_money_chipbits - miner_before - node_before)
+    miner_at_cap = min(_regular_miner_subsidy_chipbits(cap_height, params), remaining_supply)
+    remaining_supply -= miner_at_cap
+    node_at_cap = min(_scheduled_node_epoch_reward_chipbits(cap_height, params), remaining_supply)
+    return miner_before + miner_at_cap, node_before + node_at_cap
+
+
+def _uncapped_subsidy_totals_through_height(height: int, params: ConsensusParams) -> tuple[int, int]:
+    """Return miner/node scheduled totals before the max-supply cap is applied."""
+
+    if height < 0:
+        return 0, 0
+
     miner_total = 0
     node_total = 0
-    for current_height in range(height + 1):
-        miner_subsidy = _regular_miner_subsidy_chipbits(current_height, params)
-        node_reward = _scheduled_node_epoch_reward_chipbits(current_height, params)
+    current_height = 0
+    while current_height <= height:
+        halving = current_height // params.halving_interval
+        miner_subsidy = params.initial_miner_subsidy_chipbits >> halving
+        node_reward = params.initial_node_epoch_reward_chipbits >> halving
         if miner_subsidy <= 0 and node_reward <= 0:
             break
-        remaining_supply = max(0, params.max_money_chipbits - miner_total - node_total)
-        miner_total += min(miner_subsidy, remaining_supply)
-        remaining_supply = max(0, params.max_money_chipbits - miner_total - node_total)
-        node_total += min(node_reward, remaining_supply)
+
+        era_end = min(height, ((halving + 1) * params.halving_interval) - 1)
+        block_count = era_end - current_height + 1
+        miner_total += miner_subsidy * block_count
+
+        first_epoch_height = current_height + (
+            (params.epoch_length_blocks - 1 - current_height) % params.epoch_length_blocks
+        )
+        if first_epoch_height <= era_end:
+            epoch_reward_count = ((era_end - first_epoch_height) // params.epoch_length_blocks) + 1
+            node_total += node_reward * epoch_reward_count
+
+        current_height = era_end + 1
     return miner_total, node_total
 
 

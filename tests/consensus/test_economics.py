@@ -16,6 +16,27 @@ from chipcoin.consensus.params import MAINNET_PARAMS
 EXACT_CAP_HEIGHT = 643_297
 
 
+def _legacy_subsidy_totals_through_height(height: int, params) -> tuple[int, int]:
+    if height < 0:
+        return 0, 0
+
+    miner_total = 0
+    node_total = 0
+    for current_height in range(height + 1):
+        halvings = current_height // params.halving_interval
+        miner_subsidy = max(params.initial_miner_subsidy_chipbits >> halvings, 0)
+        node_reward = 0
+        if (current_height + 1) % params.epoch_length_blocks == 0:
+            node_reward = max(params.initial_node_epoch_reward_chipbits >> halvings, 0)
+        if miner_subsidy <= 0 and node_reward <= 0:
+            break
+        remaining_supply = max(0, params.max_money_chipbits - miner_total - node_total)
+        miner_total += min(miner_subsidy, remaining_supply)
+        remaining_supply = max(0, params.max_money_chipbits - miner_total - node_total)
+        node_total += min(node_reward, remaining_supply)
+    return miner_total, node_total
+
+
 def test_initial_subsidy_values_match_locked_baseline() -> None:
     assert miner_subsidy_chipbits(0, MAINNET_PARAMS) == 50 * 100_000_000
     assert node_reward_pool_chipbits(0, MAINNET_PARAMS) == 0
@@ -58,6 +79,26 @@ def test_total_issuance_progression_matches_new_schedule() -> None:
     assert total_subsidy_through_height(98, MAINNET_PARAMS) == 99 * 50 * 100_000_000
     assert total_subsidy_through_height(99, MAINNET_PARAMS) == 100 * 50 * 100_000_000 + 50 * 100_000_000
     assert total_subsidy_through_height(199, MAINNET_PARAMS) == 200 * 50 * 100_000_000 + 2 * 50 * 100_000_000
+
+
+def test_total_issuance_matches_legacy_loop_at_boundaries() -> None:
+    checkpoints = [
+        -1,
+        0,
+        98,
+        99,
+        100,
+        MAINNET_PARAMS.halving_interval - 1,
+        MAINNET_PARAMS.halving_interval,
+        MAINNET_PARAMS.halving_interval + 99,
+        EXACT_CAP_HEIGHT - 1,
+        EXACT_CAP_HEIGHT,
+        EXACT_CAP_HEIGHT + 1,
+    ]
+
+    for height in checkpoints:
+        miner_total, node_total = _legacy_subsidy_totals_through_height(height, MAINNET_PARAMS)
+        assert total_subsidy_through_height(height, MAINNET_PARAMS) == miner_total + node_total
 
 
 def test_first_era_total_matches_reference_number() -> None:
