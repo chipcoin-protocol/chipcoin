@@ -11,6 +11,7 @@ import os
 import secrets
 import socket
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from wsgiref.simple_server import make_server
@@ -161,6 +162,8 @@ class NodeRuntime:
     _EXTENDED_BACKOFF_DISCONNECT_THRESHOLD = 20
     _EXTENDED_BACKOFF_BASE_SECONDS = 300
     _EXTENDED_BACKOFF_MAX_SECONDS = 21_600
+    _RECENT_PEER_TXID_CACHE_SECONDS = 300.0
+    _RECENT_PEER_TXID_CACHE_SIZE = 10_000
 
     def __init__(
         self,
@@ -286,6 +289,7 @@ class NodeRuntime:
             (peer.host, peer.port): "manual" for peer in (outbound_peers or [])
         }
         self._relayed_mempool_txids: set[str] = set()
+        self._recent_peer_txids: OrderedDict[str, float] = OrderedDict()
         self._last_logged_sync_phase: str | None = None
         self._reward_owner_wallet = None if reward_automation is None else _load_wallet_key(reward_automation.owner_wallet_path)
         self._reward_attest_wallet = None if reward_automation is None else _load_wallet_key(reward_automation.attest_wallet_path)
@@ -400,6 +404,7 @@ class NodeRuntime:
         self._sessions_by_node_id.clear()
         self._pending_outbound_peers.clear()
         self._relayed_mempool_txids.clear()
+        self._recent_peer_txids.clear()
         self.service.set_runtime_sync_status(None)
         self._event_loop = None
         self._stop_event.set()
@@ -1350,10 +1355,18 @@ class NodeRuntime:
             return
 
         if message.command == "tx":
+            transaction = message.payload.transaction
+            txid = transaction.txid()
+            if self._remember_recent_peer_txid(txid):
+                self.logger.debug(
+                    "tx relay ignored peer=%s txid=%s reason=recently_seen",
+                    self._format_peer_for_logs(session),
+                    txid,
+                )
+                return
             try:
-                accepted = self.service.receive_transaction(message.payload.transaction)
+                accepted = self.service.receive_transaction(transaction)
             except ValidationError as exc:
-                transaction = message.payload.transaction
                 metadata = transaction.metadata or {}
                 tx_type = metadata.get("type") or metadata.get("tx_type") or metadata.get("kind") or "-"
                 if self._is_benign_tx_relay_error(exc):
@@ -1375,12 +1388,12 @@ class NodeRuntime:
                 return
             self.logger.info(
                 "tx accepted from peer txid=%s fee_chipbits=%s",
-                accepted.transaction.txid(),
+                txid,
                 accepted.fee,
             )
-            self._relayed_mempool_txids.add(accepted.transaction.txid())
+            self._relayed_mempool_txids.add(txid)
             await self._broadcast_inventory(
-                InventoryVector(object_type="tx", object_hash=accepted.transaction.txid()),
+                InventoryVector(object_type="tx", object_hash=txid),
                 exclude=session,
             )
             return
@@ -1422,6 +1435,25 @@ class NodeRuntime:
         """Broadcast a single inventory announcement to active peers."""
 
         await self._broadcast_inventory_items((item,), exclude=exclude)
+
+    def _remember_recent_peer_txid(self, txid: str) -> bool:
+        """Return whether a peer-relayed txid was already processed recently."""
+
+        now = asyncio.get_running_loop().time()
+        cutoff = now - self._RECENT_PEER_TXID_CACHE_SECONDS
+        while self._recent_peer_txids:
+            oldest_txid, seen_at = next(iter(self._recent_peer_txids.items()))
+            if seen_at >= cutoff:
+                break
+            self._recent_peer_txids.popitem(last=False)
+        if txid in self._recent_peer_txids:
+            self._recent_peer_txids.move_to_end(txid)
+            self._recent_peer_txids[txid] = now
+            return True
+        self._recent_peer_txids[txid] = now
+        while len(self._recent_peer_txids) > self._RECENT_PEER_TXID_CACHE_SIZE:
+            self._recent_peer_txids.popitem(last=False)
+        return False
 
     async def _broadcast_inventory_items(
         self,

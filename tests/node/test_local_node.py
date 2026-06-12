@@ -2527,6 +2527,52 @@ def test_runtime_ignores_duplicate_mempool_transaction_relay(monkeypatch) -> Non
     asyncio.run(scenario())
 
 
+def test_runtime_skips_recent_peer_transaction_before_validation() -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 1})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = False
+        state = _FakeSessionState()
+        transport = None
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            funding_outpoint = OutPoint(txid="34" * 32, index=0)
+            put_wallet_utxo(service, funding_outpoint, value=100, owner=wallet_key(0))
+            transaction = _spend_transaction(funding_outpoint, input_value=100, output_value=90)
+            original_receive_transaction = service.receive_transaction
+            receive_calls = 0
+
+            def counted_receive_transaction(transaction: Transaction):
+                nonlocal receive_calls
+                receive_calls += 1
+                return original_receive_transaction(transaction)
+
+            service.receive_transaction = counted_receive_transaction  # type: ignore[method-assign]
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(
+                protocol=session,  # type: ignore[arg-type]
+                outbound=True,
+                endpoint=OutboundPeer("node-a", 18444),
+            )
+            message = MessageEnvelope(command="tx", payload=TransactionMessage(transaction=transaction))
+
+            await runtime._on_peer_message(session, message)  # type: ignore[arg-type]
+            await runtime._on_peer_message(session, message)  # type: ignore[arg-type]
+
+            assert receive_calls == 1
+            assert service.list_mempool_transactions() == [transaction]
+
+    asyncio.run(scenario())
+
+
 def test_runtime_drops_session_after_reaching_ping_failure_threshold() -> None:
     class _FakeSessionState:
         handshake_complete = True
