@@ -2927,6 +2927,7 @@ class NodeRuntime:
         text = str(error)
         if (
             "Transaction is already present in the mempool" in text
+            or "Transaction is already confirmed in the active chain" in text
             or "reward_attestation_bundle replays an attestation already recorded on chain" in text
         ):
             return True

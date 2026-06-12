@@ -2201,6 +2201,9 @@ def test_runtime_treats_premature_reward_relay_as_benign_during_sync() -> None:
         assert runtime._is_benign_tx_relay_error(
             "reward_settle_epoch transactions are not active before node_reward_activation_height."
         ) is True
+        assert runtime._is_benign_tx_relay_error(
+            "Transaction is already confirmed in the active chain."
+        ) is True
 
 
 def test_runtime_penalizes_premature_reward_relay_when_synced() -> None:
