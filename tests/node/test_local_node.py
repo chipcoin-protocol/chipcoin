@@ -681,6 +681,25 @@ def test_runtime_extends_backoff_for_terminal_peer_churn() -> None:
         assert backoff_until - now == runtime._EXTENDED_BACKOFF_MAX_SECONDS
 
 
+def test_runtime_caches_reward_assignments_for_current_tip() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+        calls: list[int] = []
+
+        def fake_assignments(*, epoch_index: int | None = None, node_id: str | None = None):
+            assert node_id is None
+            calls.append(-1 if epoch_index is None else epoch_index)
+            return [{"epoch_index": epoch_index, "node_id": "reward-node-a"}]
+
+        service.native_reward_assignments = fake_assignments  # type: ignore[method-assign]
+
+        assert runtime._reward_assignments(77) == [{"epoch_index": 77, "node_id": "reward-node-a"}]
+        assert runtime._reward_assignments(77) == [{"epoch_index": 77, "node_id": "reward-node-a"}]
+        assert runtime._reward_assignments(78) == [{"epoch_index": 78, "node_id": "reward-node-a"}]
+        assert calls == [77, 78]
+
+
 def test_runtime_accumulates_misbehavior_and_bans_peer_after_threshold() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

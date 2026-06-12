@@ -291,6 +291,10 @@ class NodeRuntime:
         self._reward_attest_wallet = None if reward_automation is None else _load_wallet_key(reward_automation.attest_wallet_path)
         self._reward_submitted_renewal_epochs: set[int] = set()
         self._reward_submitted_attestation_identities: set[tuple[int, int, str, str]] = set()
+        self._reward_assignments_cache_key: tuple[int, str | None, int | None] | None = None
+        self._reward_assignments_cache: list[dict[str, object]] = []
+        self._reward_attestation_identities_cache_key: tuple[int, str | None, int | None] | None = None
+        self._reward_attestation_identities_cache: set[tuple[int, int, str, str]] = set()
         self._inbound_handshake_attempts_by_host: dict[str, list[float]] = {}
         self._peer_resolution_cache: dict[OutboundPeer, tuple[int, set[str]]] = {}
 
@@ -617,7 +621,7 @@ class NodeRuntime:
         if record.node_pubkey != self._reward_attest_wallet.public_key:
             raise ValueError(f"attestation wallet does not match reward node node_pubkey for node_id={record.node_id}")
         recorded_identities = self._known_reward_attestation_identities(current_epoch_index)
-        assignments = self.service.native_reward_assignments(epoch_index=current_epoch_index)
+        assignments = self._reward_assignments(current_epoch_index)
         selected_candidates_by_window: dict[int, str] = {}
         for assignment in assignments:
             candidate_node_id = str(assignment["node_id"])
@@ -700,11 +704,15 @@ class NodeRuntime:
     def _known_reward_attestation_identities(self, epoch_index: int) -> set[tuple[int, int, str, str]]:
         """Return attestation identities already stored on-chain or staged in mempool."""
 
-        identities = {
-            identity
-            for identity in self.service.reward_attestations.attestation_identities()
-            if identity[0] == epoch_index
-        }
+        cache_key = self._reward_cache_key(epoch_index)
+        if self._reward_attestation_identities_cache_key != cache_key:
+            self._reward_attestation_identities_cache_key = cache_key
+            self._reward_attestation_identities_cache = {
+                identity
+                for identity in self.service.reward_attestations.attestation_identities()
+                if identity[0] == epoch_index
+            }
+        identities = set(self._reward_attestation_identities_cache)
         for transaction in self.service.list_mempool_transactions():
             if transaction.metadata.get("kind") != "reward_attestation_bundle":
                 continue
@@ -717,6 +725,25 @@ class NodeRuntime:
                 if identity[0] == epoch_index:
                     identities.add(identity)
         return identities
+
+    def _reward_assignments(self, epoch_index: int) -> list[dict[str, object]]:
+        """Return reward assignments cached for the current chain tip."""
+
+        cache_key = self._reward_cache_key(epoch_index)
+        if self._reward_assignments_cache_key != cache_key:
+            self._reward_assignments_cache_key = cache_key
+            self._reward_assignments_cache = self.service.native_reward_assignments(epoch_index=epoch_index)
+        return self._reward_assignments_cache
+
+    def _reward_cache_key(self, epoch_index: int) -> tuple[int, str | None, int | None]:
+        """Return a conservative cache key for reward automation reads."""
+
+        tip = self.service.chain_tip()
+        return (
+            epoch_index,
+            None if tip is None else tip.block_hash,
+            None if tip is None else tip.height,
+        )
 
     def _build_reward_attestation_bundle_transaction(
         self,
