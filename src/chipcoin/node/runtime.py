@@ -1305,14 +1305,24 @@ class NodeRuntime:
             try:
                 accepted = self.service.receive_transaction(message.payload.transaction)
             except ValidationError as exc:
+                transaction = message.payload.transaction
+                metadata = transaction.metadata or {}
+                tx_type = metadata.get("type") or metadata.get("tx_type") or metadata.get("kind") or "-"
                 if self._is_benign_tx_relay_error(exc):
                     self.logger.debug(
                         "tx relay ignored peer=%s txid=%s reason=%s",
                         self._format_peer_for_logs(session),
-                        message.payload.transaction.txid(),
+                        transaction.txid(),
                         exc,
                     )
                     return
+                self.logger.info(
+                    "tx rejected from peer peer=%s txid=%s tx_type=%s reason=%s",
+                    self._format_peer_for_logs(session),
+                    transaction.txid(),
+                    tx_type,
+                    exc,
+                )
                 self._apply_session_penalty(session, error=InvalidTxError(f"invalid tx: {exc}"), penalty=5)
                 return
             self.logger.info(
