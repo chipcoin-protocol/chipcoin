@@ -157,6 +157,10 @@ class NodeRuntime:
     _INITIAL_SYNC_STALL_GRACE_MULTIPLIER = 2.0
     _SEVERE_MISBEHAVIOR_DELTA = 100
     _BLOCK_STALL_DISCONNECT_THRESHOLD = 2
+    _EXTENDED_BACKOFF_START_ATTEMPT = 20
+    _EXTENDED_BACKOFF_DISCONNECT_THRESHOLD = 20
+    _EXTENDED_BACKOFF_BASE_SECONDS = 300
+    _EXTENDED_BACKOFF_MAX_SECONDS = 21_600
 
     def __init__(
         self,
@@ -2929,12 +2933,32 @@ class NodeRuntime:
         """Return reconnect attempts and absolute backoff deadline for one peer."""
 
         attempts = 1 if info is None or info.reconnect_attempts is None else info.reconnect_attempts + 1
-        delay_seconds = min(
-            self.peer_retry_backoff_max_seconds,
-            self.peer_retry_backoff_base_seconds * (2 ** min(attempts - 1, 5)),
-        )
+        if self._needs_extended_peer_backoff(info, attempts=attempts):
+            extended_steps = max(0, attempts - self._EXTENDED_BACKOFF_START_ATTEMPT)
+            delay_seconds = min(
+                self._EXTENDED_BACKOFF_MAX_SECONDS,
+                self._EXTENDED_BACKOFF_BASE_SECONDS * (2 ** min(extended_steps // 10, 7)),
+            )
+        else:
+            delay_seconds = min(
+                self.peer_retry_backoff_max_seconds,
+                self.peer_retry_backoff_base_seconds * (2 ** min(attempts - 1, 5)),
+            )
         now = self.service.time_provider()
         return attempts, now + max(1, int(delay_seconds))
+
+    def _needs_extended_peer_backoff(self, info, *, attempts: int) -> bool:
+        """Return whether repeated failures should be quarantined beyond normal retry cadence."""
+
+        if info is None:
+            return False
+        score = 0 if info.score is None else info.score
+        disconnect_count = 0 if info.disconnect_count is None else info.disconnect_count
+        return (
+            score <= -100
+            or attempts >= self._EXTENDED_BACKOFF_START_ATTEMPT
+            or disconnect_count >= self._EXTENDED_BACKOFF_DISCONNECT_THRESHOLD
+        )
 
     def _penalty_for_error(self, error: Exception | str) -> int:
         """Map transport/protocol errors to a small peer score penalty."""

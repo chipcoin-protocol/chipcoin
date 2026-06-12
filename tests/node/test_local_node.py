@@ -653,6 +653,34 @@ def test_runtime_logs_initial_peer_failures_at_info_then_suppresses_terminal_chu
         assert runtime._should_log_peer_failure_info(info, attempts=13, score=-100) is False
 
 
+def test_runtime_extends_backoff_for_terminal_peer_churn() -> None:
+    with TemporaryDirectory() as tempdir:
+        now = 1_700_000_000
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            network="devnet",
+            time_provider=lambda: now,
+        )
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+        service.record_peer_observation(
+            host="188.218.213.92",
+            port=18444,
+            direction="outbound",
+            handshake_complete=False,
+            score=-100,
+            reconnect_attempts=280,
+            backoff_until=now + 30,
+            disconnect_count=280,
+            last_error="Peer connection closed while reading frame.",
+        )
+        info = next(peer for peer in service.list_peers() if peer.host == "188.218.213.92")
+
+        attempts, backoff_until = runtime._next_backoff_state(info)
+
+        assert attempts == 281
+        assert backoff_until - now == runtime._EXTENDED_BACKOFF_MAX_SECONDS
+
+
 def test_runtime_accumulates_misbehavior_and_bans_peer_after_threshold() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
