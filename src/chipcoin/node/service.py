@@ -314,6 +314,8 @@ class NodeService:
         self._template_cache_tip_hash: str | None = None
         self._supply_snapshot_cache_key: tuple[int | None, str | None] | None = None
         self._supply_snapshot_cache: dict[str, int | str | None] | None = None
+        self._reward_validation_cache_key: tuple[int | None, str | None] | None = None
+        self._reward_validation_cache: tuple[frozenset[tuple[int, int, str, str]], tuple, frozenset[int]] | None = None
         self._node_source_id = secrets.token_hex(8)
 
     @classmethod
@@ -725,6 +727,26 @@ class NodeService:
         self._supply_snapshot_cache_key = None
         self._supply_snapshot_cache = None
 
+    def invalidate_reward_validation_state(self) -> None:
+        """Drop cached reward state used by transaction validation."""
+
+        self._reward_validation_cache_key = None
+        self._reward_validation_cache = None
+
+    def _reward_validation_state(self) -> tuple[frozenset[tuple[int, int, str, str]], tuple, frozenset[int]]:
+        """Return reward validation inputs cached for the current active tip."""
+
+        tip = self.headers.get_tip()
+        cache_key = (None if tip is None else tip.height, None if tip is None else tip.block_hash)
+        if self._reward_validation_cache_key != cache_key or self._reward_validation_cache is None:
+            self._reward_validation_cache_key = cache_key
+            self._reward_validation_cache = (
+                frozenset(self.reward_attestations.attestation_identities()),
+                tuple(stored.bundle for stored in self.reward_attestations.list_bundles()),
+                frozenset(self.reward_settlements.settled_epoch_indexes()),
+            )
+        return self._reward_validation_cache
+
     def expected_next_bits(self) -> int:
         """Return the compact target required for the next candidate block."""
 
@@ -757,15 +779,16 @@ class NodeService:
                 previous_cumulative_work = tip_record.cumulative_work
 
         snapshot = OverlayUtxoView(self.chainstate)
+        reward_attestation_identities, reward_attestation_bundles, settled_epoch_indexes = self._reward_validation_state()
         context = ValidationContext(
             height=height,
             median_time_past=0 if tip is None else self.headers.get(tip.block_hash).timestamp,
             params=self.params,
             utxo_view=snapshot,
             node_registry_view=self.node_registry.snapshot(),
-            reward_attestation_identities=frozenset(self.reward_attestations.attestation_identities()),
-            reward_attestation_bundles=tuple(stored.bundle for stored in self.reward_attestations.list_bundles()),
-            settled_epoch_indexes=frozenset(self.reward_settlements.settled_epoch_indexes()),
+            reward_attestation_identities=reward_attestation_identities,
+            reward_attestation_bundles=reward_attestation_bundles,
+            settled_epoch_indexes=settled_epoch_indexes,
             epoch_seed_by_index=self._epoch_seed_map(height),
             expected_previous_block_hash=previous_hash,
             expected_bits=self._expected_bits_for_height(height),
@@ -800,6 +823,7 @@ class NodeService:
                 self.headers.set_tip(block.block_hash(), height)
                 self.mempool.reconcile()
         self._after_heavy_write("apply_block")
+        self.invalidate_reward_validation_state()
         self.invalidate_supply_snapshot()
         self.invalidate_mining_templates()
         return total_fees
@@ -1028,6 +1052,7 @@ class NodeService:
                 self.headers.set_main_chain(path_hashes)
                 self.mempool.reconcile(extra_transactions=disconnected_transactions)
         self._after_heavy_write("activate_chain")
+        self.invalidate_reward_validation_state()
         self.invalidate_supply_snapshot()
         self.invalidate_mining_templates()
         return ChainActivationResult(
@@ -3625,15 +3650,16 @@ class NodeService:
 
         tip = self.headers.get_tip()
         registry_view = self.node_registry.snapshot() if node_registry_view is None else node_registry_view
+        reward_attestation_identities, reward_attestation_bundles, settled_epoch_indexes = self._reward_validation_state()
         return ValidationContext(
             height=0 if tip is None else tip.height + 1,
             median_time_past=0 if tip is None else self.headers.get(tip.block_hash).timestamp,
             params=self.params,
             utxo_view=utxo_view,
             node_registry_view=registry_view,
-            reward_attestation_identities=frozenset(self.reward_attestations.attestation_identities()),
-            reward_attestation_bundles=tuple(stored.bundle for stored in self.reward_attestations.list_bundles()),
-            settled_epoch_indexes=frozenset(self.reward_settlements.settled_epoch_indexes()),
+            reward_attestation_identities=reward_attestation_identities,
+            reward_attestation_bundles=reward_attestation_bundles,
+            settled_epoch_indexes=settled_epoch_indexes,
             epoch_seed_by_index=self._epoch_seed_map(0 if tip is None else tip.height + 1),
             reward_fee_registry_count=(
                 reward_registered_node_count(registry_view)

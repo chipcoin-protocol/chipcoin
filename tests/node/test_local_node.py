@@ -2724,6 +2724,31 @@ def test_node_service_accepts_transaction_and_builds_candidate_block() -> None:
         assert int(template.block.transactions[0].outputs[0].value) == 50 * 100_000_000 + 10
 
 
+def test_node_service_caches_reward_validation_state_for_mempool_admission() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        first_outpoint = OutPoint(txid="21" * 32, index=0)
+        second_outpoint = OutPoint(txid="22" * 32, index=0)
+        put_wallet_utxo(service, first_outpoint, value=100, owner=wallet_key(0))
+        put_wallet_utxo(service, second_outpoint, value=100, owner=wallet_key(0))
+        first = _spend_transaction(first_outpoint, input_value=100, output_value=90)
+        second = _spend_transaction(second_outpoint, input_value=100, output_value=90)
+        original_list_bundles = service.reward_attestations.list_bundles
+        calls = 0
+
+        def counted_list_bundles(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original_list_bundles(*args, **kwargs)
+
+        service.reward_attestations.list_bundles = counted_list_bundles  # type: ignore[method-assign]
+
+        service.receive_transaction(first)
+        service.receive_transaction(second)
+
+        assert calls == 1
+
+
 def test_node_service_rejects_duplicate_pending_reward_node_registration() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
