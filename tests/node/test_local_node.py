@@ -106,6 +106,25 @@ def test_runtime_peerbook_trim_does_not_reload_peers_per_sort_key() -> None:
         assert len(original_list_peers()) == 16
 
 
+def test_runtime_clamps_tight_loop_intervals() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(
+            service=service,
+            connect_interval=0,
+            ping_interval=0,
+            read_timeout=0,
+            write_timeout=0,
+            handshake_timeout=0,
+        )
+
+        assert runtime.connect_interval == 0.5
+        assert runtime.ping_interval == 0.5
+        assert runtime.read_timeout == 1.0
+        assert runtime.write_timeout == 1.0
+        assert runtime.handshake_timeout == 1.0
+
+
 def test_runtime_desired_outbound_peers_does_not_reload_peers_per_filter() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

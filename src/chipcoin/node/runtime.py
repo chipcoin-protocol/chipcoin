@@ -219,11 +219,14 @@ class NodeRuntime:
         self.service = service
         self.listen_host = listen_host
         self.listen_port = listen_port
-        self.connect_interval = connect_interval
-        self.read_timeout = read_timeout
-        self.write_timeout = write_timeout
-        self.handshake_timeout = handshake_timeout
-        self.ping_interval = ping_interval if ping_interval < read_timeout else max(0.5, read_timeout / 2)
+        self.connect_interval = max(0.5, float(connect_interval))
+        self.read_timeout = max(1.0, float(read_timeout))
+        self.write_timeout = max(1.0, float(write_timeout))
+        self.handshake_timeout = max(1.0, float(handshake_timeout))
+        self.ping_interval = max(
+            0.5,
+            float(ping_interval) if float(ping_interval) < self.read_timeout else self.read_timeout / 2,
+        )
         self.mempool_relay_interval = max(0.1, mempool_relay_interval)
         self.sync_scheduler_interval = max(0.1, sync_scheduler_interval)
         self.peer_resolution_cache_ttl_seconds = max(1, peer_resolution_cache_ttl_seconds)
@@ -330,13 +333,16 @@ class NodeRuntime:
         self._start_http_api_server()
         self._running = True
         self.logger.info(
-            "runtime started network=%s listen=%s:%s outbound_targets=%s ping_interval=%s read_timeout=%s bootstrap_mode=%s snapshot_anchor_height=%s snapshot_anchor_hash=%s",
+            "runtime started network=%s listen=%s:%s outbound_targets=%s connect_interval=%s ping_interval=%s read_timeout=%s mempool_relay_interval=%s sync_scheduler_interval=%s bootstrap_mode=%s snapshot_anchor_height=%s snapshot_anchor_hash=%s",
             self.service.network,
             self.listen_host,
             self.bound_port,
             len(self._outbound_targets),
+            self.connect_interval,
             self.ping_interval,
             self.read_timeout,
+            self.mempool_relay_interval,
+            self.sync_scheduler_interval,
             "full" if self.service.snapshot_anchor() is None else "snapshot",
             None if self.service.snapshot_anchor() is None else self.service.snapshot_anchor().height,
             None if self.service.snapshot_anchor() is None else self.service.snapshot_anchor().block_hash,
