@@ -93,13 +93,34 @@ class MempoolManager:
 
         preserved_entries = sorted(self.repository.list_all(), key=lambda entry: (entry.added_at, entry.transaction.txid()))
         self.repository.clear()
+        pending_entries: list[MempoolEntry] = []
+        pending_view = OverlayUtxoView(self.chainstate)
+        next_height = self.validation_context_factory(pending_view).height
+
+        def readmit_fast(transaction: Transaction, *, added_at: int) -> None:
+            if self._is_expired(added_at, self.time_provider()):
+                return
+            txid = transaction.txid()
+            if self._is_known_on_chain(txid):
+                return
+            try:
+                self._enforce_special_node_mempool_policy(transaction, entries=pending_entries)
+                self._ensure_no_mempool_double_spend(transaction, entries=pending_entries)
+                context = self.validation_context_factory(pending_view)
+                fee_chipbits = validate_transaction(transaction, context)
+                self._enforce_policy(transaction, fee_chipbits)
+                pending_view.apply_transaction(transaction, next_height)
+                self.repository.add(transaction, fee=fee_chipbits, added_at=added_at)
+                pending_entries.append(MempoolEntry(transaction=transaction, fee=fee_chipbits, added_at=added_at))
+            except ValidationError:
+                return
+
         for entry in preserved_entries:
-            self._readmit(entry.transaction, added_at=entry.added_at)
+            readmit_fast(entry.transaction, added_at=entry.added_at)
         if extra_transactions is not None:
             now = self.time_provider()
             for transaction in extra_transactions:
-                self._readmit(transaction, added_at=now)
-        self._prune_expired(now=self.time_provider())
+                readmit_fast(transaction, added_at=now)
         self._evict_if_needed()
 
     def remove_many(self, txids: list[str]) -> None:
@@ -122,12 +143,12 @@ class MempoolManager:
             view.apply_transaction(entry.transaction, next_height)
         return view
 
-    def _ensure_no_mempool_double_spend(self, transaction: Transaction) -> None:
+    def _ensure_no_mempool_double_spend(self, transaction: Transaction, *, entries: list[MempoolEntry] | None = None) -> None:
         """Reject transactions that conflict with inputs already reserved in mempool."""
 
         reserved_outpoints = {
             tx_input.previous_output
-            for entry in self.repository.list_all()
+            for entry in (self.repository.list_all() if entries is None else entries)
             for tx_input in entry.transaction.inputs
         }
         for tx_input in transaction.inputs:
@@ -155,14 +176,14 @@ class MempoolManager:
             if not is_valid_address(output.recipient):
                 raise ValidationError("Transaction output recipient is not a valid CHC address.")
 
-    def _enforce_special_node_mempool_policy(self, transaction: Transaction) -> None:
+    def _enforce_special_node_mempool_policy(self, transaction: Transaction, *, entries: list[MempoolEntry] | None = None) -> None:
         """Limit zero-IO node-registry control traffic before it can poison templates."""
 
         if not is_special_node_transaction(transaction):
             return
 
-        entries = self.repository.list_all()
-        special_entries = [entry for entry in entries if is_special_node_transaction(entry.transaction)]
+        candidate_entries = self.repository.list_all() if entries is None else entries
+        special_entries = [entry for entry in candidate_entries if is_special_node_transaction(entry.transaction)]
         if len(special_entries) >= self.policy.max_special_node_transactions:
             raise ValidationError("Mempool special-node transaction limit exceeded.")
 

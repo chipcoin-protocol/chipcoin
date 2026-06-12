@@ -2817,6 +2817,36 @@ def test_node_service_rejects_duplicate_transaction_in_mempool() -> None:
         raise AssertionError("Expected duplicate mempool transaction to be rejected.")
 
 
+def test_mempool_reconcile_revalidates_entries_without_repeated_repository_scans() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        transactions = []
+        for index in range(3):
+            outpoint = OutPoint(txid=f"{index + 1:064x}", index=0)
+            put_wallet_utxo(service, outpoint, value=100, owner=wallet_key(0))
+            transaction = signed_payment(outpoint, value=100, sender=wallet_key(0), fee=10)
+            service.receive_transaction(transaction)
+            transactions.append(transaction)
+
+        repository = service.mempool.repository
+        original_list_all = repository.list_all
+        call_count = 0
+
+        def counted_list_all():
+            nonlocal call_count
+            call_count += 1
+            return original_list_all()
+
+        repository.list_all = counted_list_all  # type: ignore[method-assign]
+
+        service.mempool.reconcile()
+
+        assert call_count <= 3
+        assert [transaction.txid() for transaction in service.list_mempool_transactions()] == [
+            transaction.txid() for transaction in transactions
+        ]
+
+
 def test_node_service_rejects_transaction_with_invalid_output_address_by_policy() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
