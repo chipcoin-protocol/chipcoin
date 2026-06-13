@@ -8,7 +8,7 @@ from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.validation import ContextualValidationError
 from chipcoin.node.messages import GetHeadersMessage, HeadersMessage
 from chipcoin.node.mempool import MempoolPolicy
-from chipcoin.node.service import NodeService
+from chipcoin.node.service import ChainActivationResult, NodeService
 from chipcoin.node.sync import SyncManager
 from tests.helpers import signed_payment, wallet_key
 
@@ -358,6 +358,43 @@ def test_sync_manager_extends_tip_without_rescanning_common_prefix(monkeypatch) 
         assert result.activated_tip == blocks[6].block_hash()
         assert target.chain_tip() is not None
         assert target.chain_tip().block_hash == blocks[6].block_hash()
+
+
+def test_sync_manager_reorg_check_does_not_build_full_ready_path(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 3, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        target.blocks.put(blocks[0])
+        manager.activate_best_chain_if_ready()
+        target.blocks.put(blocks[1])
+        assert manager.best_ready_tip() == blocks[1].block_hash()
+
+        def fail_path_to_root(_tip_hash: str):
+            raise AssertionError("reorg pre-check should not build full ready path")
+
+        def fake_activate_chain(tip_hash: str):
+            return ChainActivationResult(
+                activated_tip=tip_hash,
+                applied_blocks=1,
+                reorged=False,
+                reorg_depth=0,
+                old_tip=blocks[0].block_hash(),
+                new_tip=tip_hash,
+                common_ancestor=blocks[0].block_hash(),
+                disconnected_blocks=0,
+                readded_transaction_count=0,
+            )
+
+        monkeypatch.setattr(target.headers, "path_to_root", fail_path_to_root)
+        monkeypatch.setattr(target, "activate_chain", fake_activate_chain)
+
+        result = manager.activate_best_chain_if_ready()
+
+        assert result.activated_tip == blocks[1].block_hash()
+        assert result.reorged is False
 
 
 def test_sync_manager_quarantines_invalid_ready_tip_between_scheduler_ticks(monkeypatch) -> None:

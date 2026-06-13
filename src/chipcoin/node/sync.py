@@ -515,7 +515,7 @@ class SyncManager:
         previous_tip_hash = current_tip.block_hash if current_tip is not None else None
         reorged = False
         if previous_tip_hash is not None and ready_tip.block_hash != previous_tip_hash:
-            reorged = previous_tip_hash not in self.node.headers.path_to_root(ready_tip.block_hash)
+            reorged = not self._is_ancestor_hash(previous_tip_hash, ready_tip)
         try:
             activation = self.node.activate_chain(ready_tip.block_hash)
         except (StatelessValidationError, ContextualValidationError, ValueError) as exc:
@@ -544,6 +544,33 @@ class SyncManager:
             common_ancestor=activation.common_ancestor,
             readded_transaction_count=activation.readded_transaction_count,
         )
+
+    def _is_ancestor_hash(self, ancestor_hash: str, descendant) -> bool:
+        """Return whether ancestor_hash is on descendant's header path."""
+
+        ancestor = self.node.headers.get_record(ancestor_hash)
+        if ancestor is None:
+            return False
+        current = descendant
+        if (
+            ancestor.height is not None
+            and current.height is not None
+            and ancestor.height > current.height
+        ):
+            return False
+        while current is not None:
+            if current.block_hash == ancestor_hash:
+                return True
+            if current.previous_block_hash == "00" * 32:
+                return False
+            if (
+                ancestor.height is not None
+                and current.height is not None
+                and current.height <= ancestor.height
+            ):
+                return False
+            current = self.node.headers.get_record(current.previous_block_hash)
+        return False
 
     def receive_block(self, block: Block) -> BlockIngestResult:
         """Store a received block and activate the best chain when possible."""
