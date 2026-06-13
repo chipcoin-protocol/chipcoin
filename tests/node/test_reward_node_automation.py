@@ -283,3 +283,46 @@ def test_reward_node_automation_skips_attestations_already_staged_in_mempool() -
             tx for tx in service.list_mempool_transactions() if tx.metadata.get("kind") == "reward_attestation_bundle"
         ]
         assert [tx.txid() for tx in attestation_txs] == [tx.txid() for tx in first_attestation_txs]
+
+
+def test_reward_node_automation_treats_duplicate_bundle_as_staged() -> None:
+    with TemporaryDirectory() as tempdir:
+        reward_a = wallet_key(0)
+        reward_b = wallet_key(1)
+        service = _make_reward_service(Path(tempdir) / "node.sqlite3", start_time=1_700_071_000)
+        reward_a_path = _write_wallet_file(Path(tempdir) / "reward-a.json", reward_a)
+
+        _register_reward_node(service, wallet=reward_a, node_id="reward-node-a", declared_port=18444)
+        _register_reward_node(service, wallet=reward_b, node_id="reward-node-b", declared_port=18445)
+        _apply_candidate_block(service, reward_a.address)
+
+        runtime = NodeRuntime(
+            service=service,
+            reward_automation=RewardNodeAutomationConfig(
+                node_id="reward-node-a",
+                owner_wallet_path=reward_a_path,
+                attest_wallet_path=reward_a_path,
+                poll_interval_seconds=0.05,
+            ),
+        )
+        asyncio.run(runtime._run_reward_automation_once())
+        first_attestation_txs = [
+            tx for tx in service.list_mempool_transactions() if tx.metadata.get("kind") == "reward_attestation_bundle"
+        ]
+        assert first_attestation_txs
+        first_metadata = first_attestation_txs[0].metadata
+        assert runtime._has_staged_reward_attestation_bundle(
+            int(first_metadata["epoch_index"]),
+            int(first_metadata["bundle_window_index"]),
+        )
+
+        async def fail_submit(_transaction):
+            raise AssertionError("duplicate staged attestation bundle should not be submitted again")
+
+        runtime.submit_transaction = fail_submit  # type: ignore[method-assign]
+        asyncio.run(runtime._run_reward_automation_once())
+
+        attestation_txs = [
+            tx for tx in service.list_mempool_transactions() if tx.metadata.get("kind") == "reward_attestation_bundle"
+        ]
+        assert [tx.txid() for tx in attestation_txs] == [tx.txid() for tx in first_attestation_txs]

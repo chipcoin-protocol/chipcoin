@@ -699,13 +699,36 @@ class NodeRuntime:
                 )
                 bundles_by_window.setdefault(int(window_index), []).append(attestation)
         for window_index, attestations in sorted(bundles_by_window.items()):
+            if self._has_staged_reward_attestation_bundle(current_epoch_index, window_index):
+                for attestation in attestations:
+                    self._reward_submitted_attestation_identities.add(attestation_identity(attestation))
+                self.logger.debug(
+                    "auto reward attestation already staged node_id=%s epoch=%s window=%s",
+                    self.reward_automation.node_id,
+                    current_epoch_index,
+                    window_index,
+                )
+                continue
             transaction = self._build_reward_attestation_bundle_transaction(
                 epoch_index=current_epoch_index,
                 bundle_window_index=window_index,
                 bundle_submitter_node_id=self.reward_automation.node_id,
                 attestations=attestations,
             )
-            await self.submit_transaction(transaction)
+            try:
+                await self.submit_transaction(transaction)
+            except ValidationError as exc:
+                if "Mempool already contains a reward_attestation_bundle transaction" not in str(exc):
+                    raise
+                for attestation in attestations:
+                    self._reward_submitted_attestation_identities.add(attestation_identity(attestation))
+                self.logger.debug(
+                    "auto reward attestation already present node_id=%s epoch=%s window=%s",
+                    self.reward_automation.node_id,
+                    current_epoch_index,
+                    window_index,
+                )
+                continue
             for attestation in attestations:
                 self._reward_submitted_attestation_identities.add(
                     (
@@ -724,6 +747,25 @@ class NodeRuntime:
                 transaction.txid(),
             )
             return
+
+    def _has_staged_reward_attestation_bundle(self, epoch_index: int, bundle_window_index: int) -> bool:
+        """Return whether this verifier already has a bundle staged for a window."""
+
+        assert self.reward_automation is not None
+        for transaction in self.service.list_mempool_transactions():
+            if transaction.metadata.get("kind") != "reward_attestation_bundle":
+                continue
+            try:
+                bundle = parse_reward_attestation_bundle_metadata(transaction.metadata)
+            except ValueError:
+                continue
+            if (
+                bundle.epoch_index == epoch_index
+                and bundle.bundle_window_index == bundle_window_index
+                and bundle.bundle_submitter_node_id == self.reward_automation.node_id
+            ):
+                return True
+        return False
 
     def _known_reward_attestation_identities(self, epoch_index: int) -> set[tuple[int, int, str, str]]:
         """Return attestation identities already stored on-chain or staged in mempool."""
