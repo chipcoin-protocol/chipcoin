@@ -3,8 +3,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import asyncio
+import json
 import logging
 
+from chipcoin.consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
 from chipcoin.consensus.models import Block, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.pow import verify_proof_of_work
@@ -60,6 +62,50 @@ def _spend_transaction(outpoint: OutPoint, *, input_value: int, output_value: in
         sender=wallet_key(0),
         amount=output_value,
         fee=input_value - output_value,
+    )
+
+
+def _reward_attestation_bundle_transaction(
+    *,
+    epoch_index: int = 80,
+    bundle_window_index: int = 1,
+    check_window_index: int | None = None,
+    bundle_submitter_node_id: str = "submitter-a",
+    candidate_node_id: str = "candidate-a",
+    verifier_node_id: str = "verifier-a",
+) -> Transaction:
+    attestation_window = (
+        bundle_window_index
+        if check_window_index is None
+        else check_window_index
+    )
+    attestation = {
+        "epoch_index": epoch_index,
+        "check_window_index": attestation_window,
+        "candidate_node_id": candidate_node_id,
+        "verifier_node_id": verifier_node_id,
+        "result_code": "pass",
+        "observed_sync_gap": 0,
+        "endpoint_commitment": "endpoint",
+        "concentration_key": "concentration",
+        "signature_hex": "00" * 64,
+    }
+    return Transaction(
+        version=1,
+        inputs=(),
+        outputs=(),
+        metadata={
+            "kind": REWARD_ATTESTATION_BUNDLE_KIND,
+            "epoch_index": str(epoch_index),
+            "bundle_window_index": str(bundle_window_index),
+            "bundle_submitter_node_id": bundle_submitter_node_id,
+            "attestation_count": "1",
+            "attestations_json": json.dumps(
+                [attestation],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        },
     )
 
 
@@ -2747,6 +2793,92 @@ def test_node_service_caches_reward_validation_state_for_mempool_admission() -> 
         service.receive_transaction(second)
 
         assert calls == 1
+
+
+def test_mempool_rejects_duplicate_pending_reward_attestation_bundle_identity() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        first = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=7,
+            bundle_submitter_node_id="mrbi.rqx",
+            candidate_node_id="candidate-a",
+            verifier_node_id="verifier-a",
+        )
+        duplicate = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=7,
+            bundle_submitter_node_id="mrbi.rqx",
+            candidate_node_id="candidate-b",
+            verifier_node_id="verifier-b",
+        )
+        service.mempool.repository.add(first, fee=0, added_at=1)
+
+        try:
+            service.mempool._enforce_reward_attestation_bundle_mempool_policy(duplicate)
+        except ValidationError as exc:
+            assert "epoch, window, and submitter" in str(exc)
+        else:
+            raise AssertionError(
+                "Expected duplicate pending reward attestation bundle identity to be rejected."
+            )
+
+
+def test_mempool_rejects_duplicate_pending_reward_attestation() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        first = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=7,
+            bundle_submitter_node_id="submitter-a",
+            candidate_node_id="candidate-a",
+            verifier_node_id="verifier-a",
+        )
+        duplicate_attestation = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=8,
+            check_window_index=7,
+            bundle_submitter_node_id="submitter-b",
+            candidate_node_id="candidate-a",
+            verifier_node_id="verifier-a",
+        )
+        service.mempool.repository.add(first, fee=0, added_at=1)
+
+        try:
+            service.mempool._enforce_reward_attestation_bundle_mempool_policy(duplicate_attestation)
+        except ValidationError as exc:
+            assert "already contains this reward attestation" in str(exc)
+        else:
+            raise AssertionError("Expected duplicate pending reward attestation to be rejected.")
+
+
+def test_mempool_limits_pending_reward_attestation_bundle_burst() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.mempool.policy = MempoolPolicy(max_reward_attestation_bundle_transactions=2)
+        for index in range(service.mempool.policy.max_reward_attestation_bundle_transactions):
+            transaction = _reward_attestation_bundle_transaction(
+                epoch_index=80,
+                bundle_window_index=index,
+                bundle_submitter_node_id=f"submitter-{index}",
+                candidate_node_id=f"candidate-{index}",
+                verifier_node_id=f"verifier-{index}",
+            )
+            service.mempool.repository.add(transaction, fee=0, added_at=index)
+
+        rejected = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=9,
+            bundle_submitter_node_id="submitter-over-limit",
+            candidate_node_id="candidate-over-limit",
+            verifier_node_id="verifier-over-limit",
+        )
+        try:
+            service.mempool._enforce_reward_attestation_bundle_mempool_policy(rejected)
+        except ValidationError as exc:
+            assert "limit exceeded" in str(exc)
+        else:
+            raise AssertionError("Expected reward attestation bundle burst to be capped.")
 
 
 def test_node_service_rejects_duplicate_pending_reward_node_registration() -> None:

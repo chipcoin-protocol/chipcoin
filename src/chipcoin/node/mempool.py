@@ -7,7 +7,12 @@ from typing import Iterable
 
 from ..consensus.models import Transaction
 from ..consensus.serialization import serialize_transaction
-from ..consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND, REWARD_SETTLE_EPOCH_KIND
+from ..consensus.epoch_settlement import (
+    REWARD_ATTESTATION_BUNDLE_KIND,
+    REWARD_SETTLE_EPOCH_KIND,
+    attestation_identity,
+    parse_reward_attestation_bundle_metadata,
+)
 from ..consensus.nodes import is_register_reward_node_transaction, is_renew_reward_node_transaction, is_special_node_transaction
 from ..consensus.utxo import OverlayUtxoView, UtxoView
 from ..consensus.validation import ValidationError, is_coinbase_transaction, validate_transaction
@@ -36,6 +41,7 @@ class MempoolPolicy:
     max_special_node_transactions: int = 32
     max_register_reward_node_transactions: int = 8
     max_renew_reward_node_transactions: int = 16
+    max_reward_attestation_bundle_transactions: int = 128
     transaction_ttl_seconds: int = 72 * 60 * 60
 
 
@@ -71,6 +77,7 @@ class MempoolManager:
             raise ValidationError("Transaction is already confirmed in the active chain.")
 
         self._enforce_special_node_mempool_policy(transaction)
+        self._enforce_reward_attestation_bundle_mempool_policy(transaction)
         self._ensure_no_mempool_double_spend(transaction)
 
         snapshot = self._snapshot_with_mempool_applied()
@@ -105,6 +112,7 @@ class MempoolManager:
                 return
             try:
                 self._enforce_special_node_mempool_policy(transaction, entries=pending_entries)
+                self._enforce_reward_attestation_bundle_mempool_policy(transaction, entries=pending_entries)
                 self._ensure_no_mempool_double_spend(transaction, entries=pending_entries)
                 context = self.validation_context_factory(pending_view)
                 fee_chipbits = validate_transaction(transaction, context)
@@ -234,6 +242,56 @@ class MempoolManager:
             existing = entry.transaction.metadata
             if existing.get("node_id") == node_id and existing.get("renewal_epoch") == renewal_epoch:
                 raise ValidationError("Mempool already contains a renew_reward_node transaction for this node_id and epoch.")
+
+    def _enforce_reward_attestation_bundle_mempool_policy(
+        self,
+        transaction: Transaction,
+        *,
+        entries: list[MempoolEntry] | None = None,
+    ) -> None:
+        """Limit pending reward attestations before repeated bundle validation burns CPU."""
+
+        if transaction.metadata.get("kind") != REWARD_ATTESTATION_BUNDLE_KIND:
+            return
+
+        try:
+            bundle = parse_reward_attestation_bundle_metadata(transaction.metadata)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError(str(exc)) from exc
+
+        candidate_entries = self.repository.list_all() if entries is None else entries
+        bundle_entries = [
+            entry
+            for entry in candidate_entries
+            if entry.transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND
+        ]
+        if len(bundle_entries) >= self.policy.max_reward_attestation_bundle_transactions:
+            raise ValidationError("Mempool reward_attestation_bundle transaction limit exceeded.")
+
+        bundle_key = (bundle.epoch_index, bundle.bundle_window_index, bundle.bundle_submitter_node_id)
+        existing_attestations: set[tuple[int, int, str, str]] = set()
+        for entry in bundle_entries:
+            try:
+                existing = parse_reward_attestation_bundle_metadata(entry.transaction.metadata)
+            except (KeyError, TypeError, ValueError):
+                continue
+            existing_key = (existing.epoch_index, existing.bundle_window_index, existing.bundle_submitter_node_id)
+            if existing_key == bundle_key:
+                message = (
+                    "Mempool already contains a reward_attestation_bundle transaction "
+                    "for this epoch, window, and submitter."
+                )
+                raise ValidationError(message)
+            existing_attestations.update(
+                attestation_identity(attestation)
+                for attestation in existing.attestations
+            )
+
+        if any(
+            attestation_identity(attestation) in existing_attestations
+            for attestation in bundle.attestations
+        ):
+            raise ValidationError("Mempool already contains this reward attestation.")
 
     def _prune_expired(self, *, now: int) -> None:
         """Remove mempool entries older than the configured TTL."""
