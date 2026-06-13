@@ -2770,6 +2770,32 @@ def test_node_service_accepts_transaction_and_builds_candidate_block() -> None:
         assert int(template.block.transactions[0].outputs[0].value) == 50 * 100_000_000 + 10
 
 
+def test_node_service_caches_active_chain_transaction_lookup(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        for _ in range(3):
+            template = service.build_candidate_block("CHCminer")
+            service.apply_block(_mine_block(template.block))
+
+        original_get = service.blocks.get
+        calls = 0
+
+        def counted_get(block_hash: str):
+            nonlocal calls
+            calls += 1
+            return original_get(block_hash)
+
+        monkeypatch.setattr(service.blocks, "get", counted_get)
+
+        missing_txid = "ff" * 32
+        assert service._find_transaction_in_active_chain(missing_txid) is None
+        assert calls > 0
+
+        calls = 0
+        assert service._find_transaction_in_active_chain(missing_txid) is None
+        assert calls == 0
+
+
 def test_node_service_caches_reward_validation_state_for_mempool_admission() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

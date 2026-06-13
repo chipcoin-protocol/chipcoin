@@ -316,6 +316,7 @@ class NodeService:
         self._supply_snapshot_cache: dict[str, int | str | None] | None = None
         self._reward_validation_cache_key: tuple[int | None, str | None] | None = None
         self._reward_validation_cache: tuple[frozenset[tuple[int, int, str, str]], tuple, frozenset[int]] | None = None
+        self._active_chain_transaction_index: dict[str, tuple[str, int]] | None = None
         self._node_source_id = secrets.token_hex(8)
 
     @classmethod
@@ -807,6 +808,7 @@ class NodeService:
             self._apply_node_registry_block(block, height)
             self._apply_native_reward_block(block, height)
             self.headers.set_tip(block.block_hash(), height)
+            self.invalidate_active_chain_transaction_index()
             self.mempool.reconcile()
         else:
             with sqlite_transaction(self.connection, phase="apply_block"):
@@ -821,6 +823,7 @@ class NodeService:
                 self._apply_node_registry_block(block, height)
                 self._apply_native_reward_block(block, height)
                 self.headers.set_tip(block.block_hash(), height)
+                self.invalidate_active_chain_transaction_index()
                 self.mempool.reconcile()
         self._after_heavy_write("apply_block")
         self.invalidate_reward_validation_state()
@@ -1042,6 +1045,7 @@ class NodeService:
             self.reward_attestations.replace_all(reward_attestation_bundles)
             self.reward_settlements.replace_all(reward_settlements)
             self.headers.set_main_chain(path_hashes)
+            self.invalidate_active_chain_transaction_index()
             self.mempool.reconcile(extra_transactions=disconnected_transactions)
         else:
             with sqlite_transaction(self.connection, phase="activate_chain"):
@@ -1050,6 +1054,7 @@ class NodeService:
                 self.reward_attestations.replace_all(reward_attestation_bundles)
                 self.reward_settlements.replace_all(reward_settlements)
                 self.headers.set_main_chain(path_hashes)
+                self.invalidate_active_chain_transaction_index()
                 self.mempool.reconcile(extra_transactions=disconnected_transactions)
         self._after_heavy_write("activate_chain")
         self.invalidate_reward_validation_state()
@@ -1089,21 +1094,22 @@ class NodeService:
                 "height": None,
             }
 
-        tip = self.chain_tip()
-        if tip is None:
+        location = self._active_chain_transaction_location(txid)
+        if location is None:
             return None
-        for height in range(tip.height + 1):
-            block = self.get_block_by_height(height)
-            if block is None:
-                continue
-            for transaction in block.transactions:
-                if transaction.txid() == txid:
-                    return {
-                        "location": "chain",
-                        "transaction": transaction,
-                        "block_hash": block.block_hash(),
-                        "height": height,
-                    }
+        block_hash, height = location
+        block = self.blocks.get(block_hash)
+        if block is None:
+            return None
+        for transaction in block.transactions:
+            if transaction.txid() == txid:
+                return {
+                    "location": "chain",
+                    "transaction": transaction,
+                    "block_hash": block_hash,
+                    "height": height,
+                }
+        self.invalidate_active_chain_transaction_index()
         return None
 
     def get_transaction(self, txid: str) -> Transaction | None:
@@ -3788,17 +3794,49 @@ class NodeService:
     def _find_transaction_in_active_chain(self, txid: str) -> Transaction | None:
         """Return a confirmed active-chain transaction when present."""
 
+        location = self._active_chain_transaction_location(txid)
+        if location is None:
+            return None
+        block_hash, _height = location
+        block = self.blocks.get(block_hash)
+        if block is None:
+            self.invalidate_active_chain_transaction_index()
+            return None
+        for transaction in block.transactions:
+            if transaction.txid() == txid:
+                return transaction
+        self.invalidate_active_chain_transaction_index()
+        return None
+
+    def _active_chain_transaction_location(self, txid: str) -> tuple[str, int] | None:
+        """Return active-chain location for a txid without rescanning on every relay."""
+
+        if self._active_chain_transaction_index is None:
+            self._active_chain_transaction_index = self._build_active_chain_transaction_index()
+        return self._active_chain_transaction_index.get(txid)
+
+    def _build_active_chain_transaction_index(self) -> dict[str, tuple[str, int]]:
+        """Build a txid index for the current active chain."""
+
         tip = self.chain_tip()
         if tip is None:
-            return None
+            return {}
+        index: dict[str, tuple[str, int]] = {}
         for height in range(tip.height + 1):
-            block = self.get_block_by_height(height)
+            block_hash = self.headers.get_hash_at_height(height)
+            if block_hash is None:
+                continue
+            block = self.blocks.get(block_hash)
             if block is None:
                 continue
             for transaction in block.transactions:
-                if transaction.txid() == txid:
-                    return transaction
-        return None
+                index[transaction.txid()] = (block_hash, height)
+        return index
+
+    def invalidate_active_chain_transaction_index(self) -> None:
+        """Drop cached active-chain txid locations after chain activation."""
+
+        self._active_chain_transaction_index = None
 
     def _known_confirmed_transaction_ids(self) -> set[str]:
         """Return confirmed parent txids that can still back mempool inputs."""
