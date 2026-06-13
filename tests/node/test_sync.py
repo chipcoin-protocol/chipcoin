@@ -360,6 +360,33 @@ def test_sync_manager_extends_tip_without_rescanning_common_prefix(monkeypatch) 
         assert target.chain_tip().block_hash == blocks[6].block_hash()
 
 
+def test_node_service_fast_path_extends_tip_without_path_scan(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 2, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        target.blocks.put(blocks[0])
+        manager.activate_best_chain_if_ready()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == blocks[0].block_hash()
+        target.blocks.put(blocks[1])
+
+        def fail_path_to_root(_tip_hash: str):
+            raise AssertionError("direct child activation should not build full path")
+
+        monkeypatch.setattr(target.headers, "path_to_root", fail_path_to_root)
+
+        result = target.activate_chain(blocks[1].block_hash())
+
+        assert result.activated_tip == blocks[1].block_hash()
+        assert result.applied_blocks == 1
+        assert result.reorged is False
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == blocks[1].block_hash()
+
+
 def test_sync_manager_reorg_check_does_not_build_full_ready_path(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)

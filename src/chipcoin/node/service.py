@@ -875,12 +875,45 @@ class NodeService:
         """Validate and activate a stored branch ending at the supplied tip."""
 
         previous_tip = self.headers.get_tip()
+        old_tip_hash = None if previous_tip is None else previous_tip.block_hash
+        candidate_record = self.headers.get_record(tip_hash)
+        if old_tip_hash == tip_hash:
+            return ChainActivationResult(
+                activated_tip=tip_hash,
+                applied_blocks=0,
+                reorged=False,
+                reorg_depth=0,
+                old_tip=old_tip_hash,
+                new_tip=tip_hash,
+                common_ancestor=old_tip_hash,
+                disconnected_blocks=0,
+                readded_transaction_count=0,
+            )
+        if (
+            previous_tip is not None
+            and candidate_record is not None
+            and candidate_record.previous_block_hash == previous_tip.block_hash
+        ):
+            block = self.blocks.get(tip_hash)
+            if block is None:
+                raise ValueError(f"Cannot activate chain without stored block: {tip_hash}")
+            self.apply_block(block)
+            return ChainActivationResult(
+                activated_tip=tip_hash,
+                applied_blocks=1,
+                reorged=False,
+                reorg_depth=0,
+                old_tip=old_tip_hash,
+                new_tip=tip_hash,
+                common_ancestor=old_tip_hash,
+                disconnected_blocks=0,
+                readded_transaction_count=0,
+            )
         path_hashes = self.headers.path_to_root(tip_hash)
         snapshot_anchor = self.snapshot_anchor()
         if snapshot_anchor is not None:
             if snapshot_anchor.height >= len(path_hashes) or path_hashes[snapshot_anchor.height] != snapshot_anchor.block_hash:
                 raise ValueError("candidate chain does not match the trusted snapshot anchor")
-        old_tip_hash = None if previous_tip is None else previous_tip.block_hash
         old_path = [] if previous_tip is None else self.headers.path_to_root(previous_tip.block_hash)
         common_prefix = 0
         for old_hash, new_hash in zip(old_path, path_hashes):
@@ -890,19 +923,6 @@ class NodeService:
         common_ancestor = path_hashes[common_prefix - 1] if common_prefix > 0 else None
         disconnected_hashes = old_path[common_prefix:]
         reorged = old_tip_hash is not None and old_tip_hash != tip_hash and old_tip_hash not in path_hashes
-        if old_tip_hash == tip_hash:
-            return ChainActivationResult(
-                activated_tip=tip_hash,
-                applied_blocks=0,
-                reorged=False,
-                reorg_depth=0,
-                old_tip=old_tip_hash,
-                new_tip=tip_hash,
-                common_ancestor=common_ancestor,
-                disconnected_blocks=0,
-                readded_transaction_count=0,
-            )
-
         def replay_activation_prefix(
             prefix_length: int,
         ) -> tuple[
