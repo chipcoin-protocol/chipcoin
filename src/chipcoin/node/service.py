@@ -941,7 +941,11 @@ class NodeService:
                     settled_epoch_indexes=frozenset(settled_epoch_indexes),
                     epoch_seed_by_index=self._epoch_seed_map(height, path_hashes=path_hashes),
                     expected_previous_block_hash=previous_hash,
-                    expected_bits=self._expected_bits_for_candidate_height(height, validated_headers),
+                    expected_bits=self._expected_bits_for_candidate_height(
+                        height,
+                        validated_headers,
+                        path_hashes=path_hashes,
+                    ),
                 )
                 validate_block(block, context)
                 utxo_view.apply_block(block, height)
@@ -983,11 +987,6 @@ class NodeService:
                 raise ValueError("missing current active tip header")
             median_time_past = previous_header.timestamp
             validated_headers = []
-            for height in range(common_prefix):
-                header = self.headers.get(path_hashes[height])
-                if header is None:
-                    raise ValueError(f"missing active chain header at height {height}")
-                validated_headers.append(header)
             start_height = common_prefix
         else:
             (
@@ -1020,7 +1019,11 @@ class NodeService:
                 settled_epoch_indexes=frozenset(settled_epoch_indexes),
                 epoch_seed_by_index=self._epoch_seed_map(height, path_hashes=path_hashes),
                 expected_previous_block_hash=previous_hash,
-                expected_bits=self._expected_bits_for_candidate_height(height, validated_headers),
+                expected_bits=self._expected_bits_for_candidate_height(
+                    height,
+                    validated_headers,
+                    path_hashes=path_hashes,
+                ),
             )
             validate_block(block, context)
             utxo_view.apply_block(block, height)
@@ -3872,18 +3875,36 @@ class NodeService:
             candidate_height=height,
         )
 
-    def _expected_bits_for_candidate_height(self, height: int, validated_headers: list) -> int:
+    def _expected_bits_for_candidate_height(
+        self,
+        height: int,
+        validated_headers: list,
+        *,
+        path_hashes: list[str] | None = None,
+    ) -> int:
         """Return required bits while validating a candidate branch path."""
 
-        if height <= 0 or not validated_headers:
+        if height <= 0:
             return self.params.genesis_bits
 
-        previous_header = validated_headers[-1]
+        if path_hashes is None:
+            if not validated_headers:
+                return self.params.genesis_bits
+            previous_header = validated_headers[-1]
+        else:
+            previous_header = self.headers.get(path_hashes[height - 1])
+            if previous_header is None:
+                return self.params.genesis_bits
         if height % self.params.difficulty_adjustment_window != 0:
             return previous_header.bits
 
         window_start_height = max(0, height - self.params.difficulty_adjustment_window)
-        first_header = validated_headers[window_start_height]
+        if path_hashes is None:
+            first_header = validated_headers[window_start_height]
+        else:
+            first_header = self.headers.get(path_hashes[window_start_height])
+            if first_header is None:
+                return previous_header.bits
         actual_timespan_seconds = max(1, previous_header.timestamp - first_header.timestamp)
         return calculate_next_work_required(
             previous_bits=previous_header.bits,

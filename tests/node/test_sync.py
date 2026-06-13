@@ -330,6 +330,36 @@ def test_sync_manager_reuses_ready_tip_scan_between_scheduler_ticks(monkeypatch)
         assert calls == 1
 
 
+def test_sync_manager_extends_tip_without_rescanning_common_prefix(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        blocks = _mine_chain(source, 7, "CHCminer-source")
+        manager = SyncManager(node=target)
+        manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
+        for block in blocks[:6]:
+            target.blocks.put(block)
+        manager.activate_best_chain_if_ready()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == blocks[5].block_hash()
+
+        old_prefix_hashes = {block.block_hash() for block in blocks[:5]}
+        original_get = target.headers.get
+
+        def fail_old_prefix_scan(block_hash: str):
+            if block_hash in old_prefix_hashes:
+                raise AssertionError("extension activation rescanned old common-prefix headers")
+            return original_get(block_hash)
+
+        monkeypatch.setattr(target.headers, "get", fail_old_prefix_scan)
+
+        result = manager.receive_block(blocks[6])
+
+        assert result.activated_tip == blocks[6].block_hash()
+        assert target.chain_tip() is not None
+        assert target.chain_tip().block_hash == blocks[6].block_hash()
+
+
 def test_sync_manager_quarantines_invalid_ready_tip_between_scheduler_ticks(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
