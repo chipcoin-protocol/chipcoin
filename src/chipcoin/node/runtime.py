@@ -1468,14 +1468,18 @@ class NodeRuntime:
         if message.command == "addr":
             if not self.peer_discovery_enabled:
                 return
-            if len(message.payload.addresses) > self.max_addr_records:
-                error = ProtocolError("addr message exceeded limit")
-                self._apply_session_penalty(session, error=error, penalty=25)
-                await session.close(reason=str(error), error=error)
-                await self._drop_session(session)
-                return
+            announced_addresses = message.payload.addresses
+            if len(announced_addresses) > self.max_addr_records:
+                peer_label = self._format_peer_for_logs(session)
+                self.logger.info(
+                    "addr message truncated peer=%s count=%s limit=%s",
+                    peer_label,
+                    len(announced_addresses),
+                    self.max_addr_records,
+                )
+                announced_addresses = announced_addresses[: self.max_addr_records]
             accepted = 0
-            for address in message.payload.addresses:
+            for address in announced_addresses:
                 announced = OutboundPeer(address.host, address.port)
                 canonical_announced = self._canonicalize_announced_peer_endpoint(announced)
                 if canonical_announced is None:

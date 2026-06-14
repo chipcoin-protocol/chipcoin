@@ -1195,6 +1195,56 @@ def test_runtime_learns_discovered_peers_from_addr_gossip_and_persists_source() 
     asyncio.run(scenario())
 
 
+def test_runtime_truncates_oversized_addr_gossip_without_dropping_peer() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+            runtime = NodeRuntime(
+                service=service,
+                listen_host="127.0.0.1",
+                listen_port=18445,
+                peer_addr_max_per_message=2,
+            )
+
+            class _FakeSessionState:
+                closed = False
+                handshake_complete = True
+                remote_version = None
+                errors: list[str] = []
+                error_causes: list[Exception] = []
+
+            class _FakeSession:
+                inbound = False
+                state = _FakeSessionState()
+                close_calls = 0
+
+                async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+                    self.close_calls += 1
+
+            session = _FakeSession()
+            await runtime._on_peer_message(
+                session,
+                MessageEnvelope(
+                    command="addr",
+                    payload=AddrMessage(
+                        addresses=(
+                            PeerAddress(host="188.218.213.10", port=18444, services=0, timestamp=1_700_000_000),
+                            PeerAddress(host="188.218.213.11", port=18444, services=0, timestamp=1_700_000_000),
+                            PeerAddress(host="188.218.213.12", port=18444, services=0, timestamp=1_700_000_000),
+                        )
+                    ),
+                ),
+            )
+
+            peers = service.list_peers()
+            assert session.close_calls == 0
+            assert any(peer.host == "188.218.213.10" and peer.port == 18444 for peer in peers)
+            assert any(peer.host == "188.218.213.11" and peer.port == 18444 for peer in peers)
+            assert not any(peer.host == "188.218.213.12" and peer.port == 18444 for peer in peers)
+
+    asyncio.run(scenario())
+
+
 def test_runtime_canonicalizes_ephemeral_addr_gossip_to_default_p2p_port() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
