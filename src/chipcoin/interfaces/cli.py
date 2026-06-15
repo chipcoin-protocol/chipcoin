@@ -702,7 +702,10 @@ def main(argv: list[str] | None = None) -> int:
             assert service is not None
             wallet_key = _load_wallet_key(Path(args.wallet_file))
             built = _build_wallet_transaction(service, wallet_key, args)
-            if args.connect:
+            if args.node_url:
+                _submit_raw_transaction_hex_via_http(args.node_url, serialize_transaction(built.transaction).hex())
+                mode = "http"
+            elif args.connect:
                 asyncio.run(_send_transaction_to_peer(built.transaction, _parse_peer(args.connect), network=service.network))
                 mode = "p2p"
             else:
@@ -987,6 +990,7 @@ def _build_parser() -> argparse.ArgumentParser:
     wallet_send.add_argument("--fee", type=int, required=True)
     wallet_send.add_argument("--change-address")
     wallet_send.add_argument("--connect", help="Optional node endpoint in host:port form for P2P submission.")
+    wallet_send.add_argument("--node-url", help="Optional node HTTP API base URL for transaction submission.")
 
     return parser
 
@@ -1386,8 +1390,14 @@ def _mine_local_candidate_block(service: NodeService, payout_address: str):
 def _submit_raw_transaction_via_http(args) -> dict[str, object]:
     """Submit one raw transaction through the runtime-owned HTTP API."""
 
-    node_url = _normalize_node_url(args.node_url)
-    encoded = json.dumps({"raw_hex": args.raw_hex}, sort_keys=True).encode("utf-8")
+    return _submit_raw_transaction_hex_via_http(args.node_url, args.raw_hex)
+
+
+def _submit_raw_transaction_hex_via_http(node_url: str, raw_hex: str) -> dict[str, object]:
+    """Submit one raw transaction hex string through the runtime-owned HTTP API."""
+
+    node_url = _normalize_node_url(node_url)
+    encoded = json.dumps({"raw_hex": raw_hex}, sort_keys=True).encode("utf-8")
     req = request.Request(
         f"{node_url}/v1/tx/submit",
         method="POST",

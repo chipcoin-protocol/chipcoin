@@ -2845,6 +2845,53 @@ def test_cli_wallet_send_can_submit_over_p2p_boundary() -> None:
         assert sent["network"] == "mainnet"
 
 
+def test_cli_wallet_send_can_submit_over_http_boundary() -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        wallet_path = Path(tempdir) / "wallet.json"
+        service = _make_service(db_path)
+        owner = wallet_key(0)
+        funding_outpoint = OutPoint(txid="24" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=125, owner=owner)
+        cli_module._save_wallet_key(wallet_path, owner)
+
+        submitted = {}
+        original_submit = cli_module._submit_raw_transaction_hex_via_http
+
+        def fake_submit_raw_transaction_hex_via_http(node_url, raw_hex):
+            submitted["node_url"] = node_url
+            submitted["raw_hex"] = raw_hex
+            return {"accepted": True}
+
+        cli_module._submit_raw_transaction_hex_via_http = fake_submit_raw_transaction_hex_via_http
+        try:
+            send_code, send_payload = _run_cli(
+                [
+                    "--data",
+                    str(db_path),
+                    "wallet-send",
+                    "--wallet-file",
+                    str(wallet_path),
+                    "--to",
+                    wallet_key(1).address,
+                    "--amount",
+                    "100",
+                    "--fee",
+                    "5",
+                    "--node-url",
+                    "http://127.0.0.1:28081",
+                ]
+            )
+        finally:
+            cli_module._submit_raw_transaction_hex_via_http = original_submit
+
+        assert send_code == 0
+        assert send_payload["mode"] == "http"
+        assert submitted["node_url"] == "http://127.0.0.1:28081"
+        assert submitted["raw_hex"]
+        assert service.find_transaction(send_payload["txid"]) is None
+
+
 def test_cli_mine_command_runs_and_produces_a_block() -> None:
     with TemporaryDirectory() as tempdir:
         original_worker = cli_module.MinerWorker
