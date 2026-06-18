@@ -654,6 +654,11 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(service.native_reward_attestation_diagnostics(epoch_index=args.epoch_index))
             return 0
 
+        if args.command == "reward-attestation-backlog":
+            assert service is not None
+            _print_json(service.reward_attestation_backlog_report())
+            return 0
+
         if args.command == "reward-settlements":
             assert service is not None
             _print_json(service.native_reward_settlement_diagnostics(epoch_index=args.epoch_index))
@@ -962,6 +967,7 @@ def _build_parser() -> argparse.ArgumentParser:
     reward_epoch_summary.add_argument("--epoch-index", required=True, type=int)
     reward_attestations = subparsers.add_parser("reward-attestations")
     reward_attestations.add_argument("--epoch-index", type=int)
+    subparsers.add_parser("reward-attestation-backlog")
     reward_settlements = subparsers.add_parser("reward-settlements")
     reward_settlements.add_argument("--epoch-index", type=int)
     reward_settlement_preview = subparsers.add_parser("reward-settlement-preview")

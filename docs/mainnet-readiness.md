@@ -47,6 +47,16 @@ genesis or public launch. These are not testnet operations notes.
 - Replace count-only sizing with explicit byte or weight limits before mainnet.
   The current testnet policy caps transaction count and transaction size, but
   does not expose a direct total mempool byte budget.
+- Treat duplicate `reward_attestation_bundle` submissions as an expected
+  idempotency case, not generic peer failure. Before mainnet, make duplicate
+  bundle handling cheap and observable:
+  - classify duplicates by `(epoch, window, submitter)` in logs and reports
+  - avoid heavy validation/relay work when an equivalent bundle is already
+    staged
+  - do not penalize or ban peers aggressively for low-volume duplicate bundle
+    relay
+  - alert only when duplicate volume is high enough to create CPU, bandwidth, or
+    mempool pressure
 - Define and test saturation behavior:
   - which transactions are evicted first
   - whether fee rate, age, or dependency structure drives eviction

@@ -73,6 +73,7 @@ def _reward_attestation_bundle_transaction(
     bundle_submitter_node_id: str = "submitter-a",
     candidate_node_id: str = "candidate-a",
     verifier_node_id: str = "verifier-a",
+    extra_attestations: tuple[tuple[str, str], ...] = (),
 ) -> Transaction:
     attestation_window = (
         bundle_window_index
@@ -90,6 +91,16 @@ def _reward_attestation_bundle_transaction(
         "concentration_key": "concentration",
         "signature_hex": "00" * 64,
     }
+    attestations = [attestation]
+    for index, (candidate, verifier) in enumerate(extra_attestations, start=1):
+        attestations.append(
+            {
+                **attestation,
+                "candidate_node_id": candidate,
+                "verifier_node_id": verifier,
+                "signature_hex": f"{index:0128x}",
+            }
+        )
     return Transaction(
         version=1,
         inputs=(),
@@ -99,9 +110,9 @@ def _reward_attestation_bundle_transaction(
             "epoch_index": str(epoch_index),
             "bundle_window_index": str(bundle_window_index),
             "bundle_submitter_node_id": bundle_submitter_node_id,
-            "attestation_count": "1",
+            "attestation_count": str(len(attestations)),
             "attestations_json": json.dumps(
-                [attestation],
+                attestations,
                 sort_keys=True,
                 separators=(",", ":"),
             ),
@@ -3296,6 +3307,106 @@ def test_mempool_eviction_prefers_higher_fee_transactions() -> None:
 
         mempool_txids = [transaction.txid() for transaction in service.list_mempool_transactions()]
         assert mempool_txids == [high_fee.txid()]
+
+
+def test_reward_attestation_backlog_report_groups_pending_bundles() -> None:
+    with TemporaryDirectory() as tempdir:
+        params = replace(MAINNET_PARAMS, coinbase_maturity=0, max_attestation_bundles_per_block=4)
+        service = _make_service_with_params(Path(tempdir) / "chipcoin.sqlite3", params)
+        bundles = [
+            _reward_attestation_bundle_transaction(
+                epoch_index=5,
+                bundle_window_index=1,
+                bundle_submitter_node_id="submitter-a",
+                candidate_node_id="candidate-a",
+                verifier_node_id="verifier-a",
+                extra_attestations=(("candidate-b", "verifier-a"),),
+            ),
+            _reward_attestation_bundle_transaction(
+                epoch_index=5,
+                bundle_window_index=1,
+                bundle_submitter_node_id="submitter-b",
+                candidate_node_id="candidate-a",
+                verifier_node_id="verifier-b",
+            ),
+            _reward_attestation_bundle_transaction(
+                epoch_index=5,
+                bundle_window_index=2,
+                bundle_submitter_node_id="submitter-a",
+                candidate_node_id="candidate-c",
+                verifier_node_id="verifier-a",
+            ),
+            _reward_attestation_bundle_transaction(
+                epoch_index=6,
+                bundle_window_index=1,
+                bundle_submitter_node_id="submitter-c",
+                candidate_node_id="candidate-d",
+                verifier_node_id="verifier-c",
+            ),
+            _reward_attestation_bundle_transaction(
+                epoch_index=6,
+                bundle_window_index=2,
+                bundle_submitter_node_id="submitter-d",
+                candidate_node_id="candidate-e",
+                verifier_node_id="verifier-d",
+            ),
+        ]
+        for index, bundle in enumerate(bundles):
+            service.mempool.repository.add(bundle, fee=0, added_at=1_700_000_000 + index)
+
+        report = service.reward_attestation_backlog_report()
+
+        assert report["mempool_reward_attestation_bundle_count"] == 5
+        assert report["total_attestation_count"] == 6
+        assert report["average_attestations_per_bundle"] == 1.2
+        assert report["estimated_blocks_to_drain_at_current_cap"] == 2
+        assert report["estimated_seconds_to_drain_at_target_spacing"] == 1200
+        assert report["duplicate_bundle_key_count"] == 0
+        assert report["duplicate_attestation_identity_count"] == 0
+        assert report["by_epoch"] == [
+            {"epoch_index": 5, "count": 3},
+            {"epoch_index": 6, "count": 2},
+        ]
+        assert {"epoch_index": 5, "bundle_window_index": 1, "count": 2} in report["by_epoch_window"]
+        assert report["by_submitter"][0] == {"bundle_submitter_node_id": "submitter-a", "count": 2}
+        assert {"candidate_node_id": "candidate-a", "attestation_count": 2} in report["by_candidate"]
+        assert {"verifier_node_id": "verifier-a", "attestation_count": 3} in report["by_verifier"]
+
+
+def test_mempool_diagnostics_includes_transaction_metadata() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        bundle = _reward_attestation_bundle_transaction()
+        service.mempool.repository.add(bundle, fee=0, added_at=1_700_000_000)
+
+        diagnostics = service.mempool_diagnostics()
+
+        assert diagnostics[0]["metadata"]["kind"] == REWARD_ATTESTATION_BUNDLE_KIND
+        assert diagnostics[0]["metadata"]["bundle_submitter_node_id"] == "submitter-a"
+
+
+def test_block_template_respects_max_attestation_bundles_per_block() -> None:
+    with TemporaryDirectory() as tempdir:
+        params = replace(MAINNET_PARAMS, coinbase_maturity=0, max_attestation_bundles_per_block=2)
+        service = _make_service_with_params(Path(tempdir) / "chipcoin.sqlite3", params)
+        for index in range(5):
+            bundle = _reward_attestation_bundle_transaction(
+                epoch_index=5,
+                bundle_window_index=index,
+                bundle_submitter_node_id=f"submitter-{index}",
+                candidate_node_id=f"candidate-{index}",
+                verifier_node_id=f"verifier-{index}",
+            )
+            service.mempool.repository.add(bundle, fee=0, added_at=1_700_000_000 + index)
+
+        template = service.build_candidate_block(wallet_key(0).address)
+        included_bundles = [
+            transaction
+            for transaction in template.block.transactions
+            if transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND
+        ]
+
+        assert len(included_bundles) == 2
 
 
 def test_block_template_prefers_higher_fee_rate_over_higher_absolute_fee() -> None:

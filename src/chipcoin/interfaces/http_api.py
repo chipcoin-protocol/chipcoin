@@ -161,6 +161,9 @@ class HttpApiApp:
                 "attestations": self.service.native_reward_attestation_diagnostics(epoch_index=epoch_index),
             }
 
+        if method == "GET" and path == "/v1/rewards/attestation-backlog":
+            return {"api_version": self.API_VERSION, **self.service.reward_attestation_backlog_report()}
+
         if method == "GET" and path == "/v1/rewards/settlements":
             query = parse_qs(environ.get("QUERY_STRING", ""))
             epoch_index = self._parse_optional_int(query, "epoch_index")

@@ -2290,6 +2290,7 @@ class NodeService:
             diagnostics.append(
                 {
                     "txid": entry.transaction.txid(),
+                    "metadata": dict(entry.transaction.metadata),
                     "fee_chipbits": entry.fee,
                     "weight_units": weight_units,
                     "fee_rate": self._rate_string(entry.fee, weight_units),
@@ -2298,6 +2299,174 @@ class NodeService:
                 }
             )
         return diagnostics
+
+    def reward_attestation_backlog_report(self) -> dict[str, object]:
+        """Return reward-attestation bundle mempool pressure diagnostics."""
+
+        bundle_entries = [
+            entry
+            for entry in self.mempool.list_transactions()
+            if entry.transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND
+        ]
+        malformed_bundle_count = 0
+        bundle_rows: list[dict[str, object]] = []
+        by_epoch: dict[int, int] = {}
+        by_epoch_window: dict[tuple[int, int], int] = {}
+        by_submitter: dict[str, int] = {}
+        by_candidate: dict[str, int] = {}
+        by_verifier: dict[str, int] = {}
+        by_epoch_window_submitter: dict[tuple[int, int, str], int] = {}
+        attestation_identity_counts: dict[tuple[int, int, str, str], int] = {}
+        total_attestations = 0
+
+        for entry in bundle_entries:
+            try:
+                bundle = parse_reward_attestation_bundle_metadata(entry.transaction.metadata)
+            except (KeyError, TypeError, ValueError):
+                malformed_bundle_count += 1
+                continue
+            bundle_key = (bundle.epoch_index, bundle.bundle_window_index, bundle.bundle_submitter_node_id)
+            by_epoch[bundle.epoch_index] = by_epoch.get(bundle.epoch_index, 0) + 1
+            by_epoch_window[(bundle.epoch_index, bundle.bundle_window_index)] = (
+                by_epoch_window.get((bundle.epoch_index, bundle.bundle_window_index), 0) + 1
+            )
+            by_epoch_window_submitter[bundle_key] = by_epoch_window_submitter.get(bundle_key, 0) + 1
+            by_submitter[bundle.bundle_submitter_node_id] = by_submitter.get(bundle.bundle_submitter_node_id, 0) + 1
+            total_attestations += len(bundle.attestations)
+            candidates = sorted({attestation.candidate_node_id for attestation in bundle.attestations})
+            verifiers = sorted({attestation.verifier_node_id for attestation in bundle.attestations})
+            for attestation in bundle.attestations:
+                by_candidate[attestation.candidate_node_id] = by_candidate.get(attestation.candidate_node_id, 0) + 1
+                by_verifier[attestation.verifier_node_id] = by_verifier.get(attestation.verifier_node_id, 0) + 1
+                identity = (
+                    attestation.epoch_index,
+                    attestation.check_window_index,
+                    attestation.candidate_node_id,
+                    attestation.verifier_node_id,
+                )
+                attestation_identity_counts[identity] = attestation_identity_counts.get(identity, 0) + 1
+            bundle_rows.append(
+                {
+                    "txid": entry.transaction.txid(),
+                    "added_at": entry.added_at,
+                    "epoch_index": bundle.epoch_index,
+                    "bundle_window_index": bundle.bundle_window_index,
+                    "bundle_submitter_node_id": bundle.bundle_submitter_node_id,
+                    "attestation_count": len(bundle.attestations),
+                    "candidate_node_ids": candidates,
+                    "verifier_node_ids": verifiers,
+                }
+            )
+
+        max_bundles_per_block = max(1, self.params.max_attestation_bundles_per_block)
+        estimated_blocks_to_drain = (len(bundle_entries) + max_bundles_per_block - 1) // max_bundles_per_block
+        tip = self.chain_tip()
+        next_height = 0 if tip is None else tip.height + 1
+        active_reward_node_count = len(
+            active_node_records(
+                self.node_registry.snapshot(),
+                height=next_height,
+                params=self.params,
+            )
+        )
+        theoretical_attestations_per_epoch = (
+            active_reward_node_count
+            * self.params.reward_target_checks_per_epoch
+            * self.params.reward_verifier_committee_size
+        )
+        max_bundle_capacity_per_epoch = self.params.epoch_length_blocks * max_bundles_per_block
+        ideal_min_bundles_per_epoch = (
+            (theoretical_attestations_per_epoch + self.params.max_attestations_per_bundle - 1)
+            // max(1, self.params.max_attestations_per_bundle)
+        )
+        duplicate_bundle_keys = [
+            {
+                "epoch_index": epoch_index,
+                "bundle_window_index": bundle_window_index,
+                "bundle_submitter_node_id": submitter,
+                "count": count,
+            }
+            for (epoch_index, bundle_window_index, submitter), count in sorted(by_epoch_window_submitter.items())
+            if count > 1
+        ]
+        duplicate_attestation_identities = [
+            {
+                "epoch_index": epoch_index,
+                "check_window_index": check_window_index,
+                "candidate_node_id": candidate_node_id,
+                "verifier_node_id": verifier_node_id,
+                "count": count,
+            }
+            for (epoch_index, check_window_index, candidate_node_id, verifier_node_id), count in sorted(attestation_identity_counts.items())
+            if count > 1
+        ]
+
+        return {
+            "network": self.network,
+            "mempool_reward_attestation_bundle_count": len(bundle_entries),
+            "malformed_reward_attestation_bundle_count": malformed_bundle_count,
+            "total_attestation_count": total_attestations,
+            "average_attestations_per_bundle": (
+                0.0 if not bundle_rows else total_attestations / len(bundle_rows)
+            ),
+            "consensus": {
+                "max_attestation_bundles_per_block": self.params.max_attestation_bundles_per_block,
+                "max_attestations_per_bundle": self.params.max_attestations_per_bundle,
+                "max_attestations_per_verifier_per_window": self.params.max_attestations_per_verifier_per_window,
+                "epoch_length_blocks": self.params.epoch_length_blocks,
+                "reward_check_windows_per_epoch": self.params.reward_check_windows_per_epoch,
+                "reward_target_checks_per_epoch": self.params.reward_target_checks_per_epoch,
+                "reward_verifier_committee_size": self.params.reward_verifier_committee_size,
+                "reward_verifier_quorum": self.params.reward_verifier_quorum,
+                "target_block_time_seconds": self.params.target_block_time_seconds,
+            },
+            "capacity": {
+                "active_reward_node_count": active_reward_node_count,
+                "theoretical_attestations_per_epoch": theoretical_attestations_per_epoch,
+                "ideal_min_bundles_per_epoch_at_max_aggregation": ideal_min_bundles_per_epoch,
+                "max_bundle_capacity_per_epoch_at_current_cap": max_bundle_capacity_per_epoch,
+                "pending_bundle_share_of_epoch_capacity": (
+                    0.0 if max_bundle_capacity_per_epoch <= 0 else len(bundle_entries) / max_bundle_capacity_per_epoch
+                ),
+            },
+            "estimated_blocks_to_drain_at_current_cap": estimated_blocks_to_drain,
+            "estimated_seconds_to_drain_at_target_spacing": (
+                estimated_blocks_to_drain * self.params.target_block_time_seconds
+            ),
+            "by_epoch": [
+                {"epoch_index": epoch_index, "count": count}
+                for epoch_index, count in sorted(by_epoch.items())
+            ],
+            "by_epoch_window": [
+                {"epoch_index": epoch_index, "bundle_window_index": window_index, "count": count}
+                for (epoch_index, window_index), count in sorted(by_epoch_window.items())
+            ],
+            "by_submitter": [
+                {"bundle_submitter_node_id": submitter, "count": count}
+                for submitter, count in sorted(by_submitter.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "by_candidate": [
+                {"candidate_node_id": candidate, "attestation_count": count}
+                for candidate, count in sorted(by_candidate.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "by_verifier": [
+                {"verifier_node_id": verifier, "attestation_count": count}
+                for verifier, count in sorted(by_verifier.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "duplicate_bundle_key_count": len(duplicate_bundle_keys),
+            "duplicate_bundle_keys": duplicate_bundle_keys,
+            "duplicate_attestation_identity_count": len(duplicate_attestation_identities),
+            "duplicate_attestation_identities": duplicate_attestation_identities,
+            "bundles": sorted(
+                bundle_rows,
+                key=lambda row: (
+                    int(row["epoch_index"]),
+                    int(row["bundle_window_index"]),
+                    str(row["bundle_submitter_node_id"]),
+                    str(row["txid"]),
+                ),
+            ),
+        }
 
     def difficulty_diagnostics(self) -> dict[str, object]:
         """Return current and next difficulty information."""
