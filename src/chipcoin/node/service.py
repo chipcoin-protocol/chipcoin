@@ -2315,6 +2315,7 @@ class NodeService:
         by_submitter: dict[str, int] = {}
         by_candidate: dict[str, int] = {}
         by_verifier: dict[str, int] = {}
+        attestation_count_by_epoch_window: dict[tuple[int, int], int] = {}
         by_epoch_window_submitter: dict[tuple[int, int, str], int] = {}
         attestation_identity_counts: dict[tuple[int, int, str, str], int] = {}
         total_attestations = 0
@@ -2333,6 +2334,10 @@ class NodeService:
             by_epoch_window_submitter[bundle_key] = by_epoch_window_submitter.get(bundle_key, 0) + 1
             by_submitter[bundle.bundle_submitter_node_id] = by_submitter.get(bundle.bundle_submitter_node_id, 0) + 1
             total_attestations += len(bundle.attestations)
+            attestation_count_by_epoch_window[(bundle.epoch_index, bundle.bundle_window_index)] = (
+                attestation_count_by_epoch_window.get((bundle.epoch_index, bundle.bundle_window_index), 0)
+                + len(bundle.attestations)
+            )
             candidates = sorted({attestation.candidate_node_id for attestation in bundle.attestations})
             verifiers = sorted({attestation.verifier_node_id for attestation in bundle.attestations})
             for attestation in bundle.attestations:
@@ -2378,6 +2383,15 @@ class NodeService:
         ideal_min_bundles_per_epoch = (
             (theoretical_attestations_per_epoch + self.params.max_attestations_per_bundle - 1)
             // max(1, self.params.max_attestations_per_bundle)
+        )
+        max_attestations_per_bundle = max(1, self.params.max_attestations_per_bundle)
+        estimated_bundles_after_window_aggregation = sum(
+            (attestation_count + max_attestations_per_bundle - 1) // max_attestations_per_bundle
+            for attestation_count in attestation_count_by_epoch_window.values()
+        )
+        estimated_blocks_after_window_aggregation = (
+            (estimated_bundles_after_window_aggregation + max_bundles_per_block - 1)
+            // max_bundles_per_block
         )
         duplicate_bundle_keys = [
             {
@@ -2427,6 +2441,16 @@ class NodeService:
                 "max_bundle_capacity_per_epoch_at_current_cap": max_bundle_capacity_per_epoch,
                 "pending_bundle_share_of_epoch_capacity": (
                     0.0 if max_bundle_capacity_per_epoch <= 0 else len(bundle_entries) / max_bundle_capacity_per_epoch
+                ),
+            },
+            "aggregation_projection": {
+                "estimated_bundles_after_epoch_window_aggregation": estimated_bundles_after_window_aggregation,
+                "estimated_bundle_reduction_after_epoch_window_aggregation": (
+                    len(bundle_rows) - estimated_bundles_after_window_aggregation
+                ),
+                "estimated_blocks_to_drain_after_epoch_window_aggregation": estimated_blocks_after_window_aggregation,
+                "estimated_seconds_to_drain_after_epoch_window_aggregation": (
+                    estimated_blocks_after_window_aggregation * self.params.target_block_time_seconds
                 ),
             },
             "estimated_blocks_to_drain_at_current_cap": estimated_blocks_to_drain,

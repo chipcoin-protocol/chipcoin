@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 
-from chipcoin.consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND
+from chipcoin.consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND, parse_reward_attestation_bundle_metadata
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
 from chipcoin.consensus.models import Block, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.pow import verify_proof_of_work
@@ -3361,6 +3361,12 @@ def test_reward_attestation_backlog_report_groups_pending_bundles() -> None:
         assert report["average_attestations_per_bundle"] == 1.2
         assert report["estimated_blocks_to_drain_at_current_cap"] == 2
         assert report["estimated_seconds_to_drain_at_target_spacing"] == 1200
+        assert report["aggregation_projection"] == {
+            "estimated_bundles_after_epoch_window_aggregation": 4,
+            "estimated_bundle_reduction_after_epoch_window_aggregation": 1,
+            "estimated_blocks_to_drain_after_epoch_window_aggregation": 1,
+            "estimated_seconds_to_drain_after_epoch_window_aggregation": 600,
+        }
         assert report["duplicate_bundle_key_count"] == 0
         assert report["duplicate_attestation_identity_count"] == 0
         assert report["by_epoch"] == [
@@ -3383,6 +3389,82 @@ def test_mempool_diagnostics_includes_transaction_metadata() -> None:
 
         assert diagnostics[0]["metadata"]["kind"] == REWARD_ATTESTATION_BUNDLE_KIND
         assert diagnostics[0]["metadata"]["bundle_submitter_node_id"] == "submitter-a"
+
+
+def test_reward_attestation_aggregate_can_replace_smaller_pending_bundles() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        first = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=1,
+            bundle_submitter_node_id="submitter-a",
+            candidate_node_id="candidate-a",
+            verifier_node_id="verifier-a",
+        )
+        second = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=1,
+            bundle_submitter_node_id="submitter-b",
+            candidate_node_id="candidate-b",
+            verifier_node_id="verifier-b",
+        )
+        aggregate = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=1,
+            bundle_submitter_node_id="submitter-c",
+            candidate_node_id="candidate-a",
+            verifier_node_id="verifier-a",
+            extra_attestations=(("candidate-b", "verifier-b"),),
+        )
+        service.mempool.repository.add(first, fee=0, added_at=1_700_000_000)
+        service.mempool.repository.add(second, fee=0, added_at=1_700_000_001)
+
+        replacement_txids = service.mempool._reward_attestation_bundle_replacement_txids(aggregate)
+
+        assert replacement_txids == [first.txid(), second.txid()]
+        remaining_entries = [
+            entry
+            for entry in service.mempool.repository.list_all()
+            if entry.transaction.txid() not in set(replacement_txids)
+        ]
+        service.mempool._enforce_reward_attestation_bundle_mempool_policy(
+            aggregate,
+            entries=remaining_entries,
+        )
+
+
+def test_runtime_aggregates_pending_reward_attestations_for_same_window() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service)
+        pending = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=1,
+            bundle_submitter_node_id="submitter-a",
+            candidate_node_id="candidate-a",
+            verifier_node_id="verifier-a",
+        )
+        local = _reward_attestation_bundle_transaction(
+            epoch_index=80,
+            bundle_window_index=1,
+            bundle_submitter_node_id="submitter-b",
+            candidate_node_id="candidate-b",
+            verifier_node_id="verifier-b",
+        )
+        service.mempool.repository.add(pending, fee=0, added_at=1_700_000_000)
+
+        local_bundle = json.loads(local.metadata["attestations_json"])
+        aggregate = runtime._aggregate_pending_reward_attestations(
+            epoch_index=80,
+            bundle_window_index=1,
+            local_attestations=list(parse_reward_attestation_bundle_metadata(local.metadata).attestations),
+        )
+
+        assert len(local_bundle) == 1
+        assert [(item.candidate_node_id, item.verifier_node_id) for item in aggregate] == [
+            ("candidate-a", "verifier-a"),
+            ("candidate-b", "verifier-b"),
+        ]
 
 
 def test_block_template_respects_max_attestation_bundles_per_block() -> None:

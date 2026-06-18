@@ -76,15 +76,25 @@ class MempoolManager:
         if self._is_known_on_chain(txid):
             raise ValidationError("Transaction is already confirmed in the active chain.")
 
-        self._enforce_special_node_mempool_policy(transaction)
-        self._enforce_reward_attestation_bundle_mempool_policy(transaction)
-        self._ensure_no_mempool_double_spend(transaction)
+        replacement_txids = self._reward_attestation_bundle_replacement_txids(transaction)
+        replacement_txid_set = set(replacement_txids)
+        effective_entries = [
+            entry
+            for entry in self.repository.list_all()
+            if entry.transaction.txid() not in replacement_txid_set
+        ]
+
+        self._enforce_special_node_mempool_policy(transaction, entries=effective_entries)
+        self._enforce_reward_attestation_bundle_mempool_policy(transaction, entries=effective_entries)
+        self._ensure_no_mempool_double_spend(transaction, entries=effective_entries)
 
         snapshot = self._snapshot_with_mempool_applied()
         context = self.validation_context_factory(snapshot)
         fee_chipbits = validate_transaction(transaction, context)
         self._enforce_policy(transaction, fee_chipbits)
         accepted_at = self.time_provider() if added_at is None else added_at
+        for replaced_txid in replacement_txids:
+            self.repository.remove(replaced_txid)
         self.repository.add(transaction, fee=fee_chipbits, added_at=accepted_at)
         self._prune_expired(now=self.time_provider())
         self._evict_if_needed()
@@ -292,6 +302,47 @@ class MempoolManager:
             for attestation in bundle.attestations
         ):
             raise ValidationError("Mempool already contains this reward attestation.")
+
+    def _reward_attestation_bundle_replacement_txids(self, transaction: Transaction) -> list[str]:
+        """Return pending bundle txids that a strictly better aggregate can replace."""
+
+        if transaction.metadata.get("kind") != REWARD_ATTESTATION_BUNDLE_KIND:
+            return []
+        try:
+            incoming = parse_reward_attestation_bundle_metadata(transaction.metadata)
+        except (KeyError, TypeError, ValueError):
+            return []
+        incoming_identities = {attestation_identity(attestation) for attestation in incoming.attestations}
+        if len(incoming_identities) != len(incoming.attestations) or len(incoming_identities) <= 1:
+            return []
+
+        replacement_txids: list[str] = []
+        replaced_identities: set[tuple[int, int, str, str]] = set()
+        for entry in self.repository.list_all():
+            if entry.transaction.metadata.get("kind") != REWARD_ATTESTATION_BUNDLE_KIND:
+                continue
+            try:
+                existing = parse_reward_attestation_bundle_metadata(entry.transaction.metadata)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (
+                existing.epoch_index != incoming.epoch_index
+                or existing.bundle_window_index != incoming.bundle_window_index
+            ):
+                continue
+            existing_identities = {attestation_identity(attestation) for attestation in existing.attestations}
+            if not existing_identities:
+                continue
+            if existing_identities.issubset(incoming_identities):
+                replacement_txids.append(entry.transaction.txid())
+                replaced_identities.update(existing_identities)
+                continue
+            if existing_identities & incoming_identities:
+                return []
+
+        if len(replacement_txids) > 1 or len(incoming_identities) > len(replaced_identities):
+            return replacement_txids
+        return []
 
     def _prune_expired(self, *, now: int) -> None:
         """Remove mempool entries older than the configured TTL."""
