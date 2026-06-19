@@ -5,7 +5,7 @@ from chipcoin.node.messages import MessageEnvelope, PingMessage, VersionMessage
 from chipcoin.node.p2p.codec import decode_message, encode_message
 from chipcoin.node.p2p.protocol import LocalPeerIdentity, PeerProtocol, ProtocolError
 from chipcoin.node.p2p.errors import HandshakeFailedError, WrongNetworkMagicError
-from chipcoin.node.p2p.transport import TCPTransport
+from chipcoin.node.p2p.transport import FRAME_HEADER_SIZE, MAX_P2P_FRAME_PAYLOAD_SIZE, TCPTransport, TransportError
 
 
 def test_tcp_transport_sends_and_receives_framed_messages_over_connected_streams() -> None:
@@ -21,6 +21,50 @@ def test_tcp_transport_sends_and_receives_framed_messages_over_connected_streams
         finally:
             await left_transport.close()
             await right_transport.close()
+
+    asyncio.run(scenario())
+
+
+def test_tcp_transport_rejects_oversized_inbound_frame_before_payload_read() -> None:
+    async def scenario() -> None:
+        reader = _MemoryReader()
+        writer = _MemoryWriter(peer_reader=_MemoryReader())
+        transport = TCPTransport(reader, writer, read_timeout=2.0, write_timeout=2.0)
+        header = (
+            MAINNET_CONFIG.magic
+            + b"ping".ljust(12, b"\0")
+            + (MAX_P2P_FRAME_PAYLOAD_SIZE + 1).to_bytes(4, byteorder="little")
+            + b"\0" * 4
+        )
+        reader.feed_data(header)
+        try:
+            try:
+                await transport.receive()
+            except TransportError as exc:
+                assert "exceeds maximum size" in str(exc)
+            else:
+                raise AssertionError("oversized inbound frame was accepted")
+            assert reader.read_sizes == [FRAME_HEADER_SIZE]
+        finally:
+            await transport.close()
+
+    asyncio.run(scenario())
+
+
+def test_tcp_transport_rejects_oversized_outbound_frame() -> None:
+    async def scenario() -> None:
+        transport, peer_transport = _make_transport_pair()
+        try:
+            frame = b"\0" * (FRAME_HEADER_SIZE + MAX_P2P_FRAME_PAYLOAD_SIZE + 1)
+            try:
+                await transport.send(frame)
+            except TransportError as exc:
+                assert "exceeds maximum size" in str(exc)
+            else:
+                raise AssertionError("oversized outbound frame was accepted")
+        finally:
+            await transport.close()
+            await peer_transport.close()
 
     asyncio.run(scenario())
 
@@ -294,8 +338,10 @@ class _MemoryReader:
         self._buffer = bytearray()
         self._event = asyncio.Event()
         self._closed = False
+        self.read_sizes: list[int] = []
 
     async def readexactly(self, size: int) -> bytes:
+        self.read_sizes.append(size)
         while len(self._buffer) < size:
             if self._closed:
                 raise asyncio.IncompleteReadError(partial=bytes(self._buffer), expected=size)

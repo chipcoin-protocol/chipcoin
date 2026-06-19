@@ -9,6 +9,7 @@ from .errors import ConnectionClosedError, TransportError, TransportTimeoutError
 
 
 FRAME_HEADER_SIZE = 24
+MAX_P2P_FRAME_PAYLOAD_SIZE = 8_000_000
 
 
 class Transport:
@@ -87,6 +88,11 @@ class TCPTransport(Transport):
     async def send(self, payload: bytes) -> None:
         """Transmit a complete framed message."""
 
+        if len(payload) > FRAME_HEADER_SIZE + MAX_P2P_FRAME_PAYLOAD_SIZE:
+            raise TransportError(
+                f"P2P frame exceeds maximum size: "
+                f"{len(payload) - FRAME_HEADER_SIZE} > {MAX_P2P_FRAME_PAYLOAD_SIZE} bytes."
+            )
         try:
             self.writer.write(payload)
             await asyncio.wait_for(self.writer.drain(), timeout=self.write_timeout)
@@ -104,6 +110,11 @@ class TCPTransport(Transport):
                 timeout=self.read_timeout,
             )
             payload_length = int.from_bytes(header[16:20], byteorder="little", signed=False)
+            if payload_length > MAX_P2P_FRAME_PAYLOAD_SIZE:
+                raise TransportError(
+                    f"P2P frame payload exceeds maximum size: "
+                    f"{payload_length} > {MAX_P2P_FRAME_PAYLOAD_SIZE} bytes."
+                )
             payload = await asyncio.wait_for(
                 self.reader.readexactly(payload_length),
                 timeout=self.read_timeout,
