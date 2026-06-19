@@ -51,6 +51,7 @@ Outputs:
 
 - `dist-chrome`
 - `dist-firefox`
+- `build/browser-wallet/chipcoin-browser-wallet-firefox-unsigned.xpi`
 
 ## Load In Browser
 
@@ -66,6 +67,40 @@ Firefox:
 1. Open `about:debugging#/runtime/this-firefox`
 2. Click `Load Temporary Add-on...`
 3. Select `apps/browser-wallet/dist-firefox/manifest.json`
+
+## Firefox Normal Installable Package
+
+Firefox Release and Beta require Mozilla signing before an `.xpi` can be
+installed normally from a file or website. The repository can build the package,
+but a normal installable Firefox artifact must be signed through AMO as an
+unlisted extension.
+
+Build and package:
+
+```bash
+cd apps/browser-wallet
+npm run build:firefox
+rm -rf dist-firefox
+mv dist dist-firefox
+npm run package:firefox
+```
+
+Without AMO credentials, this creates:
+
+```text
+build/browser-wallet/chipcoin-browser-wallet-firefox-unsigned.xpi
+```
+
+That unsigned package is not suitable for normal Firefox Release/Beta users.
+To produce the self-distributed signed package:
+
+```bash
+npm install -g web-ext
+AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run package:firefox
+```
+
+The signed `.xpi` emitted by `web-ext sign --channel unlisted` can then be
+hosted as the public Firefox wallet download.
 
 ## First Use
 

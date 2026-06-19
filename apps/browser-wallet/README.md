@@ -11,10 +11,32 @@ Supported browsers:
 Build commands:
 - `npm run build:chrome`
 - `npm run build:firefox`
+- `npm run package:firefox`
 
 Install:
 - Chrome: build with `npm run build:chrome`, open `chrome://extensions`, enable Developer mode, then `Load unpacked` and select `apps/browser-wallet/dist/`
 - Firefox: build with `npm run build:firefox`, open `about:debugging#/runtime/this-firefox`, click `Load Temporary Add-on...`, then select `apps/browser-wallet/dist/manifest.json`
+
+Firefox normal install:
+- Firefox Release/Beta requires Mozilla signing for normal `.xpi` installation.
+- Build the Firefox extension, then package/sign it:
+
+```bash
+npm run build:firefox
+rm -rf dist-firefox
+mv dist dist-firefox
+npm run package:firefox
+```
+
+- Without AMO credentials this creates `build/browser-wallet/chipcoin-browser-wallet-firefox-unsigned.xpi`, useful only for test/dev installs.
+- To create a normal installable self-distributed package, install `web-ext`, set AMO credentials, and rerun:
+
+```bash
+npm install -g web-ext
+AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run package:firefox
+```
+
+- Upload the signed `.xpi` produced in `build/browser-wallet/` to the website downloads area.
 
 Connect to a node:
 - Open `Settings`

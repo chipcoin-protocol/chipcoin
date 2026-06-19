@@ -17,6 +17,7 @@ run/
 wallets/
 logs/
 docker-compose.override.yml
+docker-compose.override.yml.*
 docker-compose.local.yml
 send_chc_from_miner.sh
 src/*.egg-info/
@@ -27,6 +28,7 @@ apps/browser-wallet/dist/
 apps/browser-wallet/dist-chrome/
 apps/browser-wallet/dist-firefox/
 apps/browser-wallet/.vite/
+build/browser-wallet/
 
 apps/explorer/node_modules/
 apps/explorer/dist/

@@ -8,6 +8,7 @@
     "build": "npm run build:chrome && npm run build:firefox",
     "build:chrome": "vite build --mode chrome",
     "build:firefox": "vite build --mode firefox",
+    "package:firefox": "./package-firefox.sh",
     "test": "vitest run"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^5.4.10",
-    "vitest": "^2.1.5"
+    "vitest": "^2.1.5",
+    "web-ext": "^10.3.0"
   }
 }
