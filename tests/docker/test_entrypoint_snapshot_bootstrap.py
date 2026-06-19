@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
+import hashlib
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -214,3 +216,210 @@ def test_entrypoint_refuses_wrong_network_database(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "wrong-network database" in result.stderr
     assert "initialized\tok\t9\trestored-tip" not in result.stdout
+
+
+def test_entrypoint_delays_retry_after_failed_snapshot_download(tmp_path: Path) -> None:
+    sqlite_path = tmp_path / "missing.sqlite3"
+    first_script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+download_snapshot_file() {{
+  echo "DOWNLOAD_CALLED"
+  return 1
+}}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
+"""
+    second_script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+download_snapshot_file() {{
+  echo "DOWNLOAD_CALLED_AGAIN"
+  return 1
+}}
+sleep() {{
+  echo "SLEEP_CALLED:$1"
+  exit 77
+}}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "CHIPCOIN_NETWORK": "testnet",
+        "NODE_BOOTSTRAP_MODE": "snapshot",
+        "NODE_SNAPSHOT_FILE": str(tmp_path / "node.snapshot"),
+        "NODE_SNAPSHOT_SELECTED_URL": "https://example.invalid/snapshot",
+        "NODE_SNAPSHOT_SELECTED_HEIGHT": "9",
+        "NODE_SNAPSHOT_SELECTED_HASH": "restored-tip",
+        "NODE_SNAPSHOT_BOOTSTRAP_RETRY_BASE_SECONDS": "11",
+        "NODE_SNAPSHOT_BOOTSTRAP_RETRY_MAX_SECONDS": "11",
+        "SQLITE_UNDER_TEST": str(sqlite_path),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+
+    first = subprocess.run(
+        ["bash", "-lc", first_script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    result = subprocess.run(
+        ["bash", "-lc", second_script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert first.returncode != 0
+    assert first.stderr.count("DOWNLOAD_CALLED") == 1
+    assert result.returncode == 77
+    assert "DOWNLOAD_CALLED_AGAIN" not in result.stdout
+    assert "SLEEP_CALLED:11" in result.stdout
+    assert "Snapshot bootstrap retry delayed" in result.stderr
+
+
+def test_entrypoint_refuses_concurrent_snapshot_bootstrap(tmp_path: Path) -> None:
+    sqlite_path = tmp_path / "missing.sqlite3"
+    lock_dir = tmp_path / "missing.sqlite3.snapshot-bootstrap.lock"
+    lock_dir.mkdir()
+    (lock_dir / "owner").write_text("pid=other\n", encoding="utf-8")
+    script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+download_snapshot_file() {{
+  echo "DOWNLOAD_SHOULD_NOT_RUN"
+}}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "CHIPCOIN_NETWORK": "testnet",
+        "NODE_BOOTSTRAP_MODE": "snapshot",
+        "NODE_SNAPSHOT_FILE": str(tmp_path / "node.snapshot"),
+        "NODE_SNAPSHOT_SELECTED_URL": "https://example.invalid/snapshot",
+        "NODE_SNAPSHOT_SELECTED_HEIGHT": "9",
+        "NODE_SNAPSHOT_SELECTED_HASH": "restored-tip",
+        "SQLITE_UNDER_TEST": str(sqlite_path),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Snapshot bootstrap already in progress" in result.stderr
+    assert "DOWNLOAD_SHOULD_NOT_RUN" not in result.stdout
+
+
+def test_entrypoint_reuses_existing_snapshot_file(tmp_path: Path) -> None:
+    template_db = tmp_path / "restored.sqlite3"
+    sqlite_path = tmp_path / "missing.sqlite3"
+    snapshot_path = tmp_path / "node.snapshot"
+    snapshot_url = "https://example.invalid/snapshot"
+    snapshot_path.write_bytes(b"cached snapshot")
+    checksum = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+    (tmp_path / "node.snapshot.meta.json").write_text(
+        json.dumps(
+            {
+                "snapshot_url": snapshot_url,
+                "snapshot_height": "9",
+                "snapshot_block_hash": "restored-tip",
+                "snapshot_file": str(snapshot_path),
+                "checksum_sha256": checksum,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_minimal_node_db(template_db, tip_hash="restored-tip", height=9, genesis_bits=TESTNET_GENESIS_BITS)
+
+    script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+download_snapshot_file() {{
+  echo "DOWNLOAD_SHOULD_NOT_RUN"
+  return 1
+}}
+chipcoin() {{
+  cp "$VALID_DB_TEMPLATE" "$SQLITE_UNDER_TEST"
+  printf '%s\\n' '{{"ok":true}}'
+}}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
+node_database_bootstrap_state "$SQLITE_UNDER_TEST"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "CHIPCOIN_NETWORK": "testnet",
+        "NODE_BOOTSTRAP_MODE": "snapshot",
+        "NODE_SNAPSHOT_FILE": str(snapshot_path),
+        "NODE_SNAPSHOT_SELECTED_URL": snapshot_url,
+        "NODE_SNAPSHOT_SELECTED_HEIGHT": "9",
+        "NODE_SNAPSHOT_SELECTED_HASH": "restored-tip",
+        "VALID_DB_TEMPLATE": str(template_db),
+        "SQLITE_UNDER_TEST": str(sqlite_path),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Snapshot download skipped reason=local_snapshot_reusable" in result.stdout
+    assert "DOWNLOAD_SHOULD_NOT_RUN" not in result.stdout
+    assert "initialized\tok\t9\trestored-tip" in result.stdout
+
+
+def test_entrypoint_snapshot_retry_delay_increases_after_failures(tmp_path: Path) -> None:
+    sqlite_path = tmp_path / "node.sqlite3"
+    script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+snapshot_bootstrap_record_failure "$SQLITE_UNDER_TEST" first >/dev/null
+snapshot_bootstrap_record_failure "$SQLITE_UNDER_TEST" second >/dev/null
+cat "$(snapshot_bootstrap_retry_path "$SQLITE_UNDER_TEST")"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "NODE_SNAPSHOT_BOOTSTRAP_RETRY_BASE_SECONDS": "3",
+        "NODE_SNAPSHOT_BOOTSTRAP_RETRY_MAX_SECONDS": "20",
+        "SQLITE_UNDER_TEST": str(sqlite_path),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_count"] == 2
+    assert payload["retry_delay_seconds"] == 6
+    assert payload["last_reason"] == "second"

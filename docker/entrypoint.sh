@@ -390,6 +390,274 @@ validate_snapshot_bootstrap_result() {
   fi
 }
 
+snapshot_bootstrap_lock_dir() {
+  local sqlite_path="$1"
+  printf '%s\n' "${sqlite_path}.snapshot-bootstrap.lock"
+}
+
+snapshot_bootstrap_retry_path() {
+  local sqlite_path="$1"
+  printf '%s\n' "${sqlite_path}.snapshot-bootstrap.retry.json"
+}
+
+snapshot_bootstrap_restore_marker_path() {
+  local sqlite_path="$1"
+  printf '%s\n' "${sqlite_path}.snapshot.meta.json"
+}
+
+snapshot_file_marker_path() {
+  local snapshot_path="$1"
+  printf '%s\n' "${snapshot_path}.meta.json"
+}
+
+snapshot_bootstrap_acquire_lock() {
+  local sqlite_path="$1"
+  local lock_dir
+  lock_dir="$(snapshot_bootstrap_lock_dir "$sqlite_path")"
+  if mkdir "$lock_dir" 2>/dev/null; then
+    {
+      printf 'pid=%s\n' "$$"
+      date -u +"created_at=%Y-%m-%dT%H:%M:%SZ"
+    } > "${lock_dir}/owner"
+    printf '%s\n' "$lock_dir"
+    return 0
+  fi
+  local stale_seconds="${NODE_SNAPSHOT_BOOTSTRAP_LOCK_STALE_SECONDS:-900}"
+  if [[ "$stale_seconds" =~ ^[0-9]+$ && "$stale_seconds" -gt 0 && -d "$lock_dir" ]]; then
+    local now lock_mtime lock_age
+    now="$(date +%s)"
+    lock_mtime="$(stat -c %Y "$lock_dir" 2>/dev/null || printf '%s' "$now")"
+    lock_age=$((now - lock_mtime))
+    if [[ "$lock_age" -gt "$stale_seconds" ]]; then
+      warn "Removing stale snapshot bootstrap lock data_path=${sqlite_path} lock=${lock_dir} age_seconds=${lock_age}"
+      rm -rf -- "$lock_dir"
+      if mkdir "$lock_dir" 2>/dev/null; then
+        {
+          printf 'pid=%s\n' "$$"
+          date -u +"created_at=%Y-%m-%dT%H:%M:%SZ"
+        } > "${lock_dir}/owner"
+        printf '%s\n' "$lock_dir"
+        return 0
+      fi
+    fi
+  fi
+  die "Snapshot bootstrap already in progress data_path=${sqlite_path} lock=${lock_dir}"
+}
+
+snapshot_bootstrap_release_lock() {
+  local lock_dir="$1"
+  [[ -n "$lock_dir" ]] || return 0
+  rm -rf -- "$lock_dir"
+}
+
+snapshot_bootstrap_apply_backoff() {
+  local sqlite_path="$1"
+  local retry_path
+  retry_path="$(snapshot_bootstrap_retry_path "$sqlite_path")"
+  SNAPSHOT_BOOTSTRAP_RETRY_PATH_VALUE="$retry_path" \
+  python3 - <<'PY'
+import json
+import os
+import time
+from pathlib import Path
+
+path = Path(os.environ["SNAPSHOT_BOOTSTRAP_RETRY_PATH_VALUE"])
+if not path.exists():
+    raise SystemExit(0)
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+next_retry_at = int(payload.get("next_retry_at", 0) or 0)
+remaining = max(0, next_retry_at - int(time.time()))
+reason = str(payload.get("last_reason", "unknown"))
+failure_count = int(payload.get("failure_count", 0) or 0)
+if remaining > 0:
+    print(f"{remaining}\t{failure_count}\t{reason}")
+PY
+}
+
+snapshot_bootstrap_record_failure() {
+  local sqlite_path="$1"
+  local reason="$2"
+  local retry_path
+  retry_path="$(snapshot_bootstrap_retry_path "$sqlite_path")"
+  SNAPSHOT_BOOTSTRAP_RETRY_PATH_VALUE="$retry_path" \
+  SNAPSHOT_BOOTSTRAP_FAILURE_REASON_VALUE="$reason" \
+  SNAPSHOT_BOOTSTRAP_RETRY_BASE_SECONDS_VALUE="${NODE_SNAPSHOT_BOOTSTRAP_RETRY_BASE_SECONDS:-30}" \
+  SNAPSHOT_BOOTSTRAP_RETRY_MAX_SECONDS_VALUE="${NODE_SNAPSHOT_BOOTSTRAP_RETRY_MAX_SECONDS:-1800}" \
+  python3 - <<'PY'
+import json
+import os
+import time
+from pathlib import Path
+
+path = Path(os.environ["SNAPSHOT_BOOTSTRAP_RETRY_PATH_VALUE"])
+reason = os.environ["SNAPSHOT_BOOTSTRAP_FAILURE_REASON_VALUE"]
+base = max(1, int(os.environ["SNAPSHOT_BOOTSTRAP_RETRY_BASE_SECONDS_VALUE"]))
+maximum = max(base, int(os.environ["SNAPSHOT_BOOTSTRAP_RETRY_MAX_SECONDS_VALUE"]))
+failure_count = 0
+if path.exists():
+    try:
+        failure_count = int(json.loads(path.read_text(encoding="utf-8")).get("failure_count", 0) or 0)
+    except Exception:
+        failure_count = 0
+failure_count += 1
+delay = min(maximum, base * (2 ** (failure_count - 1)))
+now = int(time.time())
+path.write_text(
+    json.dumps(
+        {
+            "failure_count": failure_count,
+            "last_reason": reason,
+            "last_failed_at": now,
+            "retry_delay_seconds": delay,
+            "next_retry_at": now + delay,
+        },
+        sort_keys=True,
+    ),
+    encoding="utf-8",
+)
+print(f"{failure_count}\t{delay}\t{now + delay}")
+PY
+}
+
+snapshot_bootstrap_clear_retry() {
+  local sqlite_path="$1"
+  rm -f -- "$(snapshot_bootstrap_retry_path "$sqlite_path")"
+}
+
+snapshot_file_is_reusable() {
+  local snapshot_url="$1"
+  local snapshot_path="$2"
+  local expected_checksum="${3:-}"
+  local snapshot_height="${4:-}"
+  local snapshot_hash="${5:-}"
+  SNAPSHOT_URL_VALUE="$snapshot_url" \
+  SNAPSHOT_PATH_VALUE="$snapshot_path" \
+  SNAPSHOT_EXPECTED_CHECKSUM_VALUE="$expected_checksum" \
+  SNAPSHOT_HEIGHT_VALUE="$snapshot_height" \
+  SNAPSHOT_HASH_VALUE="$snapshot_hash" \
+  SNAPSHOT_FILE_MARKER_PATH_VALUE="$(snapshot_file_marker_path "$snapshot_path")" \
+  python3 - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["SNAPSHOT_PATH_VALUE"])
+marker_path = Path(os.environ["SNAPSHOT_FILE_MARKER_PATH_VALUE"])
+expected_checksum = os.environ.get("SNAPSHOT_EXPECTED_CHECKSUM_VALUE", "").strip().lower()
+expected_url = os.environ["SNAPSHOT_URL_VALUE"]
+expected_height = os.environ.get("SNAPSHOT_HEIGHT_VALUE", "").strip()
+expected_hash = os.environ.get("SNAPSHOT_HASH_VALUE", "").strip()
+
+if not path.exists() or not path.is_file() or path.stat().st_size == 0:
+    raise SystemExit(1)
+
+def file_sha256(target: Path) -> str:
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+actual_checksum = file_sha256(path)
+if expected_checksum:
+    if actual_checksum != expected_checksum:
+        raise SystemExit(1)
+    print(actual_checksum)
+    raise SystemExit(0)
+
+try:
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+if str(marker.get("snapshot_url", "")) != expected_url:
+    raise SystemExit(1)
+if expected_hash and str(marker.get("snapshot_block_hash", "")) != expected_hash:
+    raise SystemExit(1)
+if expected_height and str(marker.get("snapshot_height", "")) != expected_height:
+    raise SystemExit(1)
+if str(marker.get("checksum_sha256", "")) != actual_checksum:
+    raise SystemExit(1)
+
+print(actual_checksum)
+PY
+}
+
+write_snapshot_file_marker() {
+  local snapshot_url="$1"
+  local snapshot_path="$2"
+  local snapshot_height="${3:-}"
+  local snapshot_hash="${4:-}"
+  SNAPSHOT_URL_VALUE="$snapshot_url" \
+  SNAPSHOT_PATH_VALUE="$snapshot_path" \
+  SNAPSHOT_HEIGHT_VALUE="$snapshot_height" \
+  SNAPSHOT_HASH_VALUE="$snapshot_hash" \
+  SNAPSHOT_FILE_MARKER_PATH_VALUE="$(snapshot_file_marker_path "$snapshot_path")" \
+  python3 - <<'PY'
+import hashlib
+import json
+import os
+import time
+from pathlib import Path
+
+path = Path(os.environ["SNAPSHOT_PATH_VALUE"])
+marker_path = Path(os.environ["SNAPSHOT_FILE_MARKER_PATH_VALUE"])
+
+def file_sha256(target: Path) -> str:
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+payload = {
+    "snapshot_url": os.environ["SNAPSHOT_URL_VALUE"],
+    "snapshot_height": os.environ.get("SNAPSHOT_HEIGHT_VALUE", ""),
+    "snapshot_block_hash": os.environ.get("SNAPSHOT_HASH_VALUE", ""),
+    "snapshot_file": str(path),
+    "checksum_sha256": file_sha256(path),
+    "downloaded_at": int(time.time()),
+}
+marker_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+PY
+}
+
+write_snapshot_restore_marker() {
+  local sqlite_path="$1"
+  local snapshot_url="$2"
+  local snapshot_path="$3"
+  local snapshot_height="${4:-}"
+  local snapshot_hash="${5:-}"
+  SNAPSHOT_RESTORE_MARKER_PATH_VALUE="$(snapshot_bootstrap_restore_marker_path "$sqlite_path")" \
+  SNAPSHOT_URL_VALUE="$snapshot_url" \
+  SNAPSHOT_PATH_VALUE="$snapshot_path" \
+  SNAPSHOT_HEIGHT_VALUE="$snapshot_height" \
+  SNAPSHOT_HASH_VALUE="$snapshot_hash" \
+  python3 - <<'PY'
+import json
+import os
+import time
+from pathlib import Path
+
+payload = {
+    "bootstrap_mode": "snapshot",
+    "snapshot_url": os.environ["SNAPSHOT_URL_VALUE"],
+    "snapshot_file": os.environ["SNAPSHOT_PATH_VALUE"],
+    "snapshot_height": os.environ.get("SNAPSHOT_HEIGHT_VALUE", ""),
+    "snapshot_block_hash": os.environ.get("SNAPSHOT_HASH_VALUE", ""),
+    "restored_at": int(time.time()),
+}
+Path(os.environ["SNAPSHOT_RESTORE_MARKER_PATH_VALUE"]).write_text(
+    json.dumps(payload, sort_keys=True),
+    encoding="utf-8",
+)
+PY
+}
+
 select_snapshot_from_manifest() {
   SNAPSHOT_MANIFEST_URLS_VALUE="${NODE_SNAPSHOT_MANIFEST_URLS:-}" \
   CHIPCOIN_NETWORK_VALUE="${CHIPCOIN_NETWORK:-}" \
@@ -543,10 +811,23 @@ prepare_snapshot_bootstrap_if_needed() {
   local snapshot_hash="${NODE_SNAPSHOT_SELECTED_HASH:-}"
   local snapshot_checksum=""
   local manifest_url=""
+  local backoff_line backoff_seconds backoff_failures backoff_reason
+  backoff_line="$(snapshot_bootstrap_apply_backoff "$sqlite_path")"
+  if [[ -n "$backoff_line" ]]; then
+    IFS=$'\t' read -r backoff_seconds backoff_failures backoff_reason <<< "$backoff_line"
+    warn "Snapshot bootstrap retry delayed data_path=${sqlite_path} delay_seconds=${backoff_seconds} failure_count=${backoff_failures} reason=${backoff_reason}"
+    sleep "$backoff_seconds"
+  fi
+
+  local lock_dir=""
+  lock_dir="$(snapshot_bootstrap_acquire_lock "$sqlite_path")"
 
   if [[ -z "$snapshot_url" ]]; then
     local selected=""
     if ! selected="$(select_snapshot_from_manifest 2>&1)"; then
+      local failure_reason="manifest_select_failed:${selected}"
+      snapshot_bootstrap_record_failure "$sqlite_path" "$failure_reason" >/dev/null || true
+      snapshot_bootstrap_release_lock "$lock_dir"
       if [[ "$mode" == "auto" ]]; then
         warn "Snapshot bootstrap failed while selecting manifest entry: ${selected}. Falling back to full sync."
         return 0
@@ -557,6 +838,7 @@ prepare_snapshot_bootstrap_if_needed() {
   fi
 
   if [[ -z "$snapshot_url" ]]; then
+    snapshot_bootstrap_release_lock "$lock_dir"
     if [[ "$mode" == "auto" ]]; then
       warn "Snapshot bootstrap skipped: no selected snapshot URL. Falling back to full sync."
       return 0
@@ -565,12 +847,24 @@ prepare_snapshot_bootstrap_if_needed() {
   fi
 
   log "Snapshot bootstrap preparing url=${snapshot_url} height=${snapshot_height:-unknown} hash=${snapshot_hash:-unknown} manifest=${manifest_url:-preselected} file=${snapshot_path}"
-  if ! download_snapshot_file "$snapshot_url" "$snapshot_path" "$snapshot_checksum"; then
-    if [[ "$mode" == "auto" ]]; then
-      warn "Snapshot download failed. Falling back to full sync."
-      return 0
+  local snapshot_reused="false"
+  local snapshot_actual_checksum=""
+  if snapshot_actual_checksum="$(snapshot_file_is_reusable "$snapshot_url" "$snapshot_path" "$snapshot_checksum" "$snapshot_height" "$snapshot_hash" 2>/dev/null)"; then
+    snapshot_reused="true"
+    log "Snapshot download skipped reason=local_snapshot_reusable url=${snapshot_url} file=${snapshot_path} checksum=${snapshot_actual_checksum}"
+  else
+    local download_output=""
+    if ! download_output="$(download_snapshot_file "$snapshot_url" "$snapshot_path" "$snapshot_checksum" 2>&1)"; then
+      local failure_reason="download_failed:${download_output}"
+      snapshot_bootstrap_record_failure "$sqlite_path" "$failure_reason" >/dev/null || true
+      snapshot_bootstrap_release_lock "$lock_dir"
+      if [[ "$mode" == "auto" ]]; then
+        warn "Snapshot download failed reason=${download_output}. Falling back to full sync."
+        return 0
+      fi
+      die "Snapshot download failed: ${download_output}"
     fi
-    die "Snapshot download failed."
+    write_snapshot_file_marker "$snapshot_url" "$snapshot_path" "$snapshot_height" "$snapshot_hash"
   fi
 
   local -a import_args=(
@@ -587,15 +881,28 @@ prepare_snapshot_bootstrap_if_needed() {
 
   local import_output=""
   if ! import_output="$(chipcoin "${import_args[@]}" 2>&1)"; then
+    local failure_reason="import_failed:${import_output}"
+    snapshot_bootstrap_record_failure "$sqlite_path" "$failure_reason" >/dev/null || true
     if [[ "$mode" == "auto" ]]; then
       rm -f -- "$sqlite_path" "$sqlite_path-shm" "$sqlite_path-wal"
-      warn "Snapshot import failed: ${import_output}. Falling back to full sync."
+      snapshot_bootstrap_release_lock "$lock_dir"
+      warn "Snapshot import failed reason=${import_output}. Falling back to full sync."
       return 0
     fi
+    snapshot_bootstrap_release_lock "$lock_dir"
     die "Snapshot import failed: ${import_output}"
   fi
-  validate_snapshot_bootstrap_result "$sqlite_path" "$snapshot_height" "$snapshot_hash"
-  log "Snapshot bootstrap imported data_path=${sqlite_path} file=${snapshot_path} result=${import_output}"
+  local validation_output=""
+  if ! validation_output="$(validate_snapshot_bootstrap_result "$sqlite_path" "$snapshot_height" "$snapshot_hash" 2>&1)"; then
+    local failure_reason="validation_failed:${validation_output}"
+    snapshot_bootstrap_record_failure "$sqlite_path" "$failure_reason" >/dev/null || true
+    snapshot_bootstrap_release_lock "$lock_dir"
+    die "Snapshot validation failed after import: ${validation_output}"
+  fi
+  write_snapshot_restore_marker "$sqlite_path" "$snapshot_url" "$snapshot_path" "$snapshot_height" "$snapshot_hash"
+  snapshot_bootstrap_clear_retry "$sqlite_path"
+  snapshot_bootstrap_release_lock "$lock_dir"
+  log "Snapshot bootstrap imported data_path=${sqlite_path} file=${snapshot_path} reused=${snapshot_reused} result=${import_output}"
 }
 
 apply_initial_sync_defaults_if_needed() {
