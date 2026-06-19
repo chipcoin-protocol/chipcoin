@@ -2739,8 +2739,11 @@ def test_cli_wallet_generate_address_build_and_send_local() -> None:
         service = _make_service(db_path)
         owner = wallet_key(0)
 
-        generate_code, generate_payload = _run_cli(["wallet-generate", "--wallet-file", str(generated_wallet_path)])
-        import_code, import_payload = _run_cli(
+        generate_code, generate_stdout, generate_stderr = _run_cli_with_stderr(
+            ["wallet-generate", "--wallet-file", str(generated_wallet_path)]
+        )
+        generate_payload = json.loads(generate_stdout)
+        import_code, import_stdout, import_stderr = _run_cli_with_stderr(
             [
                 "wallet-import",
                 "--wallet-file",
@@ -2749,6 +2752,7 @@ def test_cli_wallet_generate_address_build_and_send_local() -> None:
                 serialize_private_key_hex(owner.private_key),
             ]
         )
+        import_payload = json.loads(import_stdout)
         funding_outpoint = OutPoint(txid="22" * 32, index=0)
         put_wallet_utxo(service, funding_outpoint, value=125, owner=owner)
 
@@ -2790,7 +2794,14 @@ def test_cli_wallet_generate_address_build_and_send_local() -> None:
         assert build_code == 0
         assert send_code == 0
         assert generate_payload["address"].startswith("CHC")
+        assert "private_key_hex" in generate_payload
+        assert "private_key_hex" in generate_stderr
+        assert "private_key_hex" in import_payload
+        assert "private_key_hex" in import_stderr
         assert address_payload["address"] == import_payload["address"] == owner.address
+        assert "private_key_hex" not in address_payload
+        assert generated_wallet_path.stat().st_mode & 0o777 == 0o600
+        assert imported_wallet_path.stat().st_mode & 0o777 == 0o600
         assert build_payload["raw_hex"]
         assert build_payload["fee_chipbits"] == 5
         assert send_payload["fee_chipbits"] == 5

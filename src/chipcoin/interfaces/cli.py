@@ -509,18 +509,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "wallet-generate":
             wallet_key = generate_wallet_key()
             _save_wallet_key(Path(args.wallet_file), wallet_key)
-            _print_json(_format_wallet_key(wallet_key))
+            _warn_wallet_private_key_output("wallet-generate")
+            _print_json(_format_wallet_private_key(wallet_key))
             return 0
 
         if args.command == "wallet-import":
             wallet_key = wallet_key_from_private_key(parse_private_key_hex(args.private_key_hex))
             _save_wallet_key(Path(args.wallet_file), wallet_key)
-            _print_json(_format_wallet_key(wallet_key))
+            _warn_wallet_private_key_output("wallet-import")
+            _print_json(_format_wallet_private_key(wallet_key))
             return 0
 
         if args.command == "wallet-address":
             wallet_key = _load_wallet_key(Path(args.wallet_file))
-            _print_json(_format_wallet_key(wallet_key))
+            _print_json(_format_wallet_public_key(wallet_key))
             return 0
 
         if args.command == "wallet-utxos":
@@ -1536,7 +1538,16 @@ def _save_wallet_key(path: Path, wallet_key: WalletKey) -> None:
         "address": wallet_key.address,
         "compressed": wallet_key.compressed,
     }
-    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    try:
+        tmp_path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        os.chmod(tmp_path, 0o600)
+        tmp_path.replace(path)
+        os.chmod(path, 0o600)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def _load_wallet_key(path: Path) -> WalletKey:
@@ -1556,15 +1567,29 @@ def _load_wallet_key(path: Path) -> WalletKey:
     return wallet_key
 
 
-def _format_wallet_key(wallet_key: WalletKey) -> dict[str, str | bool]:
-    """Convert a wallet key to CLI/HTTP-friendly text values."""
+def _format_wallet_public_key(wallet_key: WalletKey) -> dict[str, str | bool]:
+    """Convert a wallet key to public CLI/HTTP-friendly text values."""
 
     return {
-        "private_key_hex": serialize_private_key_hex(wallet_key.private_key),
         "public_key_hex": serialize_public_key_hex(wallet_key.public_key),
         "address": wallet_key.address,
         "compressed": wallet_key.compressed,
     }
+
+
+def _format_wallet_private_key(wallet_key: WalletKey) -> dict[str, str | bool]:
+    """Convert a wallet key to CLI text values including private key material."""
+
+    payload = _format_wallet_public_key(wallet_key)
+    return {"private_key_hex": serialize_private_key_hex(wallet_key.private_key), **payload}
+
+
+def _warn_wallet_private_key_output(command: str) -> None:
+    """Warn operators when a wallet command prints private key material."""
+
+    _print_warning(
+        f"{command} output includes private_key_hex. Treat it as secret key material and avoid pasting it into logs."
+    )
 
 
 def _build_register_node_transaction(service: NodeService, wallet_key: WalletKey, args):

@@ -3,6 +3,9 @@
 This file tracks technical reminders that must be resolved before any mainnet
 genesis or public launch. These are not testnet operations notes.
 
+See also `docs/security-hardening.md` for the security hardening tracker and
+pre-mainnet risk register.
+
 ## Consensus Rules
 
 - Do not carry testnet-only historical activation rules into mainnet.
@@ -27,6 +30,12 @@ genesis or public launch. These are not testnet operations notes.
   pubkeys.
 - Verify that importing a mainnet snapshot does not depend on testnet-only
   activation compatibility.
+- Do not ship public mainnet snapshot bootstrap with implicit
+  `--snapshot-trust-mode off`.
+- Keep snapshot retry-loop protection enabled in Docker startup paths:
+  - exponential backoff after failed manifest/download/import/validation
+  - local bootstrap lock
+  - local snapshot file reuse when checksum/metadata match
 
 ## Public Network Hygiene
 
@@ -34,6 +43,8 @@ genesis or public launch. These are not testnet operations notes.
 - NAT/private nodes should not announce themselves as public peers.
 - Keep peer identity alias handling, manual peer preservation, and public peer
   filtering covered by tests.
+- Keep hard P2P frame-size limits in transport before reading peer-controlled
+  payload lengths. The current cap is `8_000_000` bytes.
 
 ## Economics And Supply
 
@@ -76,3 +87,13 @@ genesis or public launch. These are not testnet operations notes.
   bootstrap, faucet usage, and wallet API usage.
 - Avoid sending full wallet addresses to third-party analytics; use server logs
   or hashed/truncated identifiers where needed.
+
+## Security Hardening Before Mainnet
+
+- Keep wallet CLI key handling covered by regression tests:
+  - wallet files are written with owner-only permissions
+  - `wallet-address` does not print `private_key_hex`
+  - commands that intentionally print private keys warn on stderr
+- Add network/chain domain separation to special node transaction signatures.
+- Harden reward epoch seed derivation against single-block miner grinding.
+- Review runtime/sync/mempool paths under adversarial peers and high load.

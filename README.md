@@ -61,6 +61,7 @@ Relevant public areas:
 - `docs/node.md`: node setup and API notes
 - `docs/miner.md`: miner setup and wallet requirements
 - `docs/browser-wallet.md`: extension build and install flow
+- `docs/security-hardening.md`: security hardening tracker and pre-mainnet risk register
 
 Operator-only or internal material may still exist in the tree, but it is not part of the primary public onboarding path.
 

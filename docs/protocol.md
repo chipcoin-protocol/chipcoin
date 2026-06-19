@@ -123,6 +123,24 @@ Coinbase validation checks exact expected outputs:
 
 The main peer protocol is planned as a custom TCP-based protocol with a small binary framing layer. HTTP is not part of peer consensus traffic.
 
+Frame layout:
+
+- 4 bytes: network magic
+- 12 bytes: ASCII command padded with NUL bytes
+- 4 bytes: payload length, little-endian unsigned integer
+- 4 bytes: payload checksum
+- N bytes: typed payload
+
+Transport receivers must reject frames whose payload length exceeds the hard
+P2P payload cap before attempting to read the payload. The current cap is:
+
+```text
+MAX_P2P_FRAME_PAYLOAD_SIZE = 8_000_000 bytes
+```
+
+This cap exists to prevent unauthenticated peers from advertising very large
+payload lengths and forcing excessive memory allocation or long reads.
+
 ## Message Families
 
 Initial message set:
