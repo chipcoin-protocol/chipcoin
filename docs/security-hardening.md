@@ -27,7 +27,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | --- | --- | --- | --- |
 | P2P frame length | unauthenticated memory DoS | fixed with 8 MB payload cap | keep tests and tune if block serialization grows |
 | Wallet private key output and file mode | local/operational key exposure | fixed | keep tests and avoid expanding private key output |
-| Special node transaction signatures | cross-network replay/domain separation | open, consensus-affecting | add v2 signature domain before mainnet |
+| Special node transaction signatures | cross-network replay/domain separation | fixed with v2 network domain | keep mainnet v2-only |
 | Reward epoch seed | miner grinding bias | open, consensus-affecting | harden before mainnet reward economics are final |
 | Snapshot trust defaults | accidental trust-on-first-use | partially mitigated | use warn/enforce defaults for public/mainnet paths |
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
@@ -137,28 +137,37 @@ This affects special node transactions such as:
 
 ### Status
 
-Open.
+Fixed.
 
-### Recommended Fix
+### Implementation
 
-Introduce a v2 signing domain, for example:
+Special node owner signatures now support a v2 signing domain:
 
 ```text
-chipcoin:<network>:special-node-tx:v2
+chipcoin:special-node-tx:v2:<network>
 ```
 
-Include the domain in the signed digest. Also include an explicit
-`signature_version` or equivalent metadata so validation can distinguish old and
-new signatures during migrations.
+The signed v2 payload reuses all fields covered by the legacy v1 digest and
+adds the network through the domain prefix. When v2 is active for the target
+network height, builders add:
+
+- `owner_signature_version=v2`
+- `owner_signature_network=<network>`
+
+CLI and runtime builders pass the configured node network and next block
+height, so new
+`register_node`, `renew_node`, `register_reward_node`, and `renew_reward_node`
+transactions are bound to the intended chain.
 
 ### Compatibility
 
-Consensus-affecting.
+Consensus-affecting, implemented as a scheduled non-mainnet upgrade:
 
-For mainnet, start directly with v2 only. For existing testnet, either:
-
-- activate v2 at a future height and accept v1 only before that height; or
-- treat the testnet migration as a reset/re-registration event.
+- mainnet validation requires v2 signatures from genesis
+- devnet/testnet require legacy v1 signatures before height `11111`
+- devnet/testnet require v2 signatures from height `11111`
+- devnet/testnet v2 signatures must match the active network and cannot be
+  replayed across those networks
 
 ## 4. Reward Epoch Seed Grinding
 
@@ -277,9 +286,8 @@ node has pulled the fixed entrypoint and restarted.
 1. Keep the P2P frame cap and test coverage in place.
 2. Fix wallet output and file permissions.
 3. Set safe snapshot trust defaults for public/mainnet paths.
-4. Add special node transaction signature domain separation.
-5. Harden reward epoch seed derivation.
-6. Run a dedicated review of node runtime, sync, mempool pressure, and peer
+4. Harden reward epoch seed derivation.
+5. Run a dedicated review of node runtime, sync, mempool pressure, and peer
    misbehavior handling.
 
 ## Notes For Operators

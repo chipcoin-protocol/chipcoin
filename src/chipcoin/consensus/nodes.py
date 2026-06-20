@@ -16,6 +16,10 @@ from .params import ConsensusParams
 
 REGISTER_NODE_KIND = "register_node"
 RENEW_NODE_KIND = "renew_node"
+SPECIAL_NODE_SIGNATURE_DOMAIN_V2 = "chipcoin:special-node-tx:v2"
+SPECIAL_NODE_SIGNATURE_VERSION_V2 = "v2"
+SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT = 11111
+SPECIAL_NODE_SIGNATURE_SCHEDULED_NETWORKS = {"devnet", "testnet"}
 
 
 @dataclass(frozen=True)
@@ -346,7 +350,81 @@ def apply_special_node_transaction(
 
 
 def special_node_transaction_signature_digest(transaction: Transaction) -> bytes:
-    """Return the canonical digest signed by special node transactions."""
+    """Return the legacy digest signed by v1 special node transactions."""
+
+    return double_sha256(_special_node_transaction_signature_payload_v1(transaction).encode("utf-8"))
+
+
+def special_node_transaction_signature_digest_v2(transaction: Transaction, *, network: str) -> bytes:
+    """Return the network-domain-separated digest signed by v2 special node transactions."""
+
+    if not network:
+        raise ValueError("Special node transaction v2 signatures require a network.")
+    payload = "|".join(
+        [
+            f"{SPECIAL_NODE_SIGNATURE_DOMAIN_V2}:{network}",
+            _special_node_transaction_signature_payload_v1(transaction),
+        ]
+    )
+    return double_sha256(payload.encode("utf-8"))
+
+
+def special_node_signature_version_for_height(*, network: str, height: int) -> str:
+    """Return the required special-node signature version for a network height."""
+
+    if network in SPECIAL_NODE_SIGNATURE_SCHEDULED_NETWORKS and height < SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT:
+        return ""
+    return SPECIAL_NODE_SIGNATURE_VERSION_V2
+
+
+def special_node_transaction_signature_is_valid(transaction: Transaction, *, network: str, height: int) -> bool:
+    """Return whether the owner signature is valid for the active network.
+
+    v2 signatures bind the signed special-node payload to an explicit network
+    domain. devnet/testnet require legacy v1 signatures until the scheduled
+    activation height, then require v2. mainnet requires v2 from genesis.
+    """
+
+    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
+    required_version = special_node_signature_version_for_height(network=network, height=height)
+    version = transaction.metadata.get("owner_signature_version", "")
+    if version != required_version:
+        return False
+    if version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
+        signature_network = transaction.metadata.get("owner_signature_network", "")
+        if signature_network != network:
+            return False
+        return verify_digest(
+            owner_pubkey,
+            special_node_transaction_signature_digest_v2(transaction, network=network),
+            owner_signature,
+        )
+    return verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature)
+
+
+def special_node_transaction_signature_is_valid_stateless(transaction: Transaction) -> bool:
+    """Return whether the owner signature is internally valid without active-network context."""
+
+    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
+    version = transaction.metadata.get("owner_signature_version", "")
+    if version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
+        signature_network = transaction.metadata.get("owner_signature_network", "")
+        if not signature_network:
+            return False
+        return verify_digest(
+            owner_pubkey,
+            special_node_transaction_signature_digest_v2(transaction, network=signature_network),
+            owner_signature,
+        )
+    if version:
+        return False
+    return verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature)
+
+
+def _special_node_transaction_signature_payload_v1(transaction: Transaction) -> str:
+    """Return the legacy field payload shared by v1 and v2 signatures."""
 
     kind = transaction.metadata.get("kind", "")
     owner_pubkey_hex = transaction.metadata.get("owner_pubkey_hex", "")
@@ -395,7 +473,7 @@ def special_node_transaction_signature_digest(transaction: Transaction) -> bytes
         )
     else:
         raise ValueError("Unsupported special node transaction kind.")
-    return double_sha256(payload.encode("utf-8"))
+    return payload
 
 
 def _validate_register_node_transaction(transaction: Transaction) -> None:
@@ -406,9 +484,8 @@ def _validate_register_node_transaction(transaction: Transaction) -> None:
         raise ValueError("register_node transactions must declare a node_id.")
     if not payout_address or not is_valid_address(payout_address):
         raise ValueError("register_node transactions must declare a valid payout_address.")
-    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
-    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
-    if not verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature):
+    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("register_node transaction owner signature is invalid.")
 
 
@@ -420,9 +497,8 @@ def _validate_renew_node_transaction(transaction: Transaction) -> None:
         raise ValueError("renew_node transactions must declare a node_id.")
     if not renewal_epoch:
         raise ValueError("renew_node transactions must declare renewal_epoch.")
-    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
-    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
-    if not verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature):
+    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("renew_node transaction owner signature is invalid.")
 
 
@@ -444,9 +520,8 @@ def _validate_register_reward_node_transaction(transaction: Transaction) -> None
     _validate_declared_endpoint(declared_host, declared_port, kind=REGISTER_REWARD_NODE_KIND)
     if not registration_fee_chipbits or int(registration_fee_chipbits) < 0:
         raise ValueError("register_reward_node transactions must declare a non-negative registration_fee_chipbits.")
-    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
-    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
-    if not verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature):
+    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("register_reward_node transaction owner signature is invalid.")
 
 
@@ -464,9 +539,8 @@ def _validate_renew_reward_node_transaction(transaction: Transaction) -> None:
     _validate_declared_endpoint(declared_host, declared_port, kind=RENEW_REWARD_NODE_KIND)
     if not renewal_fee_chipbits or int(renewal_fee_chipbits) < 0:
         raise ValueError("renew_reward_node transactions must declare a non-negative renewal_fee_chipbits.")
-    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
-    owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
-    if not verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature):
+    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("renew_reward_node transaction owner signature is invalid.")
 
 
@@ -481,6 +555,11 @@ def _validate_node_metadata_common(transaction: Transaction) -> None:
         raise ValueError("Special node transactions must declare owner_pubkey_hex.")
     if not owner_signature_hex:
         raise ValueError("Special node transactions must declare owner_signature_hex.")
+    version = transaction.metadata.get("owner_signature_version", "")
+    if version and version != SPECIAL_NODE_SIGNATURE_VERSION_V2:
+        raise ValueError("Special node transactions declare an unsupported owner_signature_version.")
+    if version == SPECIAL_NODE_SIGNATURE_VERSION_V2 and not transaction.metadata.get("owner_signature_network", ""):
+        raise ValueError("Special node transaction v2 signatures must declare owner_signature_network.")
 
 
 def _validate_declared_endpoint(host: str, port: str, *, kind: str) -> None:

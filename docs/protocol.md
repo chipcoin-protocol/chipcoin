@@ -35,6 +35,18 @@ Both are:
 - `owner_pubkey_hex`
 - `owner_signature_hex`
 
+Special node owner signatures:
+
+- v2 signatures use the domain `chipcoin:special-node-tx:v2:<network>`.
+- the signed v2 payload covers the same metadata fields as the legacy v1
+  digest and binds them to the active network through the domain prefix.
+- builder output includes `owner_signature_version=v2` and
+  `owner_signature_network=<network>` once v2 is active for the target network
+  height.
+- mainnet validation requires v2 from genesis.
+- devnet/testnet use legacy v1 before height 11111 and require v2 from height
+  11111 onward.
+
 Consensus rules:
 
 - `node_id` is unique

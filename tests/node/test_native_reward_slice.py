@@ -75,6 +75,7 @@ def _register_reward_node(service: NodeService, *, wallet, node_id: str, port: i
             declared_host="127.0.0.1",
             declared_port=port,
             registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
+            network=service.network,
         )
     )
 
@@ -87,6 +88,7 @@ def _renew_reward_node(service: NodeService, *, wallet, node_id: str, port: int)
             declared_host="127.0.0.1",
             declared_port=port,
             renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+            network=service.network,
         )
     )
 
@@ -225,6 +227,7 @@ def test_native_reward_node_registration_and_renewal_persist_in_local_chain() ->
             declared_host="127.0.0.1",
             declared_port=19001,
             registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
+            network=service.network,
         )
         service.receive_transaction(register_tx)
         _mine_local_block(service, wallet_key(1).address)
@@ -235,6 +238,7 @@ def test_native_reward_node_registration_and_renewal_persist_in_local_chain() ->
             declared_host="127.0.0.1",
             declared_port=19011,
             renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+            network=service.network,
         )
         service.receive_transaction(renew_tx)
         _mine_local_block(service, wallet_key(1).address)
@@ -1069,6 +1073,7 @@ def test_native_reward_multi_epoch_consecutive_auto_settlement_operation() -> No
                 declared_host="127.0.0.1",
                 declared_port=19001,
                 renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+                network=service.network,
             )
         )
         service.receive_transaction(
@@ -1078,6 +1083,7 @@ def test_native_reward_multi_epoch_consecutive_auto_settlement_operation() -> No
                 declared_host="127.0.0.1",
                 declared_port=19002,
                 renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+                network=service.network,
             )
         )
         _mine_local_block(service, wallet_key(2).address)
@@ -1309,6 +1315,7 @@ def test_native_reward_reorg_clears_or_restores_renewal_driven_eligibility() -> 
                         declared_host="127.0.0.1",
                         declared_port=port,
                         renewal_fee_chipbits=int(renewed_branch.reward_node_fee_schedule()["renew_fee_chipbits"]),
+                        network=renewed_branch.network,
                     )
                 )
         _mine_local_block(renewed_branch, miner.address)
@@ -1519,6 +1526,7 @@ def test_native_reward_repeated_restart_cycles_across_epochs_remain_consistent()
                 declared_host="127.0.0.1",
                 declared_port=19001,
                 renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+                network=service.network,
             )
         )
         service.receive_transaction(
@@ -1528,6 +1536,7 @@ def test_native_reward_repeated_restart_cycles_across_epochs_remain_consistent()
                 declared_host="127.0.0.1",
                 declared_port=19002,
                 renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+                network=service.network,
             )
         )
         _mine_local_block(service, miner.address)

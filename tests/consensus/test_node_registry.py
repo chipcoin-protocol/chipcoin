@@ -8,8 +8,11 @@ from chipcoin.consensus.nodes import (
     apply_special_node_transaction,
     is_special_node_transaction,
     select_rewarded_nodes,
+    special_node_transaction_signature_digest,
+    SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT,
+    special_node_transaction_signature_digest_v2,
 )
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.utxo import InMemoryUtxoView
 from chipcoin.consensus.validation import (
     ContextualValidationError,
@@ -30,10 +33,11 @@ def _register_node_transaction(*, node_id: str, owner_index: int = 0, payout_add
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
-
     signed_metadata = dict(metadata)
-    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
+    signed_metadata["owner_signature_version"] = "v2"
+    signed_metadata["owner_signature_network"] = "mainnet"
+    unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
 
 
@@ -52,10 +56,11 @@ def _register_reward_node_transaction(*, node_id: str, owner_index: int = 0, pay
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
-
     signed_metadata = dict(metadata)
-    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
+    signed_metadata["owner_signature_version"] = "v2"
+    signed_metadata["owner_signature_network"] = "mainnet"
+    unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
 
 
@@ -69,10 +74,11 @@ def _renew_node_transaction(*, node_id: str, owner_index: int = 0, renewal_epoch
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
-
     signed_metadata = dict(metadata)
-    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
+    signed_metadata["owner_signature_version"] = "v2"
+    signed_metadata["owner_signature_network"] = "mainnet"
+    unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
 
 
@@ -89,11 +95,149 @@ def _renew_reward_node_transaction(*, node_id: str, owner_index: int = 0, renewa
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
+    signed_metadata = dict(metadata)
+    signed_metadata["owner_signature_version"] = "v2"
+    signed_metadata["owner_signature_network"] = "mainnet"
+    unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+    signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
+    return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
 
+
+def _register_reward_node_transaction_v1(*, node_id: str, owner_index: int = 0) -> Transaction:
+    owner = wallet_key(owner_index)
+    node_key = wallet_key((owner_index + 1) % 3)
+    metadata = {
+        "kind": REGISTER_REWARD_NODE_KIND,
+        "node_id": node_id,
+        "payout_address": owner.address,
+        "owner_pubkey_hex": owner.public_key.hex(),
+        "node_pubkey_hex": node_key.public_key.hex(),
+        "declared_host": f"{node_id}.example",
+        "declared_port": "18444",
+        "registration_fee_chipbits": str(MAINNET_PARAMS.register_node_fee_chipbits),
+        "owner_signature_hex": "",
+    }
+    unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
     signed_metadata = dict(metadata)
     signed_metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+
+
+def _expect_contextual_rejection(
+    transaction: Transaction,
+    *,
+    network: str,
+    height: int = 1,
+    params=MAINNET_PARAMS,
+) -> None:
+    context = ValidationContext(
+        height=height,
+        median_time_past=0,
+        params=params,
+        utxo_view=InMemoryUtxoView(),
+        network=network,
+        node_registry_view=InMemoryNodeRegistryView(),
+    )
+    try:
+        validate_transaction(transaction, context)
+    except ContextualValidationError:
+        return
+    raise AssertionError("Expected special node transaction to be rejected.")
+
+
+def test_special_node_v2_signature_is_bound_to_network() -> None:
+    from chipcoin.wallet.signer import TransactionSigner
+
+    activation_height = SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT
+    devnet_tx = TransactionSigner(wallet_key(0)).build_register_reward_node_transaction(
+        node_id="devnet-node",
+        payout_address=wallet_key(0).address,
+        node_public_key_hex=wallet_key(1).public_key.hex(),
+        declared_host="devnet-node.example",
+        declared_port=18444,
+        registration_fee_chipbits=DEVNET_PARAMS.register_node_fee_chipbits,
+        network="devnet",
+        height=activation_height,
+    )
+    testnet_tx = TransactionSigner(wallet_key(0)).build_register_reward_node_transaction(
+        node_id="testnet-node",
+        payout_address=wallet_key(0).address,
+        node_public_key_hex=wallet_key(1).public_key.hex(),
+        declared_host="testnet-node.example",
+        declared_port=18444,
+        registration_fee_chipbits=TESTNET_PARAMS.register_node_fee_chipbits,
+        network="testnet",
+        height=activation_height,
+    )
+
+    assert devnet_tx.metadata["owner_signature_version"] == "v2"
+    assert devnet_tx.metadata["owner_signature_network"] == "devnet"
+    _expect_contextual_rejection(devnet_tx, network="testnet", height=activation_height, params=TESTNET_PARAMS)
+    _expect_contextual_rejection(testnet_tx, network="devnet", height=activation_height, params=DEVNET_PARAMS)
+
+
+def test_special_node_signature_activation_schedule() -> None:
+    from chipcoin.wallet.signer import TransactionSigner
+
+    before_activation = SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT - 1
+    at_activation = SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT
+    signer = TransactionSigner(wallet_key(0))
+    pre_activation_tx = signer.build_register_reward_node_transaction(
+        node_id="pre-activation",
+        payout_address=wallet_key(0).address,
+        node_public_key_hex=wallet_key(1).public_key.hex(),
+        declared_host="pre-activation.example",
+        declared_port=18444,
+        registration_fee_chipbits=TESTNET_PARAMS.register_node_fee_chipbits,
+        network="testnet",
+        height=before_activation,
+    )
+    activation_tx = signer.build_register_reward_node_transaction(
+        node_id="activation",
+        payout_address=wallet_key(0).address,
+        node_public_key_hex=wallet_key(1).public_key.hex(),
+        declared_host="activation.example",
+        declared_port=18444,
+        registration_fee_chipbits=TESTNET_PARAMS.register_node_fee_chipbits,
+        network="testnet",
+        height=at_activation,
+    )
+
+    assert "owner_signature_version" not in pre_activation_tx.metadata
+    assert activation_tx.metadata["owner_signature_version"] == "v2"
+    assert activation_tx.metadata["owner_signature_network"] == "testnet"
+
+
+def test_special_node_v1_signature_compatibility_ends_at_activation() -> None:
+    before_activation = SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT - 1
+    at_activation = SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT
+    devnet_tx = _register_reward_node_transaction_v1(node_id="legacy-devnet")
+    devnet_context = ValidationContext(
+        height=before_activation,
+        median_time_past=0,
+        params=DEVNET_PARAMS,
+        utxo_view=InMemoryUtxoView(),
+        network="devnet",
+        node_registry_view=InMemoryNodeRegistryView(),
+    )
+    assert validate_transaction(devnet_tx, devnet_context) == 0
+
+    testnet_tx = _register_reward_node_transaction_v1(node_id="legacy-testnet", owner_index=1)
+    testnet_context = ValidationContext(
+        height=before_activation,
+        median_time_past=0,
+        params=TESTNET_PARAMS,
+        utxo_view=InMemoryUtxoView(),
+        network="testnet",
+        node_registry_view=InMemoryNodeRegistryView(),
+    )
+    assert validate_transaction(testnet_tx, testnet_context) == 0
+
+    _expect_contextual_rejection(devnet_tx, network="devnet", height=at_activation, params=DEVNET_PARAMS)
+    _expect_contextual_rejection(testnet_tx, network="testnet", height=at_activation, params=TESTNET_PARAMS)
+
+    mainnet_tx = _register_reward_node_transaction_v1(node_id="legacy-mainnet", owner_index=2)
+    _expect_contextual_rejection(mainnet_tx, network="mainnet", params=MAINNET_PARAMS)
 
 
 def test_register_node_transaction_is_special_and_updates_registry() -> None:

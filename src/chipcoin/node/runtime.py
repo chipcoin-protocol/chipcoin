@@ -582,12 +582,15 @@ class NodeRuntime:
         declared_port = self.reward_automation.declared_port or record.declared_port
         if not declared_host or declared_port is None:
             raise ValueError(f"reward node declared endpoint is incomplete for node_id={record.node_id}")
+        tip = self.service.chain_tip()
         transaction = TransactionSigner(self._reward_owner_wallet).build_renew_reward_node_transaction(
             node_id=record.node_id,
             renewal_epoch=current_epoch_index,
             declared_host=declared_host,
             declared_port=int(declared_port),
             renewal_fee_chipbits=int(self.service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+            network=self.service.network,
+            height=0 if tip is None else tip.height + 1,
         )
         await self.submit_transaction(transaction)
         self._reward_submitted_renewal_epochs.add(current_epoch_index)

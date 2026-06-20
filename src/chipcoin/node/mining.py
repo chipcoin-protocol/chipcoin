@@ -90,6 +90,7 @@ class MiningCoordinator:
         self,
         *,
         previous_block_hash: str,
+        network: str,
         height: int,
         miner_address: str,
         bits: int,
@@ -115,6 +116,7 @@ class MiningCoordinator:
             mempool_entries,
             height=height,
             max_transaction_weight_units=max_transaction_weight_units,
+            network=network,
             confirmed_transaction_ids=confirmed_transaction_ids or set(),
             node_registry_view=node_registry_view,
         )
@@ -168,6 +170,7 @@ class MiningCoordinator:
         mempool_entries: list[MempoolEntry],
         *,
         height: int,
+        network: str,
         max_transaction_weight_units: int,
         confirmed_transaction_ids: set[str],
         node_registry_view: NodeRegistryView,
@@ -199,6 +202,7 @@ class MiningCoordinator:
             median_time_past=0,
             params=self.params,
             utxo_view=InMemoryUtxoView(),
+            network=network,
             node_registry_view=staged_registry,
             reward_fee_registry_count=reward_registered_node_count(node_registry_view),
         )

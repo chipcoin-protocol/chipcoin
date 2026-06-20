@@ -2979,6 +2979,7 @@ def test_node_service_rejects_duplicate_pending_reward_node_registration() -> No
             declared_host="42.115.140.51",
             declared_port=28444,
             registration_fee_chipbits=registration_fee,
+            network=service.network,
         )
         duplicate = TransactionSigner(wallet_key(1)).build_register_reward_node_transaction(
             node_id="node-farm-1",
@@ -2987,6 +2988,7 @@ def test_node_service_rejects_duplicate_pending_reward_node_registration() -> No
             declared_host="42.115.140.51",
             declared_port=28444,
             registration_fee_chipbits=registration_fee,
+            network=service.network,
         )
 
         service.receive_transaction(first)
@@ -3015,6 +3017,7 @@ def test_node_service_limits_pending_reward_node_registration_burst() -> None:
                 declared_host="42.115.140.51",
                 declared_port=28080 + index,
                 registration_fee_chipbits=registration_fee,
+                network=service.network,
             )
             service.receive_transaction(transaction)
 
@@ -3026,6 +3029,7 @@ def test_node_service_limits_pending_reward_node_registration_burst() -> None:
             declared_host="42.115.140.51",
             declared_port=28080 + limit,
             registration_fee_chipbits=registration_fee,
+            network=service.network,
         )
         try:
             service.receive_transaction(rejected)
@@ -3048,6 +3052,7 @@ def test_node_service_prunes_invalid_special_node_transaction_before_template() 
             declared_host="42.115.140.51",
             declared_port=28444,
             registration_fee_chipbits=registration_fee,
+            network=service.network,
         )
         duplicate = TransactionSigner(wallet_key(1)).build_register_reward_node_transaction(
             node_id="node-farm-1",
@@ -3056,6 +3061,7 @@ def test_node_service_prunes_invalid_special_node_transaction_before_template() 
             declared_host="42.115.140.51",
             declared_port=28444,
             registration_fee_chipbits=registration_fee,
+            network=service.network,
         )
         service.mempool.repository.add(first, fee=0, added_at=1)
         service.mempool.repository.add(duplicate, fee=0, added_at=2)
@@ -3084,6 +3090,7 @@ def test_node_service_prunes_excess_special_node_transactions_before_template() 
                 declared_host="42.115.140.51",
                 declared_port=28100 + index,
                 registration_fee_chipbits=registration_fee,
+                network=service.network,
             )
             transactions.append(transaction)
             service.mempool.repository.add(transaction, fee=0, added_at=index)
@@ -3587,6 +3594,7 @@ def test_block_template_excludes_child_if_parent_is_absent() -> None:
         )
         template = service.mining.build_block_template(
             previous_block_hash="00" * 32,
+            network=service.network,
             height=0,
             miner_address=wallet_key(2).address,
             bits=service.params.genesis_bits,
@@ -3609,6 +3617,7 @@ def test_block_template_builder_skips_registry_conflicting_special_node_transact
             declared_host="42.115.140.51",
             declared_port=28444,
             registration_fee_chipbits=registration_fee,
+            network=service.network,
         )
         duplicate = TransactionSigner(wallet_key(1)).build_register_reward_node_transaction(
             node_id="node-farm-1",
@@ -3617,10 +3626,12 @@ def test_block_template_builder_skips_registry_conflicting_special_node_transact
             declared_host="42.115.140.51",
             declared_port=28444,
             registration_fee_chipbits=registration_fee,
+            network=service.network,
         )
 
         template = service.mining.build_block_template(
             previous_block_hash="00" * 32,
+            network=service.network,
             height=0,
             miner_address=wallet_key(2).address,
             bits=service.params.genesis_bits,

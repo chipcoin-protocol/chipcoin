@@ -1600,7 +1600,12 @@ def _build_register_node_transaction(service: NodeService, wallet_key: WalletKey
         raise ValueError("Node id is already registered.")
     if service.get_registered_node_by_owner(wallet_key.public_key) is not None:
         raise ValueError("This wallet owner is already registered to a node.")
-    return signer.build_register_node_transaction(node_id=args.node_id, payout_address=args.payout_address)
+    return signer.build_register_node_transaction(
+        node_id=args.node_id,
+        payout_address=args.payout_address,
+        network=service.network,
+        height=_next_block_height(service),
+    )
 
 
 def _build_renew_node_transaction(service: NodeService, wallet_key: WalletKey, args, *, current_epoch: int):
@@ -1612,7 +1617,12 @@ def _build_renew_node_transaction(service: NodeService, wallet_key: WalletKey, a
         raise ValueError("Node id is not registered.")
     if record.owner_pubkey != wallet_key.public_key:
         raise ValueError("Wallet does not match the registered node owner.")
-    return signer.build_renew_node_transaction(node_id=args.node_id, renewal_epoch=current_epoch)
+    return signer.build_renew_node_transaction(
+        node_id=args.node_id,
+        renewal_epoch=current_epoch,
+        network=service.network,
+        height=_next_block_height(service),
+    )
 
 
 def _build_register_reward_node_transaction(service: NodeService, wallet_key: WalletKey, args) -> Transaction:
@@ -1632,6 +1642,8 @@ def _build_register_reward_node_transaction(service: NodeService, wallet_key: Wa
         declared_host=args.declared_host,
         declared_port=args.declared_port,
         registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
+        network=service.network,
+        height=_next_block_height(service),
     )
 
 
@@ -1650,7 +1662,14 @@ def _build_renew_reward_node_transaction(service: NodeService, wallet_key: Walle
         declared_host=args.declared_host,
         declared_port=args.declared_port,
         renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
+        network=service.network,
+        height=_next_block_height(service),
     )
+
+
+def _next_block_height(service: NodeService) -> int:
+    tip = service.chain_tip()
+    return 0 if tip is None else tip.height + 1
 
 
 def _build_reward_attestation_bundle_transaction(service: NodeService, args, wallet_key: WalletKey | None) -> Transaction:

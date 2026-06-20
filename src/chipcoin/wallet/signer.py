@@ -6,7 +6,12 @@ from dataclasses import replace
 
 from ..consensus.models import ChipbitAmount, OutPoint, Transaction, TxInput, TxOutput
 from ..consensus.epoch_settlement import RewardAttestation, reward_attestation_signature_digest
-from ..consensus.nodes import special_node_transaction_signature_digest
+from ..consensus.nodes import (
+    SPECIAL_NODE_SIGNATURE_VERSION_V2,
+    special_node_signature_version_for_height,
+    special_node_transaction_signature_digest,
+    special_node_transaction_signature_digest_v2,
+)
 from ..consensus.validation import transaction_signature_digest
 from ..crypto.addresses import is_valid_address, public_key_to_address
 from ..crypto.keys import derive_public_key, generate_private_key, serialize_public_key_hex
@@ -114,7 +119,14 @@ class TransactionSigner:
             change_chipbits=selection.change_chipbits,
         )
 
-    def build_register_node_transaction(self, *, node_id: str, payout_address: str) -> Transaction:
+    def build_register_node_transaction(
+        self,
+        *,
+        node_id: str,
+        payout_address: str,
+        network: str = "mainnet",
+        height: int = 0,
+    ) -> Transaction:
         """Construct and sign a special `register_node` transaction."""
 
         if not node_id:
@@ -128,12 +140,16 @@ class TransactionSigner:
             "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
             "owner_signature_hex": "",
         }
-        unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-        signed_metadata = dict(metadata)
-        signed_metadata["owner_signature_hex"] = self.sign(special_node_transaction_signature_digest(unsigned)).hex()
-        return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+        return self._sign_special_node_metadata(metadata, network=network, height=height)
 
-    def build_renew_node_transaction(self, *, node_id: str, renewal_epoch: int) -> Transaction:
+    def build_renew_node_transaction(
+        self,
+        *,
+        node_id: str,
+        renewal_epoch: int,
+        network: str = "mainnet",
+        height: int = 0,
+    ) -> Transaction:
         """Construct and sign a special `renew_node` transaction."""
 
         if not node_id:
@@ -145,10 +161,7 @@ class TransactionSigner:
             "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
             "owner_signature_hex": "",
         }
-        unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-        signed_metadata = dict(metadata)
-        signed_metadata["owner_signature_hex"] = self.sign(special_node_transaction_signature_digest(unsigned)).hex()
-        return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+        return self._sign_special_node_metadata(metadata, network=network, height=height)
 
     def build_register_reward_node_transaction(
         self,
@@ -159,6 +172,8 @@ class TransactionSigner:
         declared_host: str,
         declared_port: int,
         registration_fee_chipbits: int,
+        network: str = "mainnet",
+        height: int = 0,
     ) -> Transaction:
         """Construct and sign a native `register_reward_node` transaction."""
 
@@ -179,10 +194,7 @@ class TransactionSigner:
             "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
             "owner_signature_hex": "",
         }
-        unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-        signed_metadata = dict(metadata)
-        signed_metadata["owner_signature_hex"] = self.sign(special_node_transaction_signature_digest(unsigned)).hex()
-        return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+        return self._sign_special_node_metadata(metadata, network=network, height=height)
 
     def build_renew_reward_node_transaction(
         self,
@@ -192,6 +204,8 @@ class TransactionSigner:
         declared_host: str,
         declared_port: int,
         renewal_fee_chipbits: int,
+        network: str = "mainnet",
+        height: int = 0,
     ) -> Transaction:
         """Construct and sign a native `renew_reward_node` transaction."""
 
@@ -207,9 +221,20 @@ class TransactionSigner:
             "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
             "owner_signature_hex": "",
         }
-        unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+        return self._sign_special_node_metadata(metadata, network=network, height=height)
+
+    def _sign_special_node_metadata(self, metadata: dict[str, str], *, network: str, height: int) -> Transaction:
+        required_version = special_node_signature_version_for_height(network=network, height=height)
         signed_metadata = dict(metadata)
-        signed_metadata["owner_signature_hex"] = self.sign(special_node_transaction_signature_digest(unsigned)).hex()
+        if required_version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
+            signed_metadata["owner_signature_version"] = SPECIAL_NODE_SIGNATURE_VERSION_V2
+            signed_metadata["owner_signature_network"] = network
+            unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+            digest = special_node_transaction_signature_digest_v2(unsigned, network=network)
+        else:
+            unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+            digest = special_node_transaction_signature_digest(unsigned)
+        signed_metadata["owner_signature_hex"] = self.sign(digest).hex()
         return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
 
     def sign_reward_attestation(self, attestation: RewardAttestation) -> RewardAttestation:

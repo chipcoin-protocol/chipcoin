@@ -87,10 +87,13 @@ def _register_reward_node_transaction(*, node_id: str, owner_index: int = 0, fee
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
+    from chipcoin.consensus.nodes import special_node_transaction_signature_digest_v2
     from chipcoin.crypto.signatures import sign_digest
 
-    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
+    metadata["owner_signature_version"] = "v2"
+    metadata["owner_signature_network"] = "mainnet"
+    unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
 
 
@@ -111,10 +114,13 @@ def _renew_reward_node_transaction(*, node_id: str, owner_index: int = 0, renewa
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest
+    from chipcoin.consensus.nodes import special_node_transaction_signature_digest_v2
     from chipcoin.crypto.signatures import sign_digest
 
-    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest(unsigned)).hex()
+    metadata["owner_signature_version"] = "v2"
+    metadata["owner_signature_network"] = "mainnet"
+    unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
+    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
 
 

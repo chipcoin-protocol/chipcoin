@@ -49,6 +49,7 @@ from .nodes import (
     is_renew_node_transaction,
     is_special_node_transaction,
     select_rewarded_nodes,
+    special_node_transaction_signature_is_valid,
     validate_special_node_transaction_stateless,
 )
 from .params import ConsensusParams, MAINNET_PARAMS
@@ -80,6 +81,7 @@ class ValidationContext:
     median_time_past: int
     params: ConsensusParams
     utxo_view: UtxoView
+    network: str = "mainnet"
     node_registry_view: NodeRegistryView = field(default_factory=InMemoryNodeRegistryView)
     reward_attestation_identities: frozenset[tuple[int, int, str, str]] = field(default_factory=frozenset)
     reward_attestation_bundles: tuple[RewardAttestationBundle, ...] = ()
@@ -281,6 +283,7 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
             median_time_past=context.median_time_past,
             params=context.params,
             utxo_view=staged_view,
+            network=context.network,
             node_registry_view=staged_registry,
             reward_attestation_identities=frozenset(staged_attestation_identities),
             reward_attestation_bundles=tuple(staged_attestation_bundles),
@@ -585,6 +588,8 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
     """Validate stateful node registry rules for register and renew actions."""
 
     owner_pubkey = bytes.fromhex(transaction.metadata["owner_pubkey_hex"])
+    if not special_node_transaction_signature_is_valid(transaction, network=context.network, height=context.height):
+        raise ContextualValidationError("Special node transaction owner signature is invalid for this network.")
     fee_registry_count = (
         context.reward_fee_registry_count
         if context.reward_fee_registry_count is not None

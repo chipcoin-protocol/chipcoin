@@ -94,6 +94,8 @@ pre-mainnet risk register.
   - wallet files are written with owner-only permissions
   - `wallet-address` does not print `private_key_hex`
   - commands that intentionally print private keys warn on stderr
-- Add network/chain domain separation to special node transaction signatures.
+- Keep special node transaction signatures v2-only on mainnet; devnet/testnet
+  activate v2 at height 11111, and legacy v1 compatibility must not be enabled
+  for mainnet.
 - Harden reward epoch seed derivation against single-block miner grinding.
 - Review runtime/sync/mempool paths under adversarial peers and high load.
