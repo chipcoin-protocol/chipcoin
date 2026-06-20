@@ -42,6 +42,9 @@ from ..wallet.signer import TransactionSigner, generate_wallet_key, wallet_key_f
 from .presenters import format_amount_chc, format_tip, format_transaction_lookup
 
 
+DEFAULT_SNAPSHOT_TRUST_MODE = "warn"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the Chipcoin CLI."""
 
@@ -61,13 +64,16 @@ def main(argv: list[str] | None = None) -> int:
                 snapshot_metadata = service.import_snapshot_file(
                     Path(args.snapshot_file),
                     reset_existing=getattr(args, "snapshot_reset", False),
-                    trust_mode=getattr(args, "snapshot_trust_mode", "off"),
+                    trust_mode=getattr(args, "snapshot_trust_mode", DEFAULT_SNAPSHOT_TRUST_MODE),
                     trusted_keys=_load_snapshot_trusted_keys(
                         getattr(args, "snapshot_trusted_key", []),
                         getattr(args, "snapshot_trusted_keys_file", []),
                     ),
                 )
-                _emit_snapshot_warnings(snapshot_metadata, trust_mode=getattr(args, "snapshot_trust_mode", "off"))
+                _emit_snapshot_warnings(
+                    snapshot_metadata,
+                    trust_mode=getattr(args, "snapshot_trust_mode", DEFAULT_SNAPSHOT_TRUST_MODE),
+                )
 
         if args.command == "start":
             assert service is not None
@@ -753,7 +759,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--http-port", type=int, default=None)
     run_parser.add_argument("--snapshot-file", default=None, help="Optional local snapshot file for fast bootstrap.")
     run_parser.add_argument("--snapshot-reset", action="store_true", help="Replace existing local chain state when importing a snapshot.")
-    run_parser.add_argument("--snapshot-trust-mode", choices=("off", "warn", "enforce"), default="off")
+    run_parser.add_argument("--snapshot-trust-mode", choices=("off", "warn", "enforce"), default=DEFAULT_SNAPSHOT_TRUST_MODE)
     run_parser.add_argument("--snapshot-trusted-key", action="append", default=[], help="Trusted Ed25519 signer public key hex for snapshot verification.")
     run_parser.add_argument("--snapshot-trusted-keys-file", action="append", default=[], help="Path to a text or JSON file containing trusted Ed25519 signer public keys.")
     run_parser.add_argument("--peer", action="append", default=[], help="Outbound peer in host:port form.")
@@ -909,7 +915,7 @@ def _build_parser() -> argparse.ArgumentParser:
     snapshot_import_parser = subparsers.add_parser("snapshot-import")
     snapshot_import_parser.add_argument("--snapshot-file", required=True)
     snapshot_import_parser.add_argument("--snapshot-reset", action="store_true")
-    snapshot_import_parser.add_argument("--snapshot-trust-mode", choices=("off", "warn", "enforce"), default="off")
+    snapshot_import_parser.add_argument("--snapshot-trust-mode", choices=("off", "warn", "enforce"), default=DEFAULT_SNAPSHOT_TRUST_MODE)
     snapshot_import_parser.add_argument("--snapshot-trusted-key", action="append", default=[], help="Trusted Ed25519 signer public key hex for snapshot verification.")
     snapshot_import_parser.add_argument("--snapshot-trusted-keys-file", action="append", default=[], help="Path to a text or JSON file containing trusted Ed25519 signer public keys.")
 

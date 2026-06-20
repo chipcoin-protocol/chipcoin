@@ -338,6 +338,10 @@ chipcoin --data /runtime/node.sqlite3 snapshot-import \
   --snapshot-trusted-key <ED25519_PUBLIC_KEY_HEX>
 ```
 
+`warn` is the default for `snapshot-import` and `run --snapshot-file`. Use
+`off` only when intentionally testing with local unsigned snapshots. Use
+`enforce` plus trusted signer keys for public or mainnet bootstrap paths.
+
 Current limitations of snapshot nodes:
 
 - historical raw blocks before the snapshot anchor are not restored

@@ -151,8 +151,9 @@ Audit/debug fields:
 
 Important:
 
-- these snapshot-related `.env` keys are not consumed by the running node container
-- they exist for wizard input and audit/debug visibility only
+- these snapshot-related `.env` keys are consumed by the container during
+  first bootstrap when `NODE_BOOTSTRAP_MODE` is `snapshot` or `auto`
+- selected URL/height/hash fields also provide audit/debug visibility
 - the running node relies on the database state mounted from `NODE_DATA_PATH`
 - after the wizard finishes, the database is the single source of truth
 

@@ -873,7 +873,7 @@ prepare_snapshot_bootstrap_if_needed() {
     snapshot-import
     --snapshot-file "$snapshot_path"
     --snapshot-reset
-    --snapshot-trust-mode "${NODE_SNAPSHOT_TRUST_MODE:-off}"
+    --snapshot-trust-mode "${NODE_SNAPSHOT_TRUST_MODE:-warn}"
   )
   if [[ -n "${NODE_SNAPSHOT_TRUSTED_KEYS_FILE:-}" ]]; then
     import_args+=(--snapshot-trusted-keys-file "${NODE_SNAPSHOT_TRUSTED_KEYS_FILE}")

@@ -148,6 +148,54 @@ def test_entrypoint_restores_snapshot_when_database_is_missing(tmp_path: Path) -
     assert "initialized\tok\t9\trestored-tip" in result.stdout
 
 
+def test_entrypoint_defaults_snapshot_trust_mode_to_warn(tmp_path: Path) -> None:
+    template_db = tmp_path / "restored.sqlite3"
+    sqlite_path = tmp_path / "missing.sqlite3"
+    _write_minimal_node_db(template_db, tip_hash="restored-tip", height=9, genesis_bits=TESTNET_GENESIS_BITS)
+    script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+download_snapshot_file() {{
+  : > "$2"
+}}
+chipcoin() {{
+  printf '%s\\n' "$*" > "$TMPDIR/chipcoin-args.txt"
+  cp "$VALID_DB_TEMPLATE" "$SQLITE_UNDER_TEST"
+  printf '%s\\n' '{{"ok":true}}'
+}}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
+cat "$TMPDIR/chipcoin-args.txt"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "CHIPCOIN_NETWORK": "testnet",
+        "NODE_BOOTSTRAP_MODE": "snapshot",
+        "NODE_SNAPSHOT_FILE": str(tmp_path / "node.snapshot"),
+        "NODE_SNAPSHOT_SELECTED_URL": "https://example.invalid/snapshot",
+        "NODE_SNAPSHOT_SELECTED_HEIGHT": "9",
+        "NODE_SNAPSHOT_SELECTED_HASH": "restored-tip",
+        "VALID_DB_TEMPLATE": str(template_db),
+        "SQLITE_UNDER_TEST": str(sqlite_path),
+        "TMPDIR": str(tmp_path),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+    env.pop("NODE_SNAPSHOT_TRUST_MODE", None)
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--snapshot-trust-mode warn" in result.stdout
+
+
 def test_entrypoint_restores_snapshot_without_replacing_sqlite_symlink(tmp_path: Path) -> None:
     template_db = tmp_path / "restored.sqlite3"
     target_path = tmp_path / "configured.sqlite3"

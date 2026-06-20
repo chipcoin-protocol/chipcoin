@@ -304,6 +304,12 @@ chipcoin --data /runtime/node.sqlite3 snapshot-import \
   --snapshot-trusted-key <ED25519_PUBLIC_KEY_HEX>
 ```
 
+Snapshot import defaults to `--snapshot-trust-mode warn`, so unsigned or
+untrusted snapshots emit warnings instead of being silently trusted. Use
+`--snapshot-trust-mode enforce` with pinned signer keys when you want strict
+verification, especially for public/mainnet bootstrap paths. Use `off` only for
+explicit local testing.
+
 If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=28444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it. Keep HTTP on `127.0.0.1:28081`.
 
 ## First Deploy Path

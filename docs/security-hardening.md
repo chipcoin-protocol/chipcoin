@@ -29,7 +29,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Wallet private key output and file mode | local/operational key exposure | fixed | keep tests and avoid expanding private key output |
 | Special node transaction signatures | cross-network replay/domain separation | fixed with v2 network domain | keep mainnet v2-only |
 | Reward epoch seed | miner grinding bias | open, consensus-affecting | harden before mainnet reward economics are final |
-| Snapshot trust defaults | accidental trust-on-first-use | partially mitigated | use warn/enforce defaults for public/mainnet paths |
+| Snapshot trust defaults | accidental trust-on-first-use | fixed with warn defaults | use enforce with pinned keys for mainnet/public bootstrap |
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
 
 ## 1. P2P Frame Size Limit
@@ -216,29 +216,30 @@ The snapshot import path supports:
 - `warn`
 - `enforce`
 
-The setup wizard defaults public testnet configuration to `warn`, but lower
-level CLI and entrypoint defaults still fall back to `off` when no explicit
-configuration is provided.
+Snapshot import supports explicit `off` for local testing, but public/operator
+paths should not silently accept unsigned or untrusted snapshots.
 
 ### Status
 
-Partially mitigated.
+Fixed for default behavior.
 
-The public testnet wizard path is safer than raw defaults, but the low-level
-defaults still permit unsigned/unverified snapshot import.
+The setup wizard, CLI snapshot import, CLI `run --snapshot-file`, and Docker
+entrypoint default to `warn`. Weak trust conditions continue only with an
+explicit warning. Operators can still choose `off` deliberately for local
+testing, and can choose `enforce` when trusted signer keys are configured.
 
-### Recommended Fix
+### Mainnet Guidance
 
 For mainnet:
 
 - make public bootstrap documentation use `enforce`
 - publish and pin known snapshot signer public keys
-- consider defaulting mainnet snapshot import to `warn` or `enforce`
+- prefer `enforce` once pinned keys are available in the release profile
 - refuse `enforce` without configured trusted signer keys
 
 For testnet:
 
-- `warn` is acceptable for convenience, but operator docs should clearly show
+- `warn` is the default for convenience, but operator docs should clearly show
   `enforce` for stronger validation.
 
 ### Compatibility

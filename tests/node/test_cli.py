@@ -540,15 +540,19 @@ def test_cli_snapshot_export_and_import() -> None:
         export_code, export_payload = _run_cli(
             ["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
         )
-        import_code, import_payload = _run_cli(
+        import_code, import_stdout, import_stderr = _run_cli_with_stderr(
             ["--data", str(target_db), "snapshot-import", "--snapshot-file", str(snapshot_path)]
         )
+        import_payload = json.loads(import_stdout)
+        warning_payload = json.loads(import_stderr)
 
         imported_service = _make_service(target_db)
         assert export_code == 0
         assert import_code == 0
         assert export_payload["snapshot_block_hash"] == mined.block_hash()
         assert import_payload["snapshot_block_hash"] == mined.block_hash()
+        assert import_payload["warnings"] == ["snapshot_unsigned_but_accepted_due_to_warn_mode"]
+        assert "continued only because --snapshot-trust-mode=warn" in warning_payload["warning"]
         assert imported_service.chain_tip() is not None
         assert imported_service.chain_tip().block_hash == mined.block_hash()
 
