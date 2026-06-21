@@ -15,6 +15,9 @@ from chipcoin.consensus.epoch_settlement import (
     candidate_check_windows,
     concentration_tiebreak_key,
     epoch_seed,
+    reward_epoch_seed,
+    reward_epoch_seed_v2,
+    reward_epoch_seed_version,
     verifier_committee,
     verifier_emission_counts,
 )
@@ -36,6 +39,86 @@ def test_epoch_seed_is_deterministic() -> None:
     assert first == second
     assert first != third
     assert len(first) == 32
+
+
+def test_reward_epoch_seed_version_schedule_preserves_testnet_history() -> None:
+    assert reward_epoch_seed_version(network="testnet", epoch_index=111) == 1
+    assert reward_epoch_seed_version(network="devnet", epoch_index=111) == 1
+    assert reward_epoch_seed_version(network="testnet", epoch_index=112) == 2
+    assert reward_epoch_seed_version(network="devnet", epoch_index=112) == 2
+    assert reward_epoch_seed_version(network="mainnet", epoch_index=0) == 2
+
+
+def test_reward_epoch_seed_uses_legacy_digest_before_activation() -> None:
+    previous_close_hash = "11" * 32
+    seed = reward_epoch_seed(
+        previous_epoch_closing_block_hash=previous_close_hash,
+        previous_epoch_block_hashes=("00" * 32, previous_close_hash),
+        epoch_index=111,
+        network="testnet",
+    )
+
+    assert seed == epoch_seed(previous_close_hash, 111)
+
+
+def test_reward_epoch_seed_v2_is_network_separated() -> None:
+    block_hashes = tuple(f"{index:064x}" for index in range(1, 5))
+
+    testnet_seed = reward_epoch_seed_v2(
+        previous_epoch_block_hashes=block_hashes,
+        epoch_index=112,
+        network="testnet",
+    )
+    devnet_seed = reward_epoch_seed_v2(
+        previous_epoch_block_hashes=block_hashes,
+        epoch_index=112,
+        network="devnet",
+    )
+
+    assert testnet_seed != devnet_seed
+    assert len(testnet_seed) == 32
+
+
+def test_reward_epoch_seed_v2_mixes_non_closing_blocks() -> None:
+    block_hashes = tuple(f"{index:064x}" for index in range(1, 17))
+    changed_early_block_hashes = ("ff" * 32, *block_hashes[1:])
+    changed_closing_block_hashes = (*block_hashes[:-1], "ee" * 32)
+
+    seed = reward_epoch_seed_v2(
+        previous_epoch_block_hashes=block_hashes,
+        epoch_index=112,
+        network="testnet",
+    )
+
+    assert seed != reward_epoch_seed_v2(
+        previous_epoch_block_hashes=changed_early_block_hashes,
+        epoch_index=112,
+        network="testnet",
+    )
+    assert seed != reward_epoch_seed_v2(
+        previous_epoch_block_hashes=changed_closing_block_hashes,
+        epoch_index=112,
+        network="testnet",
+    )
+
+
+def test_reward_epoch_seed_uses_v2_after_activation() -> None:
+    previous_close_hash = "10" * 32
+    block_hashes = tuple(f"{index:064x}" for index in range(1, 17))
+
+    seed = reward_epoch_seed(
+        previous_epoch_closing_block_hash=previous_close_hash,
+        previous_epoch_block_hashes=block_hashes,
+        epoch_index=112,
+        network="testnet",
+    )
+
+    assert seed == reward_epoch_seed_v2(
+        previous_epoch_block_hashes=block_hashes,
+        epoch_index=112,
+        network="testnet",
+    )
+    assert seed != epoch_seed(previous_close_hash, 112)
 
 
 def test_candidate_check_windows_are_deterministic_and_bounded() -> None:

@@ -28,7 +28,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | P2P frame length | unauthenticated memory DoS | fixed with 8 MB payload cap | keep tests and tune if block serialization grows |
 | Wallet private key output and file mode | local/operational key exposure | fixed | keep tests and avoid expanding private key output |
 | Special node transaction signatures | cross-network replay/domain separation | fixed with v2 network domain | keep mainnet v2-only |
-| Reward epoch seed | miner grinding bias | open, consensus-affecting | harden before mainnet reward economics are final |
+| Reward epoch seed | miner grinding bias | v2 multi-block seed scheduled | commit-reveal remains optional future hardening |
 | Snapshot trust defaults | accidental trust-on-first-use | fixed with warn defaults | use enforce with pinned keys for mainnet/public bootstrap |
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
 
@@ -182,18 +182,24 @@ This is a classic limitation of randomness derived from a single block hash.
 
 ### Status
 
-Open.
+Implemented as a scheduled consensus upgrade.
 
-### Recommended Fix Options
+- legacy v1 remains valid for existing devnet/testnet history
+- devnet/testnet switch to v2 at epoch `112` (height `11200` with 100-block
+  epochs), the first epoch boundary after the special-node signature v2 height
+  `11111`
+- mainnet uses v2 from genesis
+- v2 derives from up to 16 final block hashes from the previous epoch, not only
+  the closing block
+- v2 is domain-separated as `chipcoin:reward-epoch-seed:v2:<network>`
 
-Simple hardening:
+This does not eliminate grinding by a miner controlling many of the sampled
+blocks, but it removes the single-closing-block control point and makes biasing
+the next epoch materially harder.
 
-- derive the seed from multiple recent block hashes instead of one closing
-  block
-- domain-separate the seed version, for example `reward-epoch-v2`
-- activate at a known height/epoch
+### Future Option
 
-Stronger hardening:
+Stronger hardening remains possible:
 
 - add commit-reveal from reward nodes or verifiers
 - define liveness/fallback rules when some commits or reveals are missing
@@ -202,9 +208,10 @@ Stronger hardening:
 
 Consensus-affecting.
 
-The simple multi-block seed is easier to implement and test before mainnet. A
+The multi-block seed is intentionally activated on an epoch boundary so all
+nodes compute the same assignments and settlement seed for the full epoch. A
 commit-reveal design gives stronger bias resistance but adds more protocol
-surface.
+surface and is not required before testnet continues.
 
 ## 5. Snapshot Trust Defaults
 

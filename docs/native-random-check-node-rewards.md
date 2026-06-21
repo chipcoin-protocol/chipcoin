@@ -208,7 +208,7 @@ v1 recommendation:
 
 Use a seed that is fixed early enough to prevent late manipulation by settlement participants.
 
-Recommended v1:
+Legacy v1:
 
 - `epoch_seed = H(previous_epoch_closing_block_hash || epoch_index || "reward-epoch-v1")`
 
@@ -222,6 +222,18 @@ Reason:
 - stable across the epoch
 - easy to test
 - avoids using same-epoch settlement block data
+
+Current v2 hardening:
+
+- `epoch_seed = H("chipcoin:reward-epoch-seed:v2:<network>" || epoch_index || previous_epoch_seed_block_hashes)`
+- `previous_epoch_seed_block_hashes` are up to the final 16 block hashes of
+  epoch `epoch_index - 1`, in height order
+- devnet/testnet use v1 before epoch 112 and v2 from epoch 112
+- mainnet uses v2 from genesis
+
+The v2 seed keeps the “known before the current epoch starts” property while
+reducing the influence of any single miner who finds only the previous epoch's
+closing block.
 
 ## Active Reward-Node Set For Assignment
 

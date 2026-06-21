@@ -22,7 +22,10 @@ from ..consensus.epoch_settlement import (
     build_reward_settlement_transaction,
     candidate_check_windows,
     epoch_close_height,
-    epoch_seed,
+    reward_epoch_seed,
+    reward_epoch_seed_version,
+    REWARD_EPOCH_SEED_V2_BLOCK_WINDOW,
+    REWARD_EPOCH_SEED_V2_DOMAIN_PREFIX,
     parse_reward_attestation_bundle_metadata,
     parse_reward_settlement_metadata,
     verifier_committee,
@@ -2701,6 +2704,8 @@ class NodeService:
         seed = seed_map.get(resolved_epoch)
         previous_close_height = None if resolved_epoch == 0 else epoch_close_height(resolved_epoch - 1, self.params)
         previous_close_hash = "00" * 32 if resolved_epoch == 0 else self.headers.get_hash_at_height(previous_close_height)
+        seed_version = reward_epoch_seed_version(network=self.network, epoch_index=resolved_epoch)
+        seed_block_hashes = self._previous_epoch_seed_block_hashes(resolved_epoch)
         return {
             "epoch_index": resolved_epoch,
             "epoch_start_height": resolved_epoch * self.params.epoch_length_blocks,
@@ -2711,6 +2716,16 @@ class NodeService:
             ),
             "previous_epoch_close_height": previous_close_height,
             "previous_epoch_close_hash": previous_close_hash,
+            "seed_version": seed_version,
+            "seed_domain": (
+                "reward-epoch-v1"
+                if seed_version == 1
+                else f"{REWARD_EPOCH_SEED_V2_DOMAIN_PREFIX}:{self.network}"
+            ),
+            "seed_block_window": (0 if previous_close_hash is None else 1) if seed_version == 1 else len(seed_block_hashes),
+            "seed_block_hashes": (
+                [] if previous_close_hash is None else [previous_close_hash]
+            ) if seed_version == 1 else seed_block_hashes,
             "epoch_seed_hex": None if seed is None else seed.hex(),
         }
 
@@ -4198,18 +4213,54 @@ class NodeService:
         """Return known deterministic epoch seeds up to the current or candidate height."""
 
         last_epoch = max(0, next_height // self.params.epoch_length_blocks)
-        mapping: dict[int, bytes] = {0: epoch_seed("00" * 32, 0)}
+        mapping: dict[int, bytes] = {
+            0: reward_epoch_seed(
+                previous_epoch_closing_block_hash="00" * 32,
+                previous_epoch_block_hashes=("00" * 32,),
+                epoch_index=0,
+                network=self.network,
+            )
+        }
         for epoch_index in range(1, last_epoch + 1):
             previous_close_height = epoch_close_height(epoch_index - 1, self.params)
-            previous_close_hash = None
-            if path_hashes is not None and previous_close_height < len(path_hashes):
-                previous_close_hash = path_hashes[previous_close_height]
-            else:
-                previous_close_hash = self.headers.get_hash_at_height(previous_close_height)
+            previous_close_hash = self._hash_at_height(previous_close_height, path_hashes=path_hashes)
             if previous_close_hash is None:
                 break
-            mapping[epoch_index] = epoch_seed(previous_close_hash, epoch_index)
+            seed_hashes = self._previous_epoch_seed_block_hashes(epoch_index, path_hashes=path_hashes)
+            if not seed_hashes:
+                break
+            mapping[epoch_index] = reward_epoch_seed(
+                previous_epoch_closing_block_hash=previous_close_hash,
+                previous_epoch_block_hashes=seed_hashes,
+                epoch_index=epoch_index,
+                network=self.network,
+            )
         return mapping
+
+    def _hash_at_height(self, height: int, *, path_hashes: list[str] | None = None) -> str | None:
+        if path_hashes is not None and 0 <= height < len(path_hashes):
+            return path_hashes[height]
+        return self.headers.get_hash_at_height(height)
+
+    def _previous_epoch_seed_block_hashes(
+        self,
+        epoch_index: int,
+        *,
+        path_hashes: list[str] | None = None,
+    ) -> list[str]:
+        if epoch_index == 0:
+            return ["00" * 32]
+        previous_close_height = epoch_close_height(epoch_index - 1, self.params)
+        seed_version = reward_epoch_seed_version(network=self.network, epoch_index=epoch_index)
+        window_size = 1 if seed_version == 1 else REWARD_EPOCH_SEED_V2_BLOCK_WINDOW
+        start_height = max(0, previous_close_height - window_size + 1)
+        hashes: list[str] = []
+        for height in range(start_height, previous_close_height + 1):
+            block_hash = self._hash_at_height(height, path_hashes=path_hashes)
+            if block_hash is None:
+                return []
+            hashes.append(block_hash)
+        return hashes
 
     def _disconnected_branch_transactions(self, previous_tip, new_tip_hash: str) -> list[Transaction]:
         """Return non-coinbase transactions from blocks disconnected by a reorg."""

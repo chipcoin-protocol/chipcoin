@@ -97,5 +97,7 @@ pre-mainnet risk register.
 - Keep special node transaction signatures v2-only on mainnet; devnet/testnet
   activate v2 at height 11111, and legacy v1 compatibility must not be enabled
   for mainnet.
-- Harden reward epoch seed derivation against single-block miner grinding.
+- Keep reward epoch seed v2 enabled from genesis on mainnet. Devnet/testnet
+  retain v1 compatibility before epoch 112, but mainnet must not enable legacy
+  single-closing-block seed derivation.
 - Review runtime/sync/mempool paths under adversarial peers and high load.

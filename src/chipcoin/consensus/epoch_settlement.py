@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from statistics import median
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .hashes import double_sha256
 from .models import Transaction
@@ -16,6 +16,11 @@ REGISTER_REWARD_NODE_KIND = "register_reward_node"
 RENEW_REWARD_NODE_KIND = "renew_reward_node"
 REWARD_ATTESTATION_BUNDLE_KIND = "reward_attestation_bundle"
 REWARD_SETTLE_EPOCH_KIND = "reward_settle_epoch"
+REWARD_EPOCH_SEED_V1_DOMAIN = b"reward-epoch-v1"
+REWARD_EPOCH_SEED_V2_DOMAIN_PREFIX = "chipcoin:reward-epoch-seed:v2"
+REWARD_EPOCH_SEED_V2_BLOCK_WINDOW = 16
+REWARD_EPOCH_SEED_V2_ACTIVATION_EPOCH = 112
+REWARD_EPOCH_SEED_V1_COMPAT_NETWORKS = {"devnet", "testnet"}
 
 
 @dataclass(frozen=True)
@@ -83,14 +88,67 @@ class RewardSettlement:
 
 
 def epoch_seed(previous_epoch_closing_block_hash: str, epoch_index: int) -> bytes:
-    """Return the deterministic epoch seed used by assignment helpers."""
+    """Return the legacy deterministic epoch seed used by assignment helpers."""
 
     if len(previous_epoch_closing_block_hash) != 64:
         raise ValueError("previous_epoch_closing_block_hash must be 32 bytes hex")
     if epoch_index < 0:
         raise ValueError("epoch_index cannot be negative")
-    payload = bytes.fromhex(previous_epoch_closing_block_hash) + epoch_index.to_bytes(8, "big") + b"reward-epoch-v1"
+    payload = bytes.fromhex(previous_epoch_closing_block_hash) + epoch_index.to_bytes(8, "big") + REWARD_EPOCH_SEED_V1_DOMAIN
     return double_sha256(payload)
+
+
+def reward_epoch_seed_version(*, network: str, epoch_index: int) -> int:
+    """Return the consensus seed version for an epoch on one network."""
+
+    if epoch_index < 0:
+        raise ValueError("epoch_index cannot be negative")
+    if network in REWARD_EPOCH_SEED_V1_COMPAT_NETWORKS and epoch_index < REWARD_EPOCH_SEED_V2_ACTIVATION_EPOCH:
+        return 1
+    return 2
+
+
+def reward_epoch_seed_v2(*, previous_epoch_block_hashes: Sequence[str], epoch_index: int, network: str) -> bytes:
+    """Return a network-separated seed mixed from multiple prior epoch blocks."""
+
+    if epoch_index < 0:
+        raise ValueError("epoch_index cannot be negative")
+    if not network:
+        raise ValueError("network cannot be empty")
+    if not previous_epoch_block_hashes:
+        raise ValueError("previous_epoch_block_hashes cannot be empty")
+    block_hash_bytes = []
+    for block_hash in previous_epoch_block_hashes:
+        if len(block_hash) != 64:
+            raise ValueError("previous_epoch_block_hashes entries must be 32 bytes hex")
+        block_hash_bytes.append(bytes.fromhex(block_hash))
+    domain = f"{REWARD_EPOCH_SEED_V2_DOMAIN_PREFIX}:{network}".encode("utf-8")
+    payload = (
+        domain
+        + b"\x00"
+        + epoch_index.to_bytes(8, "big")
+        + len(block_hash_bytes).to_bytes(2, "big")
+        + b"".join(block_hash_bytes)
+    )
+    return double_sha256(payload)
+
+
+def reward_epoch_seed(
+    *,
+    previous_epoch_closing_block_hash: str,
+    previous_epoch_block_hashes: Sequence[str],
+    epoch_index: int,
+    network: str,
+) -> bytes:
+    """Return the scheduled reward epoch seed for one network and epoch."""
+
+    if reward_epoch_seed_version(network=network, epoch_index=epoch_index) == 1:
+        return epoch_seed(previous_epoch_closing_block_hash, epoch_index)
+    return reward_epoch_seed_v2(
+        previous_epoch_block_hashes=previous_epoch_block_hashes,
+        epoch_index=epoch_index,
+        network=network,
+    )
 
 
 def epoch_close_height(epoch_index: int, params: ConsensusParams) -> int:
