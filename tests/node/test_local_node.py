@@ -2811,6 +2811,60 @@ def test_runtime_updates_peer_height_from_getdata_requests() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_logs_and_penalizes_repeated_getdata_misses(caplog) -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 0})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = True
+        state = _FakeSessionState()
+        transport = None
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            sent_messages.append(message)
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            handle = SessionHandle(  # type: ignore[arg-type]
+                protocol=session,  # type: ignore[arg-type]
+                outbound=False,
+                endpoint=OutboundPeer("node-a", 18444),
+                opened_at=1.0,
+            )
+            runtime._sessions[session] = handle
+            penalties: list[int] = []
+
+            def record_penalty(_session, *, error, penalty):
+                penalties.append(penalty)
+                return "warn"
+
+            runtime._apply_session_penalty = record_penalty  # type: ignore[method-assign]
+            message = MessageEnvelope(
+                command="getdata",
+                payload=GetDataMessage(items=(InventoryVector(object_type="block", object_hash="aa" * 32),)),
+            )
+
+            with caplog.at_level(logging.INFO, logger="chipcoin.node.runtime"):
+                for _ in range(runtime._GETDATA_MISS_PENALTY_THRESHOLD):
+                    await runtime._on_peer_message(session, message)  # type: ignore[arg-type]
+
+            assert sent_messages == []
+            assert handle.getdata_miss_count == runtime._GETDATA_MISS_PENALTY_THRESHOLD
+            assert penalties == [5]
+            assert "getdata miss peer=node-a:18444/peer-a requested=1 served=0" in caplog.text
+            assert "penalty=5 action=warn" in caplog.text
+
+    sent_messages: list[MessageEnvelope] = []
+    asyncio.run(scenario())
+
+
 def test_runtime_ignores_duplicate_mempool_transaction_relay(monkeypatch) -> None:
     class _FakeSessionState:
         closed = False

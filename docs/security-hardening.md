@@ -34,6 +34,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | HTTP submit body size | local/API memory or CPU DoS before validation | fixed with per-route request caps | keep HTTP private or behind a controlled proxy |
 | Mempool admission ordering | avoidable CPU/DB pressure before policy rejection | fixed with cheap preflight checks | continue peer-level relay throttling review |
 | Non-standard tx relay spam | repeated costly invalid tx validation from one peer | fixed with stronger policy-failure penalties and structured logs | keep tuning thresholds from testnet telemetry |
+| Repeated getdata misses | peer can repeatedly request unavailable inventory | fixed with per-session miss tracking, logs, and penalties | tune thresholds from live sync telemetry |
 
 ## 1. P2P Frame Size Limit
 
@@ -215,6 +216,40 @@ behavior for peers that repeatedly send non-standard mempool transactions.
 `tests/node/test_local_node.py` covers the stronger relay penalty
 classification and verifies that misbehavior logs include peer identity and the
 resulting action.
+
+## 1d. Repeated Getdata Miss Tracking
+
+### Finding
+
+Inbound `getdata` requests were bounded by item count, but a peer could
+repeatedly ask for inventory the node cannot serve. A single miss can be normal
+under network races, but repeated fully unserved requests are useful signal for
+bad peer behavior and should be visible in logs.
+
+### Status
+
+Fixed.
+
+The runtime now tracks a per-session `getdata_miss_count`. A request that is at
+least partially served resets the count. Repeated fully unserved requests are
+logged and, after the threshold, penalized:
+
+```python
+_GETDATA_MISS_PENALTY_THRESHOLD = 3
+```
+
+The log includes peer identity, requested/served counts, miss count, threshold,
+first requested block hash, penalty, and action.
+
+### Compatibility
+
+This is not consensus-affecting. It only scores peers that repeatedly request
+inventory unavailable to the local node.
+
+### Tests
+
+`tests/node/test_local_node.py` covers repeated `getdata` misses, verifies the
+log line, and asserts that the penalty is applied at the configured threshold.
 
 ## 2. Wallet Private Key Exposure
 

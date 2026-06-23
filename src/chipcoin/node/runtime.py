@@ -82,6 +82,7 @@ class SessionHandle:
     last_headers_requested_at: float = 0.0
     inflight_block_hashes: set[str] = field(default_factory=set)
     block_stall_count: int = 0
+    getdata_miss_count: int = 0
     headers_contributed: int = 0
     blocks_contributed: int = 0
     last_block_progress_at: float = 0.0
@@ -167,6 +168,7 @@ class NodeRuntime:
     _EXTENDED_BACKOFF_MAX_SECONDS = 21_600
     _RECENT_PEER_TXID_CACHE_SECONDS = 300.0
     _RECENT_PEER_TXID_CACHE_SIZE = 10_000
+    _GETDATA_MISS_PENALTY_THRESHOLD = 3
 
     def __init__(
         self,
@@ -1381,6 +1383,12 @@ class NodeRuntime:
                     served_txs,
                     block_requests[0] if block_requests else None,
                 )
+                self._record_getdata_service_result(
+                    session,
+                    requested_count=len(block_requests) + tx_requests,
+                    served_count=served_blocks + served_txs,
+                    first_block_hash=block_requests[0] if block_requests else None,
+                )
             return
 
         if message.command == "block":
@@ -1563,6 +1571,45 @@ class NodeRuntime:
         self._apply_session_penalty(session, error=error, penalty=penalty)
         await session.close(reason=str(error), error=error)
         await self._drop_session(session)
+
+    def _record_getdata_service_result(
+        self,
+        session: PeerProtocol,
+        *,
+        requested_count: int,
+        served_count: int,
+        first_block_hash: str | None,
+    ) -> None:
+        """Track repeated getdata requests for inventory this node cannot serve."""
+
+        handle = self._sessions.get(session)
+        if handle is None or requested_count <= 0:
+            return
+        if served_count > 0:
+            handle.getdata_miss_count = 0
+            return
+        handle.getdata_miss_count += 1
+        peer = self._format_peer_for_logs(session)
+        action = "observe"
+        penalty = 0
+        if handle.getdata_miss_count >= self._GETDATA_MISS_PENALTY_THRESHOLD:
+            penalty = 5
+            action = self._apply_session_penalty(
+                session,
+                error=ProtocolError("getdata requested unavailable inventory repeatedly"),
+                penalty=penalty,
+            ) or "observe"
+        self.logger.info(
+            "getdata miss peer=%s requested=%s served=%s miss_count=%s threshold=%s first_block=%s penalty=%s action=%s",
+            peer,
+            requested_count,
+            served_count,
+            handle.getdata_miss_count,
+            self._GETDATA_MISS_PENALTY_THRESHOLD,
+            first_block_hash,
+            penalty,
+            action,
+        )
 
     async def _broadcast_inventory(self, item: InventoryVector, *, exclude: PeerProtocol | None = None) -> None:
         """Broadcast a single inventory announcement to active peers."""
