@@ -1038,6 +1038,37 @@ def test_http_api_mempool_includes_machine_friendly_fee_rate() -> None:
         assert isinstance(body[0]["fee_rate_chipbits_per_weight_unit"], float)
 
 
+def test_http_api_mempool_diagnostics_are_paginated() -> None:
+    class FakeService:
+        network = "testnet"
+
+        def mempool_diagnostics(self):
+            return [
+                {"txid": f"tx-{index}", "fee_chipbits": index + 1, "weight_units": 1}
+                for index in range(HttpApiApp.MEMPOOL_DEFAULT_LIMIT + 5)
+            ]
+
+    app = HttpApiApp(FakeService())
+
+    default_status, _, default_body = _call_wsgi(app, method="GET", path="/v1/mempool")
+    page_status, _, page_body = _call_wsgi(app, method="GET", path="/v1/mempool", query="offset=100&limit=5")
+    oversized_status, _, oversized_body = _call_wsgi(
+        app,
+        method="GET",
+        path="/v1/mempool",
+        query=f"limit={HttpApiApp.MEMPOOL_MAX_LIMIT + 1}",
+    )
+
+    assert default_status == "200 OK"
+    assert len(default_body) == HttpApiApp.MEMPOOL_DEFAULT_LIMIT
+    assert default_body[0]["fee_rate_chipbits_per_weight_unit"] == 1.0
+    assert page_status == "200 OK"
+    assert [row["txid"] for row in page_body] == ["tx-100", "tx-101", "tx-102", "tx-103", "tx-104"]
+    assert oversized_status == "400 Bad Request"
+    assert oversized_body["error"]["code"] == "invalid_request"
+    assert oversized_body["error"]["message"] == f"limit must be between 1 and {HttpApiApp.MEMPOOL_MAX_LIMIT}"
+
+
 def test_http_api_peers_and_peers_summary() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
@@ -1074,6 +1105,45 @@ def test_http_api_peers_and_peers_summary() -> None:
             "active_ban_count": 0,
             "warnings": [],
         }
+
+
+def test_http_api_peer_diagnostics_are_paginated() -> None:
+    class FakeService:
+        network = "testnet"
+
+        def peer_diagnostics(self):
+            return [{"host": f"peer-{index}.example", "port": 28444} for index in range(HttpApiApp.PEERS_DEFAULT_LIMIT + 5)]
+
+        def peer_summary(self):
+            return {"peer_count": HttpApiApp.PEERS_DEFAULT_LIMIT + 5}
+
+    app = HttpApiApp(FakeService())
+
+    default_status, _, default_body = _call_wsgi(app, method="GET", path="/v1/peers")
+    page_status, _, page_body = _call_wsgi(app, method="GET", path="/v1/peers", query="offset=200&limit=5")
+    oversized_status, _, oversized_body = _call_wsgi(
+        app,
+        method="GET",
+        path="/v1/peers",
+        query=f"limit={HttpApiApp.PEERS_MAX_LIMIT + 1}",
+    )
+    summary_status, _, summary_body = _call_wsgi(app, method="GET", path="/v1/peers/summary")
+
+    assert default_status == "200 OK"
+    assert len(default_body) == HttpApiApp.PEERS_DEFAULT_LIMIT
+    assert page_status == "200 OK"
+    assert [row["host"] for row in page_body] == [
+        "peer-200.example",
+        "peer-201.example",
+        "peer-202.example",
+        "peer-203.example",
+        "peer-204.example",
+    ]
+    assert oversized_status == "400 Bad Request"
+    assert oversized_body["error"]["code"] == "invalid_request"
+    assert oversized_body["error"]["message"] == f"limit must be between 1 and {HttpApiApp.PEERS_MAX_LIMIT}"
+    assert summary_status == "200 OK"
+    assert summary_body["peer_count"] == HttpApiApp.PEERS_DEFAULT_LIMIT + 5
 
 
 def test_http_api_public_peers_filters_private_and_unhealthy_records() -> None:

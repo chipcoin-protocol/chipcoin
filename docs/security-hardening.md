@@ -32,6 +32,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Snapshot trust defaults | accidental trust-on-first-use | fixed with warn defaults | use enforce with pinned keys for mainnet/public bootstrap |
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
 | HTTP submit body size | local/API memory or CPU DoS before validation | fixed with per-route request caps | keep HTTP private or behind a controlled proxy |
+| HTTP diagnostic list size | large peerbook/mempool responses can amplify exposed API cost | fixed with pagination caps | keep raw node HTTP private and expose only intentional public APIs |
 | Mempool admission ordering | avoidable CPU/DB pressure before policy rejection | fixed with cheap preflight checks | continue peer-level relay throttling review |
 | Non-standard tx relay spam | repeated costly invalid tx validation from one peer | fixed with stronger policy-failure penalties and structured logs | keep tuning thresholds from testnet telemetry |
 | Repeated getdata misses | peer can repeatedly request unavailable inventory | fixed with per-session miss tracking, logs, and penalties | tune thresholds from live sync telemetry |
@@ -133,7 +134,40 @@ transactions but below unbounded memory/CPU abuse.
 - oversized block submit body rejected before the mining handler
 - malformed `CONTENT_LENGTH` rejected as a client error
 
-## 1b. Mempool Admission Preflight
+## 1b. HTTP Diagnostic Pagination
+
+### Finding
+
+Diagnostic list endpoints are operator-facing, but if node HTTP is accidentally
+published or proxied, large peerbook or mempool responses can amplify request
+cost and bandwidth use.
+
+### Status
+
+Fixed.
+
+`GET /v1/mempool` and `GET /v1/peers` now apply bounded pagination:
+
+```text
+/v1/mempool?limit=<1..1000>&offset=<0..100000>
+/v1/peers?limit=<1..1000>&offset=<0..100000>
+```
+
+Default response sizes are capped at 100 mempool entries and 200 peer records.
+Oversized limits return `400 Bad Request` and are logged by the HTTP request
+logger with the rejected path and status.
+
+### Compatibility
+
+This is not consensus-affecting. Clients that need full diagnostics can page
+through results explicitly instead of relying on unbounded responses.
+
+### Tests
+
+`tests/node/test_http_api.py` covers default limits, offset paging, rejected
+oversized limits, and unchanged peer-summary aggregation.
+
+## 1c. Mempool Admission Preflight
 
 ### Finding
 

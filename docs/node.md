@@ -240,7 +240,7 @@ Useful endpoints:
 - `GET /v1/rewards/node-fees`
 - `GET /v1/rewards/node-status?node_id=<id>&epoch_index=<optional>`
 - `GET /v1/rewards/epoch-summary?epoch_index=<required>`
-- `GET /v1/peers`
+- `GET /v1/peers?limit=<optional>&offset=<optional>`
 - `GET /v1/blocks`
 - `GET /v1/block?height=<height>`
 - `GET /v1/block?hash=<hash>`
@@ -248,7 +248,7 @@ Useful endpoints:
 - `GET /v1/address/<address>`
 - `GET /v1/address/<address>/utxos`
 - `GET /v1/address/<address>/history`
-- `GET /v1/mempool`
+- `GET /v1/mempool?limit=<optional>&offset=<optional>`
 - `GET /v1/peers/summary`
 - `GET /mining/status`
 - `POST /mining/get-block-template`
@@ -425,8 +425,8 @@ The current product-facing HTTP API subset, stable enough for the explorer and b
 - `GET /v1/address/<address>`
 - `GET /v1/address/<address>/utxos`
 - `GET /v1/address/<address>/history`
-- `GET /v1/mempool`
-- `GET /v1/peers`
+- `GET /v1/mempool?limit=<optional>&offset=<optional>`
+- `GET /v1/peers?limit=<optional>&offset=<optional>`
 - `GET /v1/peers/summary`
 
 Contract notes for this stable subset:

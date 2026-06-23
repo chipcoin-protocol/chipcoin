@@ -42,6 +42,11 @@ class HttpApiApp:
     API_VERSION = "v1"
     ADDRESS_HISTORY_DEFAULT_LIMIT = 50
     ADDRESS_HISTORY_MAX_LIMIT = 100
+    MEMPOOL_DEFAULT_LIMIT = 100
+    MEMPOOL_MAX_LIMIT = 1_000
+    PEERS_DEFAULT_LIMIT = 200
+    PEERS_MAX_LIMIT = 1_000
+    MAX_DIAGNOSTIC_OFFSET = 100_000
     DEFAULT_JSON_BODY_MAX_BYTES = 1_000_000
     MINING_TEMPLATE_JSON_BODY_MAX_BYTES = 16_384
     TX_SUBMIT_JSON_BODY_MAX_BYTES = 262_144
@@ -215,10 +220,10 @@ class HttpApiApp:
             return self._handle_submit_tx(environ)
 
         if method == "GET" and path == "/v1/mempool":
-            return self._handle_mempool()
+            return self._handle_mempool(environ)
 
         if method == "GET" and path == "/v1/peers":
-            return self.service.peer_diagnostics()
+            return self._handle_peers(environ)
 
         if method == "GET" and path == "/v1/peers/summary":
             return self.service.peer_summary()
@@ -396,9 +401,15 @@ class HttpApiApp:
             return self.service.address_history(address, limit=limit, descending=order == "desc")
         raise ApiError(404, "not_found", "not found")
 
-    def _handle_mempool(self) -> list[dict[str, object]]:
+    def _handle_mempool(self, environ) -> list[dict[str, object]]:
+        query = parse_qs(environ.get("QUERY_STRING", ""))
+        offset, limit = self._parse_pagination(
+            query,
+            default_limit=self.MEMPOOL_DEFAULT_LIMIT,
+            max_limit=self.MEMPOOL_MAX_LIMIT,
+        )
         rows = []
-        for row in self.service.mempool_diagnostics():
+        for row in self.service.mempool_diagnostics()[offset : offset + limit]:
             fee_chipbits = int(row["fee_chipbits"])
             weight_units = int(row["weight_units"])
             enriched = dict(row)
@@ -408,6 +419,40 @@ class HttpApiApp:
                 enriched["fee_rate_chipbits_per_weight_unit"] = 0.0
             rows.append(enriched)
         return rows
+
+    def _handle_peers(self, environ) -> list[dict[str, object]]:
+        query = parse_qs(environ.get("QUERY_STRING", ""))
+        offset, limit = self._parse_pagination(
+            query,
+            default_limit=self.PEERS_DEFAULT_LIMIT,
+            max_limit=self.PEERS_MAX_LIMIT,
+        )
+        return self.service.peer_diagnostics()[offset : offset + limit]
+
+    def _parse_pagination(
+        self,
+        query: dict[str, list[str]],
+        *,
+        default_limit: int,
+        max_limit: int,
+    ) -> tuple[int, int]:
+        offset = self._parse_optional_int(
+            query,
+            "offset",
+            minimum=0,
+            maximum=self.MAX_DIAGNOSTIC_OFFSET,
+            default=0,
+        )
+        limit = self._parse_optional_int(
+            query,
+            "limit",
+            minimum=1,
+            maximum=max_limit,
+            default=default_limit,
+        )
+        assert offset is not None
+        assert limit is not None
+        return offset, limit
 
     def _read_json(self, environ, *, max_body_bytes: int = DEFAULT_JSON_BODY_MAX_BYTES) -> dict:
         raw_content_length = environ.get("CONTENT_LENGTH") or "0"
