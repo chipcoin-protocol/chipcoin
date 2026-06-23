@@ -87,7 +87,6 @@ def _free_port() -> int:
 
 async def _mine_and_announce(runtime: NodeRuntime, service: NodeService, payout_address: str) -> Block:
     block = _mine_block(service.build_candidate_block(payout_address).block)
-    service.apply_block(block)
     await runtime.announce_block(block)
     return block
 
@@ -101,6 +100,7 @@ def _register_reward_node(service: NodeService, *, wallet, node_id: str, declare
             declared_host="127.0.0.1",
             declared_port=declared_port,
             registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
+            network=service.network,
         )
     )
 
@@ -456,7 +456,7 @@ def test_native_reward_template_miner_restart_near_epoch_close_keeps_auto_settle
                         node_urls=(f"http://127.0.0.1:{bootstrap_runtime.http_bound_port}",),
                         miner_id="reward-worker-a",
                         nonce_batch_size=250_000,
-                        mining_min_interval_seconds=0.0,
+                        mining_min_interval_seconds=1.0,
                         run_seconds=0.4,
                     )
                 )
@@ -464,7 +464,7 @@ def test_native_reward_template_miner_restart_near_epoch_close_keeps_auto_settle
                 assert result_one["accepted_blocks"] >= 1
                 await _wait_until(lambda: bootstrap_service.chain_tip() is not None and bootstrap_service.chain_tip().height >= 4)
                 close_hash = bootstrap_service.get_block_by_height(4).block_hash()
-                await _wait_for_tip(follower_service, close_hash)
+                await _wait_until(lambda: follower_service.get_block_by_hash(close_hash) is not None)
 
                 worker_two = MinerWorker(
                     MinerWorkerConfig(
@@ -473,7 +473,7 @@ def test_native_reward_template_miner_restart_near_epoch_close_keeps_auto_settle
                         node_urls=(f"http://127.0.0.1:{bootstrap_runtime.http_bound_port}",),
                         miner_id="reward-worker-b",
                         nonce_batch_size=250_000,
-                        mining_min_interval_seconds=0.0,
+                        mining_min_interval_seconds=1.0,
                         run_seconds=0.4,
                     )
                 )
@@ -593,6 +593,7 @@ def test_native_reward_runtime_auto_renews_registered_node() -> None:
             await runtime.start()
             try:
                 _register_reward_node(service, wallet=reward_a, node_id="reward-node-a", declared_port=runtime.bound_port)
+                await _mine_and_announce(runtime, service, reward_a.address)
                 await _mine_and_announce(runtime, service, reward_a.address)
                 await _mine_and_announce(runtime, service, reward_a.address)
                 await _mine_and_announce(runtime, service, reward_a.address)

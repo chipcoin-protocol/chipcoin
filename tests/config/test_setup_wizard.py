@@ -551,7 +551,7 @@ def test_prepare_node_bootstrap_auto_falls_back_when_download_fails() -> None:
         assert "Falling back to full sync" in " ".join(notes)
 
 
-def test_prepare_node_bootstrap_warns_when_snapshot_is_stale_but_valid() -> None:
+def test_prepare_node_bootstrap_warns_when_snapshot_is_stale_but_valid(monkeypatch) -> None:
     wizard = load_wizard_module()
     with TemporaryDirectory() as tempdir:
         temp_root = Path(tempdir)
@@ -582,7 +582,7 @@ def test_prepare_node_bootstrap_warns_when_snapshot_is_stale_but_valid() -> None
             ]
         }
         wizard._download_snapshot_file = lambda url, destination: destination.write_bytes(snapshot_path.read_bytes())
-        wizard.time.time = lambda: wizard.SNAPSHOT_LARGE_DELTA_WARNING_SECONDS + 5
+        monkeypatch.setattr(wizard.time, "time", lambda: wizard.SNAPSHOT_LARGE_DELTA_WARNING_SECONDS + 5)
 
         notes = wizard._prepare_node_bootstrap(env_values, network="devnet")
 

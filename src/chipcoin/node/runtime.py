@@ -3267,7 +3267,8 @@ class NodeRuntime:
 
         if handle is not None and handle.endpoint is not None:
             return PeerEndpoint(host=handle.endpoint.host, port=handle.endpoint.port)
-        peer_endpoint = getattr(session.transport, "peer_endpoint", None)
+        transport = getattr(session, "transport", None)
+        peer_endpoint = getattr(transport, "peer_endpoint", None)
         if callable(peer_endpoint):
             return peer_endpoint()
         return None

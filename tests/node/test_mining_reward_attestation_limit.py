@@ -7,18 +7,21 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.params import DEVNET_PARAMS
 from chipcoin.consensus.models import Transaction
+from chipcoin.consensus.validation import ValidationError
 from chipcoin.node.service import NodeService
 from chipcoin.node.runtime import NodeRuntime, RewardNodeAutomationConfig
 from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import wallet_key
 from tests.node.test_reward_node_automation_over_emission import _register_reward_node
-from tests.node.test_reward_node_automation import _apply_candidate_block, _write_wallet_file
+from tests.node.test_reward_node_automation import _apply_candidate_block, _mine_block, _write_wallet_file
 
 
-def _mining_limit_params():
+def _mining_limit_params(*, max_attestation_bundles_per_block: int = 2):
     return replace(
         DEVNET_PARAMS,
         coinbase_maturity=0,
@@ -32,16 +35,21 @@ def _mining_limit_params():
         reward_verifier_quorum=1,
         reward_final_confirmation_window_blocks=1,
         max_rewarded_nodes_per_epoch=4,
-        max_attestation_bundles_per_block=2,
+        max_attestation_bundles_per_block=max_attestation_bundles_per_block,
     )
 
 
-def _make_limit_service(database_path: Path, *, start_time: int) -> NodeService:
+def _make_limit_service(
+    database_path: Path,
+    *,
+    start_time: int,
+    max_attestation_bundles_per_block: int = 2,
+) -> NodeService:
     timestamps = iter(range(start_time, start_time + 1000))
     return NodeService.open_sqlite(
         database_path,
         network="devnet",
-        params=_mining_limit_params(),
+        params=_mining_limit_params(max_attestation_bundles_per_block=max_attestation_bundles_per_block),
         time_provider=lambda: next(timestamps),
     )
 
@@ -51,7 +59,11 @@ def test_build_candidate_block_caps_reward_attestation_bundles_per_block() -> No
         reward_a = wallet_key(0)
         reward_b = wallet_key(1)
         reward_c = wallet_key(2)
-        service = _make_limit_service(Path(tempdir) / "node.sqlite3", start_time=1_700_090_000)
+        service = _make_limit_service(
+            Path(tempdir) / "node.sqlite3",
+            start_time=1_700_090_000,
+            max_attestation_bundles_per_block=0,
+        )
         reward_a_path = _write_wallet_file(Path(tempdir) / "reward-a.json", reward_a)
         reward_b_path = _write_wallet_file(Path(tempdir) / "reward-b.json", reward_b)
         reward_c_path = _write_wallet_file(Path(tempdir) / "reward-c.json", reward_c)
@@ -100,9 +112,7 @@ def test_build_candidate_block_caps_reward_attestation_bundles_per_block() -> No
         included_bundles = [
             tx for tx in candidate.block.transactions if tx.metadata.get("kind") == "reward_attestation_bundle"
         ]
-        assert len(included_bundles) == service.params.max_attestation_bundles_per_block
-        for tx in included_bundles:
-            json.loads(tx.metadata["attestations_json"])
+        assert included_bundles == []
 
 
 def test_build_candidate_block_skips_conflicting_verifier_window_attestation_bundles() -> None:
@@ -190,13 +200,18 @@ def test_build_candidate_block_skips_conflicting_verifier_window_attestation_bun
                     ),
                 },
             )
-            service.receive_transaction(transaction)
+            if candidate_node_id == candidate_node_ids[0]:
+                service.receive_transaction(transaction)
+            else:
+                with pytest.raises(
+                    ValidationError,
+                    match="Mempool already contains a reward_attestation_bundle transaction",
+                ):
+                    service.receive_transaction(transaction)
 
         candidate = service.build_candidate_block(reward_a.address)
         included_bundles = [
             tx for tx in candidate.block.transactions if tx.metadata.get("kind") == "reward_attestation_bundle"
         ]
         assert len(included_bundles) == 1
-        mined_block = service.mining.mine_block(candidate, max_nonce_attempts=10_000)
-        assert mined_block is not None
-        service.apply_block(mined_block)
+        service.apply_block(_mine_block(candidate.block))

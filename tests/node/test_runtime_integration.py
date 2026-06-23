@@ -678,10 +678,10 @@ def test_devnet_runtime_rejects_testnet_peer_before_handshake_or_sync() -> None:
                 assert test_runtime.connected_peer_count() == 0
                 assert not any(peer.handshake_complete is True for peer in dev_service.list_peers())
                 assert not any(peer.handshake_complete is True for peer in test_service.list_peers())
-                assert dev_service.status()["sync"]["header_peers"] == []
-                assert dev_service.status()["sync"]["block_peers"] == []
-                assert test_service.status()["sync"]["header_peers"] == []
-                assert test_service.status()["sync"]["block_peers"] == []
+                assert list(dev_service.status()["sync"]["header_peers"]) == []
+                assert list(dev_service.status()["sync"]["block_peers"]) == []
+                assert list(test_service.status()["sync"]["header_peers"]) == []
+                assert list(test_service.status()["sync"]["block_peers"]) == []
             finally:
                 await test_runtime.stop()
                 await dev_runtime.stop()
@@ -722,10 +722,10 @@ def test_testnet_runtime_rejects_devnet_peer_before_handshake_or_sync() -> None:
                 assert dev_runtime.connected_peer_count() == 0
                 assert not any(peer.handshake_complete is True for peer in test_service.list_peers())
                 assert not any(peer.handshake_complete is True for peer in dev_service.list_peers())
-                assert test_service.status()["sync"]["header_peers"] == []
-                assert test_service.status()["sync"]["block_peers"] == []
-                assert dev_service.status()["sync"]["header_peers"] == []
-                assert dev_service.status()["sync"]["block_peers"] == []
+                assert list(test_service.status()["sync"]["header_peers"]) == []
+                assert list(test_service.status()["sync"]["block_peers"]) == []
+                assert list(dev_service.status()["sync"]["header_peers"]) == []
+                assert list(dev_service.status()["sync"]["block_peers"]) == []
             finally:
                 await dev_runtime.stop()
                 await test_runtime.stop()

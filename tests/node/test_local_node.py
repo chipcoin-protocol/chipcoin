@@ -47,6 +47,16 @@ def _make_service_with_params(database_path: Path, params) -> NodeService:
     return NodeService.open_sqlite(database_path, params=params, time_provider=lambda: next(timestamps))
 
 
+async def _wait_until(predicate, *, timeout: float = 2.0, interval: float = 0.01) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        if predicate():
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError("condition was not met before timeout")
+        await asyncio.sleep(interval)
+
+
 def _mine_block(block: Block) -> Block:
     for nonce in range(2_000_000):
         mined_header = replace(block.header, nonce=nonce)
@@ -1794,7 +1804,7 @@ def test_runtime_tolerates_one_transient_ping_timeout_before_dropping_session() 
 
             task = asyncio.create_task(runtime._ping_loop())
             try:
-                await asyncio.sleep(0.05)
+                await _wait_until(lambda: session.ping_calls >= 2)
             finally:
                 runtime._running = False
                 await task
@@ -2115,6 +2125,7 @@ def test_runtime_activates_ready_best_chain_when_no_blocks_are_missing() -> None
         manager.ingest_headers(tuple(block.header for block in blocks), peer_id="peer-a")
         for block in blocks:
             target.blocks.put(block)
+        manager._missing_blocks_cache = {}
 
         status_before = manager.sync_status()
         assert status_before["best_header_height"] == 2
@@ -2990,7 +3001,7 @@ def test_runtime_drops_session_after_reaching_ping_failure_threshold() -> None:
 
             task = asyncio.create_task(runtime._ping_loop())
             try:
-                await asyncio.sleep(0.05)
+                await _wait_until(lambda: bool(dropped))
             finally:
                 runtime._running = False
                 await task
