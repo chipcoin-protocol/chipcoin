@@ -37,11 +37,31 @@ def _mine_block(block: Block) -> Block:
 
 def _call_wsgi(app, *, method: str, path: str, query: str = "", body: object | None = None, origin: str | None = None):
     encoded_body = b"" if body is None else json.dumps(body, sort_keys=True).encode("utf-8")
+    return _call_wsgi_raw(
+        app,
+        method=method,
+        path=path,
+        query=query,
+        encoded_body=encoded_body,
+        origin=origin,
+    )
+
+
+def _call_wsgi_raw(
+    app,
+    *,
+    method: str,
+    path: str,
+    query: str = "",
+    encoded_body: bytes = b"",
+    content_length: str | None = None,
+    origin: str | None = None,
+):
     environ = {
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
         "QUERY_STRING": query,
-        "CONTENT_LENGTH": str(len(encoded_body)),
+        "CONTENT_LENGTH": str(len(encoded_body)) if content_length is None else content_length,
         "wsgi.input": BytesIO(encoded_body),
     }
     if origin is not None:
@@ -804,6 +824,83 @@ def test_http_api_submit_tx_reports_invalid_and_validation_errors() -> None:
         assert first_status == "200 OK"
         assert second_status == "400 Bad Request"
         assert second_body["error"]["code"] == "validation_error"
+
+
+def test_http_api_submit_tx_rejects_oversized_body_before_handler() -> None:
+    class Service:
+        network = "mainnet"
+
+    def handler(*, raw_hex: str) -> dict[str, object]:
+        raise AssertionError("oversized submit must be rejected before tx handler")
+
+    app = HttpApiApp(Service(), tx_submit_handler=handler)
+    app.TX_SUBMIT_JSON_BODY_MAX_BYTES = 32
+    body = json.dumps({"raw_hex": "00" * 64}).encode("utf-8")
+
+    status, _, payload = _call_wsgi_raw(app, method="POST", path="/v1/tx/submit", encoded_body=body)
+
+    assert status == "413 Payload Too Large"
+    assert payload["error"]["code"] == "payload_too_large"
+
+
+def test_http_api_submit_tx_rejects_oversized_raw_hex_before_handler() -> None:
+    class Service:
+        network = "mainnet"
+
+    def handler(*, raw_hex: str) -> dict[str, object]:
+        raise AssertionError("oversized raw_hex must be rejected before tx handler")
+
+    app = HttpApiApp(Service(), tx_submit_handler=handler)
+    app.TX_SUBMIT_JSON_BODY_MAX_BYTES = 1_024
+    app.TX_SUBMIT_RAW_HEX_MAX_CHARS = 4
+
+    status, _, payload = _call_wsgi(app, method="POST", path="/v1/tx/submit", body={"raw_hex": "00" * 8})
+
+    assert status == "413 Payload Too Large"
+    assert payload["error"]["code"] == "payload_too_large"
+
+
+def test_http_api_submit_block_rejects_oversized_body_before_handler() -> None:
+    class Service:
+        network = "mainnet"
+
+    def handler(*, template_id: str, serialized_block_hex: str, miner_id: str) -> dict[str, object]:
+        raise AssertionError("oversized submit must be rejected before mining handler")
+
+    app = HttpApiApp(Service(), mining_submit_handler=handler)
+    app.BLOCK_SUBMIT_JSON_BODY_MAX_BYTES = 48
+    body = json.dumps(
+        {
+            "template_id": "template-a",
+            "serialized_block": "00" * 64,
+            "miner_id": "miner-a",
+        }
+    ).encode("utf-8")
+
+    status, _, payload = _call_wsgi_raw(app, method="POST", path="/mining/submit-block", encoded_body=body)
+
+    assert status == "413 Payload Too Large"
+    assert payload["error"]["code"] == "payload_too_large"
+
+
+def test_http_api_json_reader_rejects_invalid_content_length() -> None:
+    class Service:
+        network = "mainnet"
+
+    app = HttpApiApp(Service())
+    body = json.dumps({"raw_hex": "00"}).encode("utf-8")
+
+    status, _, payload = _call_wsgi_raw(
+        app,
+        method="POST",
+        path="/v1/tx/submit",
+        encoded_body=body,
+        content_length="not-an-integer",
+    )
+
+    assert status == "400 Bad Request"
+    assert payload["error"]["code"] == "invalid_request"
+    assert payload["error"]["message"] == "CONTENT_LENGTH must be an integer"
 
 
 def test_http_api_tx_lookup_returns_not_found() -> None:

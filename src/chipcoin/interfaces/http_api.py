@@ -42,6 +42,12 @@ class HttpApiApp:
     API_VERSION = "v1"
     ADDRESS_HISTORY_DEFAULT_LIMIT = 50
     ADDRESS_HISTORY_MAX_LIMIT = 100
+    DEFAULT_JSON_BODY_MAX_BYTES = 1_000_000
+    MINING_TEMPLATE_JSON_BODY_MAX_BYTES = 16_384
+    TX_SUBMIT_JSON_BODY_MAX_BYTES = 262_144
+    TX_SUBMIT_RAW_HEX_MAX_CHARS = 200_000
+    BLOCK_SUBMIT_JSON_BODY_MAX_BYTES = 17_000_000
+    BLOCK_SUBMIT_RAW_HEX_MAX_CHARS = 16_000_000
 
     def __init__(
         self,
@@ -292,14 +298,16 @@ class HttpApiApp:
         return payload
 
     def _handle_submit_tx(self, environ) -> dict[str, object]:
-        payload = self._read_json(environ)
-        raw_hex = payload.get("raw_hex")
-        if not isinstance(raw_hex, str) or not raw_hex.strip():
-            raise ApiError(400, "invalid_request", "raw_hex is required")
+        payload = self._read_json(environ, max_body_bytes=self.TX_SUBMIT_JSON_BODY_MAX_BYTES)
+        raw_hex = self._parse_required_hex_field(
+            payload,
+            "raw_hex",
+            max_chars=self.TX_SUBMIT_RAW_HEX_MAX_CHARS,
+        )
         try:
             if self.tx_submit_handler is not None:
-                return self.tx_submit_handler(raw_hex=raw_hex.strip())
-            accepted = self.service.submit_raw_transaction(raw_hex.strip())
+                return self.tx_submit_handler(raw_hex=raw_hex)
+            accepted = self.service.submit_raw_transaction(raw_hex)
         except ValidationError as exc:
             raise ApiError(400, "validation_error", str(exc)) from exc
         except ValueError as exc:
@@ -307,7 +315,7 @@ class HttpApiApp:
         return {"accepted": True, "txid": accepted.transaction.txid(), "fee": accepted.fee}
 
     def _handle_get_block_template(self, environ) -> dict[str, object]:
-        payload = self._read_json(environ)
+        payload = self._read_json(environ, max_body_bytes=self.MINING_TEMPLATE_JSON_BODY_MAX_BYTES)
         payout_address = payload.get("payout_address")
         miner_id = payload.get("miner_id")
         template_mode = payload.get("template_mode", "full_block")
@@ -337,25 +345,27 @@ class HttpApiApp:
             raise ApiError(400, "invalid_request", str(exc)) from exc
 
     def _handle_submit_block(self, environ) -> dict[str, object]:
-        payload = self._read_json(environ)
+        payload = self._read_json(environ, max_body_bytes=self.BLOCK_SUBMIT_JSON_BODY_MAX_BYTES)
         template_id = payload.get("template_id")
-        serialized_block = payload.get("serialized_block")
+        serialized_block = self._parse_required_hex_field(
+            payload,
+            "serialized_block",
+            max_chars=self.BLOCK_SUBMIT_RAW_HEX_MAX_CHARS,
+        )
         miner_id = payload.get("miner_id")
         if not isinstance(template_id, str) or not template_id.strip():
             raise ApiError(400, "invalid_request", "template_id is required")
-        if not isinstance(serialized_block, str) or not serialized_block.strip():
-            raise ApiError(400, "invalid_request", "serialized_block is required")
         if not isinstance(miner_id, str) or not miner_id.strip():
             raise ApiError(400, "invalid_request", "miner_id is required")
         if self.mining_submit_handler is not None:
             return self.mining_submit_handler(
                 template_id=template_id.strip(),
-                serialized_block_hex=serialized_block.strip(),
+                serialized_block_hex=serialized_block,
                 miner_id=miner_id.strip(),
             )
         return self.service.submit_mined_block(
             template_id=template_id.strip(),
-            serialized_block_hex=serialized_block.strip(),
+            serialized_block_hex=serialized_block,
             miner_id=miner_id.strip(),
         )
 
@@ -399,8 +409,20 @@ class HttpApiApp:
             rows.append(enriched)
         return rows
 
-    def _read_json(self, environ) -> dict:
-        content_length = int(environ.get("CONTENT_LENGTH") or "0")
+    def _read_json(self, environ, *, max_body_bytes: int = DEFAULT_JSON_BODY_MAX_BYTES) -> dict:
+        raw_content_length = environ.get("CONTENT_LENGTH") or "0"
+        try:
+            content_length = int(raw_content_length)
+        except ValueError as exc:
+            raise ApiError(400, "invalid_request", "CONTENT_LENGTH must be an integer") from exc
+        if content_length < 0:
+            raise ApiError(400, "invalid_request", "CONTENT_LENGTH must be >= 0")
+        if content_length > max_body_bytes:
+            raise ApiError(
+                413,
+                "payload_too_large",
+                f"request body exceeds {max_body_bytes} bytes",
+            )
         body = environ["wsgi.input"].read(content_length)
         if not body:
             return {}
@@ -411,6 +433,21 @@ class HttpApiApp:
         if not isinstance(decoded, dict):
             raise ApiError(400, "invalid_request", "request body must be a JSON object")
         return decoded
+
+    def _parse_required_hex_field(self, payload: dict, name: str, *, max_chars: int) -> str:
+        raw_value = payload.get(name)
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise ApiError(400, "invalid_request", f"{name} is required")
+        value = raw_value.strip()
+        if len(value) > max_chars:
+            raise ApiError(
+                413,
+                "payload_too_large",
+                f"{name} exceeds {max_chars} hex characters",
+            )
+        if len(value) % 2 != 0:
+            raise ApiError(400, "invalid_request", f"{name} must contain an even number of hex characters")
+        return value
 
     def _parse_required_int(self, query: dict[str, list[str]], name: str, *, minimum: int | None = None) -> int:
         raw = self._require_single(query, name)
@@ -490,6 +527,7 @@ class HttpApiApp:
             204: "204 No Content",
             400: "400 Bad Request",
             404: "404 Not Found",
+            413: "413 Payload Too Large",
             500: "500 Internal Server Error",
         }[status_code]
         headers = [

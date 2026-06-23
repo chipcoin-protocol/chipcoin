@@ -31,6 +31,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Reward epoch seed | miner grinding bias | v2 multi-block seed scheduled | commit-reveal remains optional future hardening |
 | Snapshot trust defaults | accidental trust-on-first-use | fixed with warn defaults | use enforce with pinned keys for mainnet/public bootstrap |
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
+| HTTP submit body size | local/API memory or CPU DoS before validation | fixed with per-route request caps | keep HTTP private or behind a controlled proxy |
 
 ## 1. P2P Frame Size Limit
 
@@ -80,6 +81,54 @@ closing the unbounded allocation surface.
   use the largest cap.
 - Runtime P2P handlers also bound peer-controlled `getheaders`/`getblocks`
   locator counts so malicious peers cannot force unbounded locator scans.
+
+## 1a. HTTP Submit Request Size Limits
+
+### Finding
+
+The node HTTP API is intended to be localhost/operator-facing, but its submit
+paths still process peer- or client-controlled bodies. Before hardening,
+`_read_json()` trusted `CONTENT_LENGTH` and read that many bytes without a
+maximum. `POST /v1/tx/submit` and `POST /mining/submit-block` then passed
+`raw_hex` fields into transaction or block deserialization without an API-level
+size check.
+
+If the HTTP API is accidentally exposed, or if a reverse proxy forwards
+untrusted traffic to it, a client could force excessive memory allocation or
+expensive parsing before normal mempool/block validation policy runs.
+
+### Status
+
+Fixed.
+
+The HTTP API now applies bounded JSON body reads and pre-deserialization hex
+field caps:
+
+```python
+TX_SUBMIT_JSON_BODY_MAX_BYTES = 262_144
+TX_SUBMIT_RAW_HEX_MAX_CHARS = 200_000
+BLOCK_SUBMIT_JSON_BODY_MAX_BYTES = 17_000_000
+BLOCK_SUBMIT_RAW_HEX_MAX_CHARS = 16_000_000
+```
+
+Malformed `CONTENT_LENGTH` values return `400 Bad Request`; oversized request
+bodies or submit fields return `413 Payload Too Large`.
+
+### Compatibility
+
+This is not consensus-affecting. The block submit cap is sized to allow a full
+serialized block up to the current 8 MB transport payload cap plus JSON
+overhead. The transaction submit cap is intentionally far above normal wallet
+transactions but below unbounded memory/CPU abuse.
+
+### Tests
+
+`tests/node/test_http_api.py` covers:
+
+- oversized transaction submit body rejected before the tx handler
+- oversized raw transaction hex rejected before the tx handler
+- oversized block submit body rejected before the mining handler
+- malformed `CONTENT_LENGTH` rejected as a client error
 
 ## 2. Wallet Private Key Exposure
 
