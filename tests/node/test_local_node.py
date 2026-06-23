@@ -24,7 +24,7 @@ from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
-from chipcoin.node.messages import AddrMessage, BlockMessage, GetDataMessage, HeadersMessage, InvMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
+from chipcoin.node.messages import AddrMessage, BlockMessage, GetBlocksMessage, GetDataMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
 from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
 from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
@@ -2556,6 +2556,138 @@ def test_runtime_rejects_invalid_headers_message(monkeypatch) -> None:
             assert penalties == [runtime._SEVERE_MISBEHAVIOR_DELTA]
             assert close_calls
             assert dropped == [session]
+
+    close_calls: list[tuple[str | None, Exception | None]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_rejects_getheaders_with_too_many_locator_hashes() -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 20})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = False
+        state = _FakeSessionState()
+        sent_messages: list[MessageEnvelope] = []
+
+        async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+            close_calls.append((reason, error))
+            self.state.closed = True
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            self.sent_messages.append(message)
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service, max_locator_hashes=2)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=True)
+            penalties: list[int] = []
+            dropped: list[_FakeSession] = []
+            service_calls = 0
+
+            async def drop_session(_session) -> None:
+                dropped.append(_session)
+
+            def handle_getheaders(_request, *, limit=2000):
+                nonlocal service_calls
+                del limit
+                service_calls += 1
+                return HeadersMessage(headers=())
+
+            runtime._drop_session = drop_session  # type: ignore[method-assign]
+            runtime._apply_session_penalty = lambda _session, *, error, penalty: penalties.append(penalty)  # type: ignore[method-assign]
+            service.handle_getheaders = handle_getheaders  # type: ignore[method-assign]
+
+            await runtime._on_peer_message(
+                session,
+                MessageEnvelope(
+                    command="getheaders",
+                    payload=GetHeadersMessage(
+                        protocol_version=1,
+                        locator_hashes=("11" * 32, "22" * 32, "33" * 32),
+                        stop_hash="00" * 32,
+                    ),
+                ),
+            )
+
+            assert service_calls == 0
+            assert penalties == [25]
+            assert close_calls
+            assert "getheaders locator hash count exceeded limit" in str(close_calls[0][1])
+            assert dropped == [session]
+            assert session.sent_messages == []
+
+    close_calls: list[tuple[str | None, Exception | None]] = []
+    asyncio.run(scenario())
+
+
+def test_runtime_rejects_getblocks_with_too_many_locator_hashes() -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 20})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = False
+        state = _FakeSessionState()
+        sent_messages: list[MessageEnvelope] = []
+
+        async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+            close_calls.append((reason, error))
+            self.state.closed = True
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            self.sent_messages.append(message)
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            runtime = NodeRuntime(service=service, max_locator_hashes=2)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=True)
+            penalties: list[int] = []
+            dropped: list[_FakeSession] = []
+            service_calls = 0
+
+            async def drop_session(_session) -> None:
+                dropped.append(_session)
+
+            def handle_getblocks(_request, *, limit=500):
+                nonlocal service_calls
+                del limit
+                service_calls += 1
+                return InvMessage(items=())
+
+            runtime._drop_session = drop_session  # type: ignore[method-assign]
+            runtime._apply_session_penalty = lambda _session, *, error, penalty: penalties.append(penalty)  # type: ignore[method-assign]
+            service.handle_getblocks = handle_getblocks  # type: ignore[method-assign]
+
+            await runtime._on_peer_message(
+                session,
+                MessageEnvelope(
+                    command="getblocks",
+                    payload=GetBlocksMessage(
+                        protocol_version=1,
+                        locator_hashes=("11" * 32, "22" * 32, "33" * 32),
+                        stop_hash="00" * 32,
+                    ),
+                ),
+            )
+
+            assert service_calls == 0
+            assert penalties == [25]
+            assert close_calls
+            assert "getblocks locator hash count exceeded limit" in str(close_calls[0][1])
+            assert dropped == [session]
+            assert session.sent_messages == []
 
     close_calls: list[tuple[str | None, Exception | None]] = []
     asyncio.run(scenario())

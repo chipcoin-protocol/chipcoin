@@ -78,6 +78,8 @@ closing the unbounded allocation surface.
 - Consider separate per-command limits later, for example stricter limits for
   `version`, `addr`, and inventory messages, with the block message allowed to
   use the largest cap.
+- Runtime P2P handlers also bound peer-controlled `getheaders`/`getblocks`
+  locator counts so malicious peers cannot force unbounded locator scans.
 
 ## 2. Wallet Private Key Exposure
 

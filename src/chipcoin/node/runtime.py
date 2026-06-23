@@ -185,6 +185,7 @@ class NodeRuntime:
         max_connect_backoff_seconds: float = 30.0,
         max_consecutive_ping_failures: int = 3,
         max_inventory_items: int = 500,
+        max_locator_hashes: int = 64,
         max_addr_records: int = 1000,
         max_headers_per_message: int = 2000,
         headers_sync_enabled: bool = True,
@@ -235,6 +236,7 @@ class NodeRuntime:
         self.max_connect_backoff_seconds = max(1.0, max_connect_backoff_seconds)
         self.max_consecutive_ping_failures = max(1, max_consecutive_ping_failures)
         self.max_inventory_items = max_inventory_items
+        self.max_locator_hashes = max(1, max_locator_hashes)
         self.max_addr_records = min(max_addr_records, peer_addr_max_per_message)
         self.max_headers_per_message = max_headers_per_message
         self.headers_sync_enabled = headers_sync_enabled
@@ -1207,6 +1209,13 @@ class NodeRuntime:
         self._mark_session_activity(session)
 
         if message.command == "getheaders":
+            if len(message.payload.locator_hashes) > self.max_locator_hashes:
+                await self._close_session_for_protocol_limit(
+                    session,
+                    "getheaders locator hash count exceeded limit",
+                    penalty=25,
+                )
+                return
             await session.send_message(MessageEnvelope(command="headers", payload=self.service.handle_getheaders(message.payload)))
             return
 
@@ -1306,15 +1315,19 @@ class NodeRuntime:
             return
 
         if message.command == "getblocks":
+            if len(message.payload.locator_hashes) > self.max_locator_hashes:
+                await self._close_session_for_protocol_limit(
+                    session,
+                    "getblocks locator hash count exceeded limit",
+                    penalty=25,
+                )
+                return
             await session.send_message(MessageEnvelope(command="inv", payload=self.service.handle_getblocks(message.payload)))
             return
 
         if message.command == "inv":
             if len(message.payload.items) > self.max_inventory_items:
-                error = ProtocolError("inventory message exceeded limit")
-                self._apply_session_penalty(session, error=error, penalty=25)
-                await session.close(reason=str(error), error=error)
-                await self._drop_session(session)
+                await self._close_session_for_protocol_limit(session, "inventory message exceeded limit", penalty=25)
                 return
             needed: list[InventoryVector] = []
             for item in message.payload.items:
@@ -1333,10 +1346,7 @@ class NodeRuntime:
 
         if message.command == "getdata":
             if len(message.payload.items) > self.max_inventory_items:
-                error = ProtocolError("getdata message exceeded limit")
-                self._apply_session_penalty(session, error=error, penalty=25)
-                await session.close(reason=str(error), error=error)
-                await self._drop_session(session)
+                await self._close_session_for_protocol_limit(session, "getdata message exceeded limit", penalty=25)
                 return
             block_requests = [item.object_hash for item in message.payload.items if item.object_type == "block"]
             tx_requests = sum(1 for item in message.payload.items if item.object_type == "tx")
@@ -1535,6 +1545,14 @@ class NodeRuntime:
             self._trim_peerbook_to_capacity()
             self.logger.debug("peer announced addresses count=%s accepted=%s", len(message.payload.addresses), accepted)
             return
+
+    async def _close_session_for_protocol_limit(self, session: PeerProtocol, reason: str, *, penalty: int) -> None:
+        """Penalize and close a peer that sent an oversized bounded message."""
+
+        error = ProtocolError(reason)
+        self._apply_session_penalty(session, error=error, penalty=penalty)
+        await session.close(reason=str(error), error=error)
+        await self._drop_session(session)
 
     async def _broadcast_inventory(self, item: InventoryVector, *, exclude: PeerProtocol | None = None) -> None:
         """Broadcast a single inventory announcement to active peers."""

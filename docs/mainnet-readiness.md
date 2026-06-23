@@ -100,4 +100,9 @@ pre-mainnet risk register.
 - Keep reward epoch seed v2 enabled from genesis on mainnet. Devnet/testnet
   retain v1 compatibility before epoch 112, but mainnet must not enable legacy
   single-closing-block seed derivation.
+- Before mainnet launch, verify seed policy from a synced node with:
+  `curl -fsS http://127.0.0.1:28081/v1/rewards/epoch | jq '.seed'`.
+  Mainnet must report `seed_version: 2`, a
+  `chipcoin:reward-epoch-seed:v2:mainnet` domain, and a multi-block seed
+  window.
 - Review runtime/sync/mempool paths under adversarial peers and high load.
