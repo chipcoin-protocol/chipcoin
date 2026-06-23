@@ -33,7 +33,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
 | HTTP submit body size | local/API memory or CPU DoS before validation | fixed with per-route request caps | keep HTTP private or behind a controlled proxy |
 | Mempool admission ordering | avoidable CPU/DB pressure before policy rejection | fixed with cheap preflight checks | continue peer-level relay throttling review |
-| Non-standard tx relay spam | repeated costly invalid tx validation from one peer | fixed with stronger policy-failure penalties | keep tuning thresholds from testnet telemetry |
+| Non-standard tx relay spam | repeated costly invalid tx validation from one peer | fixed with stronger policy-failure penalties and structured logs | keep tuning thresholds from testnet telemetry |
 
 ## 1. P2P Frame Size Limit
 
@@ -199,6 +199,12 @@ four reach the temporary ban threshold. Benign duplicate/known transaction
 relays remain unpenalized, and contextual invalid transaction failures still use
 the lower penalty.
 
+Misbehavior logs now include the observed endpoint, remote `node_id` when known,
+direction, handshake state, protocol error class, score delta, accumulated
+score, action, `ban_until`, and the triggering error. Non-benign transaction
+relay failures also log txid, tx type, reason, penalty, and action in a
+single operator-readable line.
+
 ### Compatibility
 
 This is not consensus-affecting. It only affects local peer scoring and relay
@@ -207,7 +213,8 @@ behavior for peers that repeatedly send non-standard mempool transactions.
 ### Tests
 
 `tests/node/test_local_node.py` covers the stronger relay penalty
-classification for non-standard transaction policy failures.
+classification and verifies that misbehavior logs include peer identity and the
+resulting action.
 
 ## 2. Wallet Private Key Exposure
 

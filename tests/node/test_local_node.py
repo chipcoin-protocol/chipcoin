@@ -25,7 +25,7 @@ from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
 from chipcoin.node.messages import AddrMessage, BlockMessage, GetBlocksMessage, GetDataMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
-from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, ProtocolError
+from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, InvalidTxError, ProtocolError
 from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
 from chipcoin.node.p2p.transport import PeerEndpoint
@@ -2381,6 +2381,48 @@ def test_runtime_penalizes_non_standard_tx_relay_more_aggressively() -> None:
             == runtime._NON_STANDARD_TX_MISBEHAVIOR_DELTA
         )
         assert runtime._tx_relay_penalty("Missing UTXO for input.") == 5
+
+
+def test_runtime_misbehavior_log_includes_peer_identity_and_action(caplog) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service)
+
+        class _FakeRemote:
+            node_id = "bad-relay-peer"
+            start_height = 12
+
+        class _FakeState:
+            closed = False
+            handshake_complete = True
+            remote_version = _FakeRemote()
+
+        class _FakeSession:
+            inbound = False
+            state = _FakeState()
+            transport = None
+
+        session = _FakeSession()
+        runtime._sessions[session] = SessionHandle(
+            protocol=session,
+            outbound=True,
+            endpoint=OutboundPeer("198.51.100.21", 18444),
+        )
+
+        with caplog.at_level(logging.INFO, logger="chipcoin.node.runtime"):
+            action = runtime._apply_session_penalty(
+                session,
+                error=InvalidTxError("invalid tx: Transaction exceeds mempool size policy."),
+                penalty=runtime._NON_STANDARD_TX_MISBEHAVIOR_DELTA,
+            )
+
+        assert action == "warn"
+        assert "peer misbehavior peer=198.51.100.21:18444" in caplog.text
+        assert "node_id=bad-relay-peer" in caplog.text
+        assert "event=invalid_tx" in caplog.text
+        assert "protocol_error_class=invalid_tx" in caplog.text
+        assert "score_delta=25" in caplog.text
+        assert "action=warn" in caplog.text
 
 
 def test_connect_loop_does_not_overlap_outbound_dials() -> None:

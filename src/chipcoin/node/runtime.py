@@ -1489,17 +1489,22 @@ class NodeRuntime:
                         exc,
                     )
                     return
+                penalty = self._tx_relay_penalty(exc)
+                action = self._apply_session_penalty(
+                    session,
+                    error=InvalidTxError(f"invalid tx: {exc}"),
+                    penalty=penalty,
+                )
+                remote_version = session.state.remote_version
                 self.logger.info(
-                    "tx rejected from peer peer=%s txid=%s tx_type=%s reason=%s",
+                    "tx relay misbehavior peer=%s node_id=%s txid=%s tx_type=%s reason=%s penalty=%s action=%s",
                     self._format_peer_for_logs(session),
+                    "-" if remote_version is None else remote_version.node_id,
                     transaction.txid(),
                     tx_type,
                     exc,
-                )
-                self._apply_session_penalty(
-                    session,
-                    error=InvalidTxError(f"invalid tx: {exc}"),
-                    penalty=self._tx_relay_penalty(exc),
+                    penalty,
+                    action or "observe",
                 )
                 return
             self.logger.info(
@@ -2615,14 +2620,19 @@ class NodeRuntime:
         )
         self._trim_peerbook_to_capacity()
         self.logger.info(
-            "peer misbehavior peer=%s:%s event=%s score_delta=%s score=%s action=%s ban_until=%s",
+            "peer misbehavior peer=%s:%s node_id=%s direction=%s handshake_complete=%s event=%s protocol_error_class=%s score_delta=%s score=%s action=%s ban_until=%s last_error=%s",
             host,
             port,
+            node_id or "-",
+            direction or "-",
+            handshake_complete,
             event,
+            protocol_error_class_name or "-",
             delta,
             next_score,
             action,
             ban_until,
+            last_error or "-",
         )
         return action
 
@@ -3041,18 +3051,18 @@ class NodeRuntime:
             return True
         return False
 
-    def _apply_session_penalty(self, session: PeerProtocol, *, error: Exception | str, penalty: int) -> None:
+    def _apply_session_penalty(self, session: PeerProtocol, *, error: Exception | str, penalty: int) -> str | None:
         """Penalize a peer session using the observed endpoint."""
 
         handle = self._sessions.get(session)
         endpoint = self._session_endpoint(session, handle)
         if endpoint is None:
-            return
+            return None
         info = self._known_peer_info(endpoint.host, endpoint.port)
         error_text = str(error)
         classification = classify_peer_error(error)
         if self._should_penalize_as_misbehavior(error, handshake_complete=bool(session.state.handshake_complete)):
-            self._observe_peer_misbehavior(
+            return self._observe_peer_misbehavior(
                 host=endpoint.host,
                 port=endpoint.port,
                 event=classification or "protocol_violation",
@@ -3069,6 +3079,7 @@ class NodeRuntime:
                 protocol_error_class_name=classification,
                 score=self._updated_peer_score(endpoint.host, endpoint.port, delta=-penalty),
             )
+        return None
 
     def _is_duplicate_inventory(self, session: PeerProtocol, item: InventoryVector) -> bool:
         """Track repeated inventory announcements from one session."""
