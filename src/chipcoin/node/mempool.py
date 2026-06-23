@@ -70,6 +70,7 @@ class MempoolManager:
 
         if is_coinbase_transaction(transaction):
             raise ValidationError("Coinbase transactions are not valid mempool entries.")
+        self.preflight(transaction)
         txid = transaction.txid()
         if self.repository.get(txid) is not None:
             raise ValidationError("Transaction is already present in the mempool.")
@@ -105,6 +106,11 @@ class MempoolManager:
 
         return self.repository.list_all()
 
+    def preflight(self, transaction: Transaction) -> None:
+        """Reject obviously non-standard transactions before contextual validation."""
+
+        self._enforce_pre_validation_policy(transaction)
+
     def reconcile(self, *, extra_transactions: Iterable[Transaction] | None = None) -> None:
         """Rebuild mempool contents against the current active chain and policy."""
 
@@ -116,6 +122,10 @@ class MempoolManager:
 
         def readmit_fast(transaction: Transaction, *, added_at: int) -> None:
             if self._is_expired(added_at, self.time_provider()):
+                return
+            try:
+                self._enforce_pre_validation_policy(transaction)
+            except ValidationError:
                 return
             txid = transaction.txid()
             if self._is_known_on_chain(txid):
@@ -176,6 +186,15 @@ class MempoolManager:
     def _enforce_policy(self, transaction: Transaction, fee_chipbits: int) -> None:
         """Apply mempool-standardness checks beyond pure consensus validity."""
 
+        self._enforce_pre_validation_policy(transaction)
+        if fee_chipbits < 0:
+            raise ValidationError("Transaction fee cannot be negative.")
+        if not _is_zero_fee_native_reward_transaction(transaction) and not is_special_node_transaction(transaction) and fee_chipbits < self.policy.min_fee_chipbits_normal_tx:
+            raise ValidationError("Transaction fee is below the configured mempool minimum.")
+
+    def _enforce_pre_validation_policy(self, transaction: Transaction) -> None:
+        """Apply cheap mempool checks before building UTXO overlays or verifying signatures."""
+
         serialized_size = len(serialize_transaction(transaction))
         if serialized_size > self.policy.max_transaction_size_bytes:
             raise ValidationError("Transaction exceeds mempool size policy.")
@@ -183,10 +202,6 @@ class MempoolManager:
             raise ValidationError("Transaction exceeds mempool input-count policy.")
         if len(transaction.outputs) > self.policy.max_transaction_outputs:
             raise ValidationError("Transaction exceeds mempool output-count policy.")
-        if fee_chipbits < 0:
-            raise ValidationError("Transaction fee cannot be negative.")
-        if not _is_zero_fee_native_reward_transaction(transaction) and not is_special_node_transaction(transaction) and fee_chipbits < self.policy.min_fee_chipbits_normal_tx:
-            raise ValidationError("Transaction fee is below the configured mempool minimum.")
 
         for output in transaction.outputs:
             if int(output.value) <= 0:

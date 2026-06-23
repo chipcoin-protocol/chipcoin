@@ -32,6 +32,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Snapshot trust defaults | accidental trust-on-first-use | fixed with warn defaults | use enforce with pinned keys for mainnet/public bootstrap |
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
 | HTTP submit body size | local/API memory or CPU DoS before validation | fixed with per-route request caps | keep HTTP private or behind a controlled proxy |
+| Mempool admission ordering | avoidable CPU/DB pressure before policy rejection | fixed with cheap preflight checks | continue peer-level relay throttling review |
 
 ## 1. P2P Frame Size Limit
 
@@ -129,6 +130,47 @@ transactions but below unbounded memory/CPU abuse.
 - oversized raw transaction hex rejected before the tx handler
 - oversized block submit body rejected before the mining handler
 - malformed `CONTENT_LENGTH` rejected as a client error
+
+## 1b. Mempool Admission Preflight
+
+### Finding
+
+Mempool policy already capped transaction size, input count, output count, and
+output standardness. Some of those checks, however, ran after the mempool built
+an overlay UTXO view and invoked contextual transaction validation.
+
+That ordering is safe for correctness but inefficient under spam: transactions
+that are obviously non-standard can still force more CPU and repository work
+than necessary before being rejected.
+
+### Status
+
+Fixed.
+
+The mempool manager now runs a cheap preflight policy before contextual
+validation:
+
+- serialized transaction size
+- input count
+- output count
+- positive output values
+- output address standardness
+
+Raw transaction submission also rejects serialized payloads above mempool policy
+before deserializing.
+
+### Compatibility
+
+This is not consensus-affecting. Blocks may still be validated by consensus
+rules; these checks only decide what the local node stores and relays from its
+mempool.
+
+### Tests
+
+`tests/node/test_local_node.py` covers:
+
+- pre-validation policy failures do not build a validation context
+- oversized raw transaction hex is rejected before transaction deserialization
 
 ## 2. Wallet Private Key Exposure
 

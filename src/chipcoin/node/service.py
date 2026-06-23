@@ -490,6 +490,7 @@ class NodeService:
     def receive_transaction(self, transaction: Transaction) -> AcceptedTransaction:
         """Validate and stage a transaction into the local mempool."""
 
+        self.mempool.preflight(transaction)
         self._validate_special_node_mempool_sequence(candidate_transaction=transaction)
         accepted = self.mempool.accept(transaction)
         self.invalidate_mining_templates()
@@ -499,6 +500,8 @@ class NodeService:
         """Decode one raw serialized transaction encoded as hex."""
 
         encoded = bytes.fromhex(raw_hex)
+        if len(encoded) > self.mempool.policy.max_transaction_size_bytes:
+            raise ValueError("Raw transaction exceeds mempool size policy.")
         transaction, offset = deserialize_transaction(encoded)
         if offset != len(encoded):
             raise ValueError("Raw transaction contains trailing bytes.")

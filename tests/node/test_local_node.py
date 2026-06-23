@@ -3363,6 +3363,46 @@ def test_node_service_rejects_duplicate_transaction_in_mempool() -> None:
         raise AssertionError("Expected duplicate mempool transaction to be rejected.")
 
 
+def test_mempool_rejects_pre_validation_policy_failures_before_context_build() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.mempool.policy = MempoolPolicy(max_transaction_outputs=1)
+        transaction = Transaction(
+            version=1,
+            inputs=(TxInput(previous_output=OutPoint(txid="89" * 32, index=0)),),
+            outputs=(
+                TxOutput(value=1, recipient=wallet_key(0).address),
+                TxOutput(value=1, recipient=wallet_key(1).address),
+            ),
+            metadata={"kind": "payment"},
+        )
+
+        def fail_context_build(_view):
+            raise AssertionError("pre-validation policy failure must not build validation context")
+
+        service.mempool.validation_context_factory = fail_context_build
+
+        try:
+            service.receive_transaction(transaction)
+        except ValidationError as exc:
+            assert "output-count policy" in str(exc)
+            return
+        raise AssertionError("Expected pre-validation mempool policy rejection.")
+
+
+def test_node_service_rejects_oversized_raw_transaction_before_deserialize() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.mempool.policy = MempoolPolicy(max_transaction_size_bytes=4)
+
+        try:
+            service.decode_raw_transaction("00" * 5)
+        except ValueError as exc:
+            assert "mempool size policy" in str(exc)
+            return
+        raise AssertionError("Expected oversized raw transaction to be rejected before deserialize.")
+
+
 def test_mempool_reconcile_revalidates_entries_without_repeated_repository_scans() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
