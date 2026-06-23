@@ -159,6 +159,7 @@ class NodeRuntime:
     _SYNC_SCHEDULER_INTERVAL = 1.0
     _INITIAL_SYNC_STALL_GRACE_MULTIPLIER = 2.0
     _SEVERE_MISBEHAVIOR_DELTA = 100
+    _NON_STANDARD_TX_MISBEHAVIOR_DELTA = 25
     _BLOCK_STALL_DISCONNECT_THRESHOLD = 2
     _EXTENDED_BACKOFF_START_ATTEMPT = 20
     _EXTENDED_BACKOFF_DISCONNECT_THRESHOLD = 20
@@ -1495,7 +1496,11 @@ class NodeRuntime:
                     tx_type,
                     exc,
                 )
-                self._apply_session_penalty(session, error=InvalidTxError(f"invalid tx: {exc}"), penalty=5)
+                self._apply_session_penalty(
+                    session,
+                    error=InvalidTxError(f"invalid tx: {exc}"),
+                    penalty=self._tx_relay_penalty(exc),
+                )
                 return
             self.logger.info(
                 "tx accepted from peer txid=%s fee_chipbits=%s",
@@ -3094,6 +3099,22 @@ class NodeRuntime:
         ):
             return True
         return False
+
+    def _tx_relay_penalty(self, error: Exception | str) -> int:
+        """Return the peer penalty for one non-benign invalid transaction relay."""
+
+        text = str(error)
+        high_signal_policy_failures = (
+            "mempool size policy",
+            "mempool input-count policy",
+            "mempool output-count policy",
+            "Transaction output recipient is not a valid CHC address",
+            "Transaction outputs must be positive for mempool policy",
+            "Coinbase transactions are not valid mempool entries",
+        )
+        if any(reason in text for reason in high_signal_policy_failures):
+            return self._NON_STANDARD_TX_MISBEHAVIOR_DELTA
+        return 5
 
     def _has_sync_debt(self) -> bool:
         """Return whether local validation is still behind known remote/header work."""

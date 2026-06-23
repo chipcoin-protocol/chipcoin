@@ -2367,6 +2367,22 @@ def test_runtime_penalizes_premature_reward_relay_when_synced() -> None:
         ) is False
 
 
+def test_runtime_penalizes_non_standard_tx_relay_more_aggressively() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service)
+
+        assert (
+            runtime._tx_relay_penalty("Transaction exceeds mempool size policy.")
+            == runtime._NON_STANDARD_TX_MISBEHAVIOR_DELTA
+        )
+        assert (
+            runtime._tx_relay_penalty("Transaction output recipient is not a valid CHC address.")
+            == runtime._NON_STANDARD_TX_MISBEHAVIOR_DELTA
+        )
+        assert runtime._tx_relay_penalty("Missing UTXO for input.") == 5
+
+
 def test_connect_loop_does_not_overlap_outbound_dials() -> None:
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:

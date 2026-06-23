@@ -33,6 +33,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Snapshot retry loops | bootstrap traffic amplification | fixed | keep server-side monitoring |
 | HTTP submit body size | local/API memory or CPU DoS before validation | fixed with per-route request caps | keep HTTP private or behind a controlled proxy |
 | Mempool admission ordering | avoidable CPU/DB pressure before policy rejection | fixed with cheap preflight checks | continue peer-level relay throttling review |
+| Non-standard tx relay spam | repeated costly invalid tx validation from one peer | fixed with stronger policy-failure penalties | keep tuning thresholds from testnet telemetry |
 
 ## 1. P2P Frame Size Limit
 
@@ -171,6 +172,42 @@ mempool.
 
 - pre-validation policy failures do not build a validation context
 - oversized raw transaction hex is rejected before transaction deserialization
+
+## 1c. Non-Standard Transaction Relay Penalties
+
+### Finding
+
+Invalid transaction relays were already penalized, but all non-benign invalid
+transactions used the same small penalty. That is appropriate for contextual
+failures that may occur during normal network races, but it is too weak for
+clearly non-standard relays such as oversized transactions, invalid output
+addresses, coinbase transactions in mempool, or excessive input/output counts.
+
+### Status
+
+Fixed.
+
+The runtime now gives high-signal mempool policy failures a stronger
+misbehavior delta:
+
+```python
+_NON_STANDARD_TX_MISBEHAVIOR_DELTA = 25
+```
+
+With the default thresholds, two such relays reach the disconnect threshold and
+four reach the temporary ban threshold. Benign duplicate/known transaction
+relays remain unpenalized, and contextual invalid transaction failures still use
+the lower penalty.
+
+### Compatibility
+
+This is not consensus-affecting. It only affects local peer scoring and relay
+behavior for peers that repeatedly send non-standard mempool transactions.
+
+### Tests
+
+`tests/node/test_local_node.py` covers the stronger relay penalty
+classification for non-standard transaction policy failures.
 
 ## 2. Wallet Private Key Exposure
 
