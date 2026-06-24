@@ -236,3 +236,53 @@ def test_devnet_frame_is_rejected_by_mainnet_magic() -> None:
 def test_decode_rejects_truncated_payloads_as_codec_errors(command: str, payload: bytes) -> None:
     with pytest.raises(CodecError):
         decode_message(_frame(command, payload), expected_magic=MAINNET_CONFIG.magic)
+
+
+@pytest.mark.parametrize(
+    ("command", "payload"),
+    (
+        ("inv", b"\xfd\xf5\x01"),
+        ("getdata", b"\xfd\xf5\x01"),
+        ("getheaders", pack("<I", 70015) + b"\x41"),
+        ("getblocks", pack("<I", 70015) + b"\x41"),
+        ("headers", b"\xfd\xd1\x07"),
+        ("addr", b"\xfd\xe9\x03"),
+    ),
+)
+def test_decode_rejects_oversized_collections_before_allocation(command: str, payload: bytes) -> None:
+    with pytest.raises(CodecError, match="count exceeds limit"):
+        decode_message(_frame(command, payload), expected_magic=MAINNET_CONFIG.magic)
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        MessageEnvelope(
+            command="inv",
+            payload=InvMessage(items=tuple(InventoryVector(object_type="tx", object_hash="11" * 32) for _ in range(501))),
+        ),
+        MessageEnvelope(
+            command="getdata",
+            payload=GetDataMessage(items=tuple(InventoryVector(object_type="block", object_hash="22" * 32) for _ in range(501))),
+        ),
+        MessageEnvelope(
+            command="getheaders",
+            payload=GetHeadersMessage(protocol_version=70015, locator_hashes=tuple("33" * 32 for _ in range(65)), stop_hash="00" * 32),
+        ),
+        MessageEnvelope(
+            command="getblocks",
+            payload=GetBlocksMessage(protocol_version=70015, locator_hashes=tuple("44" * 32 for _ in range(65)), stop_hash="00" * 32),
+        ),
+        MessageEnvelope(
+            command="headers",
+            payload=HeadersMessage(headers=tuple(_sample_block().header for _ in range(2001))),
+        ),
+        MessageEnvelope(
+            command="addr",
+            payload=AddrMessage(addresses=tuple(PeerAddress(host="127.0.0.1", port=8333) for _ in range(1001))),
+        ),
+    ),
+)
+def test_encode_rejects_oversized_collections(message: MessageEnvelope) -> None:
+    with pytest.raises(CodecError, match="count exceeds limit"):
+        encode_message(message, magic=MAINNET_CONFIG.magic)

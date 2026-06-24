@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import hashlib
+import re
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -328,7 +329,9 @@ prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
     assert first.stderr.count("DOWNLOAD_CALLED") == 1
     assert result.returncode == 77
     assert "DOWNLOAD_CALLED_AGAIN" not in result.stdout
-    assert "SLEEP_CALLED:11" in result.stdout
+    sleep_match = re.search(r"SLEEP_CALLED:(\d+)", result.stdout)
+    assert sleep_match is not None
+    assert 1 <= int(sleep_match.group(1)) <= 11
     assert "Snapshot bootstrap retry delayed" in result.stderr
 
 

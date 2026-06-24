@@ -48,6 +48,10 @@ FRAME_HEADER_SIZE = 24
 DEFAULT_MAGIC = MAINNET_CONFIG.magic
 INVENTORY_TYPE_CODES = {"tx": 1, "block": 2}
 INVENTORY_TYPE_NAMES = {value: key for key, value in INVENTORY_TYPE_CODES.items()}
+MAX_INVENTORY_ITEMS = 500
+MAX_LOCATOR_HASHES = 64
+MAX_HEADERS = 2000
+MAX_ADDR_RECORDS = 1000
 UINT16 = Struct("<H")
 UINT32 = Struct("<I")
 UINT64 = Struct("<Q")
@@ -149,6 +153,7 @@ def _encode_payload(message: MessageEnvelope) -> bytes:
     if command == "headers":
         if not isinstance(payload, HeadersMessage):
             raise CodecError("headers expects HeadersMessage payload.")
+        _ensure_count_at_most("headers", len(payload.headers), MAX_HEADERS)
         encoded = bytearray()
         encoded.extend(_encode_varint(len(payload.headers)))
         for header in payload.headers:
@@ -161,6 +166,7 @@ def _encode_payload(message: MessageEnvelope) -> bytes:
     if command == "addr":
         if not isinstance(payload, AddrMessage):
             raise CodecError("addr expects AddrMessage payload.")
+        _ensure_count_at_most("addr", len(payload.addresses), MAX_ADDR_RECORDS)
         encoded = bytearray()
         encoded.extend(_encode_varint(len(payload.addresses)))
         for address in payload.addresses:
@@ -232,6 +238,7 @@ def _decode_payload(command: str, payload: bytes) -> MessageEnvelope:
         )
     if command == "headers":
         count, offset = _decode_varint(payload, 0)
+        _ensure_count_at_most("headers", count, MAX_HEADERS)
         headers = []
         for _ in range(count):
             header, offset = deserialize_block_header(payload, offset)
@@ -251,6 +258,7 @@ def _decode_payload(command: str, payload: bytes) -> MessageEnvelope:
         )
     if command == "addr":
         count, offset = _decode_varint(payload, 0)
+        _ensure_count_at_most("addr", count, MAX_ADDR_RECORDS)
         addresses = []
         for _ in range(count):
             timestamp = _unpack_from(UINT32, payload, offset, "addr timestamp")[0]
@@ -366,6 +374,7 @@ def _decode_hash(buffer: bytes, offset: int) -> tuple[str, int]:
 def _encode_inventory(items: tuple[InventoryVector, ...]) -> bytes:
     """Encode an inventory vector list."""
 
+    _ensure_count_at_most("inventory", len(items), MAX_INVENTORY_ITEMS)
     encoded = bytearray()
     encoded.extend(_encode_varint(len(items)))
     for item in items:
@@ -378,6 +387,7 @@ def _decode_inventory(buffer: bytes, offset: int) -> tuple[list[InventoryVector]
     """Decode an inventory vector list."""
 
     count, offset = _decode_varint(buffer, offset)
+    _ensure_count_at_most("inventory", count, MAX_INVENTORY_ITEMS)
     items = []
     for _ in range(count):
         object_type_code = _unpack_from(UINT32, buffer, offset, "inventory type")[0]
@@ -394,6 +404,7 @@ def _decode_inventory(buffer: bytes, offset: int) -> tuple[list[InventoryVector]
 def _encode_hash_locator(protocol_version: int, locator_hashes: tuple[str, ...], stop_hash: str) -> bytes:
     """Encode a block-locator based request payload."""
 
+    _ensure_count_at_most("locator", len(locator_hashes), MAX_LOCATOR_HASHES)
     encoded = bytearray()
     encoded.extend(pack("<I", protocol_version))
     encoded.extend(_encode_varint(len(locator_hashes)))
@@ -409,6 +420,7 @@ def _decode_hash_locator(buffer: bytes, offset: int) -> tuple[int, list[str], st
     protocol_version = _unpack_from(UINT32, buffer, offset, "locator protocol version")[0]
     offset += 4
     count, offset = _decode_varint(buffer, offset)
+    _ensure_count_at_most("locator", count, MAX_LOCATOR_HASHES)
     locator_hashes = []
     for _ in range(count):
         locator_hash, offset = _decode_hash(buffer, offset)
@@ -431,6 +443,13 @@ def _ensure_fully_consumed(command: str, payload: bytes, offset: int) -> None:
 
     if offset != len(payload):
         raise CodecError(f"{command} payload contains trailing bytes.")
+
+
+def _ensure_count_at_most(name: str, count: int, limit: int) -> None:
+    """Reject oversized peer-controlled collections before allocating them."""
+
+    if count > limit:
+        raise CodecError(f"{name} count exceeds limit: {count} > {limit}.")
 
 
 def _unpack_from(struct: Struct, buffer: bytes, offset: int, context: str) -> tuple:
