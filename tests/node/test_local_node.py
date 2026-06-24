@@ -1725,7 +1725,7 @@ def test_service_remove_peer_deletes_persisted_entry() -> None:
         assert not any(peer.host == "node-a" and peer.port == 18444 for peer in service.list_peers())
 
 
-def test_runtime_canonicalizes_peer_aliases_by_node_id() -> None:
+def test_runtime_canonicalizes_peer_aliases_by_node_id(caplog) -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
         service.record_peer_observation(
@@ -1742,6 +1742,13 @@ def test_runtime_canonicalizes_peer_aliases_by_node_id() -> None:
             handshake_complete=True,
             node_id="node-a-id",
         )
+        service.record_peer_observation(
+            host="172.18.0.3",
+            port=18444,
+            direction="outbound",
+            handshake_complete=True,
+            node_id="node-a-id",
+        )
         runtime = NodeRuntime(
             service=service,
             listen_host="127.0.0.1",
@@ -1749,17 +1756,21 @@ def test_runtime_canonicalizes_peer_aliases_by_node_id() -> None:
             outbound_peers=[OutboundPeer("node-a", 18444)],
         )
 
-        runtime._canonicalize_peer_aliases(
-            "node-a-id",
-            canonical_host="172.18.0.2",
-            canonical_port=18444,
-            prefer_configured=OutboundPeer("node-a", 18444),
-        )
+        with caplog.at_level(logging.INFO):
+            runtime._canonicalize_peer_aliases(
+                "node-a-id",
+                canonical_host="172.18.0.2",
+                canonical_port=18444,
+                prefer_configured=OutboundPeer("node-a", 18444),
+            )
 
         peers = service.list_peers()
         assert any(peer.host == "node-a" and peer.port == 18444 for peer in peers)
         assert not any(peer.host == "172.18.0.2" and peer.port == 18444 for peer in peers)
+        assert not any(peer.host == "172.18.0.3" and peer.port == 18444 for peer in peers)
         assert runtime._desired_outbound_peers() == [OutboundPeer("node-a", 18444)]
+        assert caplog.text.count("removed peer aliases node_id=node-a-id") == 1
+        assert "count=2" in caplog.text
 
 
 def test_runtime_tolerates_one_transient_ping_timeout_before_dropping_session() -> None:

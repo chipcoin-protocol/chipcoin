@@ -2961,11 +2961,17 @@ class NodeRuntime:
         for peer in aliases:
             self._outbound_targets.pop((peer.host, peer.port), None)
             self.service.remove_peer(peer.host, peer.port)
+        if aliases:
+            first_alias = aliases[0]
+            last_alias = aliases[-1]
             self.logger.info(
-                "removed peer alias node_id=%s alias=%s:%s canonical=%s:%s",
+                "removed peer aliases node_id=%s count=%s first_alias=%s:%s last_alias=%s:%s canonical=%s:%s",
                 node_id,
-                peer.host,
-                peer.port,
+                len(aliases),
+                first_alias.host,
+                first_alias.port,
+                last_alias.host,
+                last_alias.port,
                 preferred_host,
                 preferred_port,
             )
