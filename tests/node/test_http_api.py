@@ -1,4 +1,5 @@
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from contextlib import redirect_stdout
@@ -153,6 +154,37 @@ def test_http_api_health_status_and_tip() -> None:
         assert supply_body["remaining_supply_chipbits"] == 11_000_000 * 100_000_000
         assert tip_status == "200 OK"
         assert tip_body == {"height": None, "block_hash": None}
+
+
+def test_http_api_logs_successful_mining_status_at_debug(caplog) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+
+        with caplog.at_level(logging.INFO, logger="chipcoin.http_api"):
+            status, _, _ = _call_wsgi(app, method="GET", path="/mining/status")
+
+        assert status == "200 OK"
+        assert "path=/mining/status" not in caplog.text
+
+        with caplog.at_level(logging.DEBUG, logger="chipcoin.http_api"):
+            status, _, _ = _call_wsgi(app, method="GET", path="/mining/status")
+
+        assert status == "200 OK"
+        assert "path=/mining/status" in caplog.text
+
+
+def test_http_api_logs_failed_mining_status_at_info(caplog, monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        app = HttpApiApp(service)
+        monkeypatch.setattr(service, "mining_status", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        with caplog.at_level(logging.INFO, logger="chipcoin.http_api"):
+            status, _, _ = _call_wsgi(app, method="GET", path="/mining/status")
+
+        assert status == "500 Internal Server Error"
+        assert "path=/mining/status" in caplog.text
 
 
 def test_http_api_status_uses_short_lived_cache() -> None:

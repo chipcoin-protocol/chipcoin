@@ -117,7 +117,13 @@ class HttpApiApp:
         finally:
             duration_ms = (time.perf_counter() - started_at) * 1000
             target = path if not query_string else f"{path}?{query_string}"
-            self.logger.info("request method=%s path=%s status=%s duration_ms=%.2f", method, target, status_code, duration_ms)
+            self._log_request(method=method, target=target, status_code=status_code, duration_ms=duration_ms)
+
+    def _log_request(self, *, method: str, target: str, status_code: int, duration_ms: float) -> None:
+        """Log high-frequency polling endpoints at debug unless they fail."""
+
+        log = self.logger.debug if status_code < 400 and target == "/mining/status" else self.logger.info
+        log("request method=%s path=%s status=%s duration_ms=%.2f", method, target, status_code, duration_ms)
 
     def _dispatch(self, *, method: str, path: str, environ) -> object:
         if method == "GET" and path == "/v1/health":
