@@ -36,6 +36,32 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Mempool admission ordering | avoidable CPU/DB pressure before policy rejection | fixed with cheap preflight checks | continue peer-level relay throttling review |
 | Non-standard tx relay spam | repeated costly invalid tx validation from one peer | fixed with stronger policy-failure penalties and structured logs | keep tuning thresholds from testnet telemetry |
 | Repeated getdata misses | peer can repeatedly request unavailable inventory | fixed with per-session miss tracking, logs, and penalties | tune thresholds from live sync telemetry |
+| Duplicate getdata entries | peer can force duplicate object service work in one request | fixed with per-request dedupe, light penalty, and logs | keep telemetry for false positives |
+| P2P payload decoding | malformed short payloads could raise low-level decode errors | fixed with explicit bounds checks | keep malformed-frame tests for every typed payload |
+| P2P collection sizes | valid frames could carry excessive decoded collections | fixed with codec and runtime count caps | review caps if protocol inventory/header needs grow |
+| Runtime log amplification | noisy peers can flood startup/sync logs with repetitive benign events | partially fixed with summarized alias logs and quiet mining-status polling | continue reducing low-signal 200 OK logs without hiding errors |
+
+## Traceability
+
+Recent hardening commits:
+
+- `adf242c` - reject oversized P2P frames before payload reads
+- `4c23fce` - harden wallet key output and file permissions
+- `c4afa0f` - add special node transaction signature v2 domain separation
+- `f090dba` - default snapshot trust to warning mode
+- `87b4d8e` - harden reward epoch seed derivation
+- `1bed9cb` - bound P2P locator request handling
+- `bf6455f` - bound HTTP submit request handling
+- `2f51158` - add mempool admission preflight
+- `167bcbe` - strengthen non-standard transaction relay penalties/logging
+- `9d91d6f` - improve peer misbehavior logs
+- `285410e` - track repeated `getdata` misses
+- `a34c85e` - paginate HTTP diagnostic lists
+- `6d62eac` - harden truncated P2P payload decoding
+- `6c55c4c` - cap decoded P2P collection sizes
+- `061ac36` and `ded7c35` - quiet successful mining-status polling logs
+- `6abd480` - summarize peer alias cleanup logs
+- `e800c42` - deduplicate duplicate `getdata` inventory requests
 
 ## 1. P2P Frame Size Limit
 
@@ -86,7 +112,63 @@ closing the unbounded allocation surface.
 - Runtime P2P handlers also bound peer-controlled `getheaders`/`getblocks`
   locator counts so malicious peers cannot force unbounded locator scans.
 
-## 1a. HTTP Submit Request Size Limits
+## 1a. P2P Payload Decoding Bounds
+
+### Finding
+
+Some typed P2P payload decoders assumed enough bytes were available for fixed
+width integer fields. Malformed short payloads were rejected, but some paths
+could surface lower-level `struct.error` exceptions instead of a controlled
+protocol/codec error.
+
+This is not a consensus bug, but explicit bounds are preferable for hostile
+input because they make failures predictable, testable, and easier to log.
+
+### Status
+
+Fixed.
+
+The binary codec now checks fixed-width reads before unpacking. Truncated
+payloads are rejected through `CodecError`/malformed-message handling instead
+of leaking implementation exceptions.
+
+### Tests
+
+`tests/node/test_codec.py` covers truncated payloads for fixed-width fields and
+ensures malformed frames fail cleanly.
+
+## 1b. P2P Decoded Collection Size Caps
+
+### Finding
+
+The transport frame cap prevents unbounded byte reads, but valid frames can
+still encode large logical collections. If unchecked, inventory, locator,
+headers, or address lists can force unnecessary allocation and CPU before
+runtime policy handles the message.
+
+### Status
+
+Fixed.
+
+The codec and runtime now enforce bounded collection sizes:
+
+```python
+MAX_INVENTORY_ITEMS = 500
+MAX_LOCATOR_HASHES = 64
+MAX_HEADERS = 2000
+MAX_ADDR_RECORDS = 1000
+```
+
+Runtime handlers also close or penalize peers that exceed protocol limits in
+bounded request paths.
+
+### Tests
+
+`tests/node/test_codec.py`, `tests/node/test_local_node.py`, and
+`tests/node/test_runtime_integration.py` cover oversized inventory, locator,
+headers, and chunked `getdata` behavior.
+
+## 1c. HTTP Submit Request Size Limits
 
 ### Finding
 
@@ -134,7 +216,7 @@ transactions but below unbounded memory/CPU abuse.
 - oversized block submit body rejected before the mining handler
 - malformed `CONTENT_LENGTH` rejected as a client error
 
-## 1b. HTTP Diagnostic Pagination
+## 1d. HTTP Diagnostic Pagination
 
 ### Finding
 
@@ -167,7 +249,7 @@ through results explicitly instead of relying on unbounded responses.
 `tests/node/test_http_api.py` covers default limits, offset paging, rejected
 oversized limits, and unchanged peer-summary aggregation.
 
-## 1c. Mempool Admission Preflight
+## 1e. Mempool Admission Preflight
 
 ### Finding
 
@@ -208,7 +290,7 @@ mempool.
 - pre-validation policy failures do not build a validation context
 - oversized raw transaction hex is rejected before transaction deserialization
 
-## 1c. Non-Standard Transaction Relay Penalties
+## 1f. Non-Standard Transaction Relay Penalties
 
 ### Finding
 
@@ -251,7 +333,7 @@ behavior for peers that repeatedly send non-standard mempool transactions.
 classification and verifies that misbehavior logs include peer identity and the
 resulting action.
 
-## 1d. Repeated Getdata Miss Tracking
+## 1g. Repeated Getdata Miss Tracking
 
 ### Finding
 
@@ -284,6 +366,78 @@ inventory unavailable to the local node.
 
 `tests/node/test_local_node.py` covers repeated `getdata` misses, verifies the
 log line, and asserts that the penalty is applied at the configured threshold.
+
+## 1h. Duplicate Getdata Entry Deduplication
+
+### Finding
+
+Inbound `getdata` requests were bounded by item count, but a peer could include
+the same inventory vector repeatedly in one request. If the object is available,
+the node would serve it repeatedly and the logs would only show aggregate
+requested/served counts.
+
+This is cheap for an attacker and noisy for operators, especially when peers
+ask for the same block or transaction many times in one frame.
+
+### Status
+
+Fixed.
+
+The runtime now deduplicates `getdata` inventory within a single request before
+serving blocks or transactions. Duplicate entries trigger a light peer penalty
+and an explicit log:
+
+```text
+duplicate getdata requests peer=<endpoint>/<node_id> duplicate_items=<n> unique_items=<n> penalty=1 action=<action>
+```
+
+The normal service log also includes `duplicate_items=<n>` so operators can
+correlate served work with duplicate request behavior.
+
+### Compatibility
+
+This is not consensus-affecting. It only avoids duplicate local work and scores
+peers that send redundant request entries.
+
+### Tests
+
+`tests/node/test_local_node.py` verifies that duplicate block requests produce
+only one served `block` response, apply the light penalty, and emit the
+structured duplicate log.
+
+## 1i. Runtime and HTTP Log Amplification Controls
+
+### Finding
+
+Some benign but frequent events created excessive operational log noise:
+
+- mining status polling every few seconds from the local miner
+- successful WSGI access logs for `GET /mining/status`
+- repeated per-alias cleanup logs during inbound peer canonicalization
+
+High-volume low-signal logs make it harder to spot malicious behavior such as
+invalid relay, repeated unavailable `getdata`, duplicate inventory, retry
+loops, or protocol-limit disconnects.
+
+### Status
+
+Partially fixed.
+
+Implemented changes:
+
+- successful `/mining/status` HTTP application logs are downgraded to debug
+- successful `/mining/status` WSGI access logs are suppressed
+- peer alias cleanup logs are summarized as one line with `count`,
+  `first_alias`, `last_alias`, and `canonical`
+
+Errors and non-200 responses remain visible. Other operational endpoints such
+as `/v1/status` still log normally.
+
+### Tests
+
+`tests/node/test_http_api.py` covers quiet successful mining-status logs while
+preserving error visibility. `tests/node/test_local_node.py` verifies summarized
+peer alias cleanup logging.
 
 ## 2. Wallet Private Key Exposure
 
