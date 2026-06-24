@@ -2833,6 +2833,68 @@ def test_runtime_updates_peer_height_from_getdata_requests() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_deduplicates_getdata_requests_and_logs_penalty(caplog) -> None:
+    class _FakeSessionState:
+        closed = False
+        handshake_complete = True
+        remote_version = type("_Remote", (), {"node_id": "peer-a", "start_height": 0})()
+        errors: list[str] = []
+        error_causes: list[Exception] = []
+
+    class _FakeSession:
+        inbound = True
+        state = _FakeSessionState()
+        transport = None
+
+        async def send_message(self, message: MessageEnvelope) -> None:
+            sent_messages.append(message)
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+            block = _mine_block(service.build_candidate_block("CHCtest").block)
+            service.apply_block(block)
+            block_hash = block.block_hash()
+            runtime = NodeRuntime(service=service)
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(  # type: ignore[arg-type]
+                protocol=session,  # type: ignore[arg-type]
+                outbound=False,
+                endpoint=OutboundPeer("node-a", 18444),
+                opened_at=1.0,
+            )
+            penalties: list[int] = []
+
+            def record_penalty(_session, *, error, penalty):
+                penalties.append(penalty)
+                return "observe"
+
+            runtime._apply_session_penalty = record_penalty  # type: ignore[method-assign]
+
+            with caplog.at_level(logging.INFO, logger="chipcoin.node.runtime"):
+                await runtime._on_peer_message(
+                    session,  # type: ignore[arg-type]
+                    MessageEnvelope(
+                        command="getdata",
+                        payload=GetDataMessage(
+                            items=(
+                                InventoryVector(object_type="block", object_hash=block_hash),
+                                InventoryVector(object_type="block", object_hash=block_hash),
+                            )
+                        ),
+                    ),
+                )
+
+            assert [message.command for message in sent_messages] == ["block"]
+            assert penalties == [1]
+            assert "duplicate getdata requests peer=node-a:18444/peer-a duplicate_items=1 unique_items=1" in caplog.text
+            assert "served getdata peer=node-a:18444/peer-a requested_blocks=1 served_blocks=1" in caplog.text
+            assert "duplicate_items=1" in caplog.text
+
+    sent_messages: list[MessageEnvelope] = []
+    asyncio.run(scenario())
+
+
 def test_runtime_logs_and_penalizes_repeated_getdata_misses(caplog) -> None:
     class _FakeSessionState:
         closed = False

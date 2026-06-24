@@ -1362,8 +1362,32 @@ class NodeRuntime:
             if len(message.payload.items) > self.max_inventory_items:
                 await self._close_session_for_protocol_limit(session, "getdata message exceeded limit", penalty=25)
                 return
-            block_requests = [item.object_hash for item in message.payload.items if item.object_type == "block"]
-            tx_requests = sum(1 for item in message.payload.items if item.object_type == "tx")
+            seen_items: set[tuple[str, str]] = set()
+            unique_items: list[InventoryVector] = []
+            duplicate_items = 0
+            for item in message.payload.items:
+                item_key = (item.object_type, item.object_hash)
+                if item_key in seen_items:
+                    duplicate_items += 1
+                    continue
+                seen_items.add(item_key)
+                unique_items.append(item)
+            if duplicate_items:
+                action = self._apply_session_penalty(
+                    session,
+                    error=ProtocolError("duplicate getdata inventory requests"),
+                    penalty=1,
+                ) or "observe"
+                self.logger.info(
+                    "duplicate getdata requests peer=%s duplicate_items=%s unique_items=%s penalty=%s action=%s",
+                    self._format_peer_for_logs(session),
+                    duplicate_items,
+                    len(unique_items),
+                    1,
+                    action,
+                )
+            block_requests = [item.object_hash for item in unique_items if item.object_type == "block"]
+            tx_requests = sum(1 for item in unique_items if item.object_type == "tx")
             requested_heights = [
                 int(record.height)
                 for block_hash in block_requests
@@ -1373,7 +1397,7 @@ class NodeRuntime:
             self._record_session_known_height(session, max(requested_heights, default=None))
             served_blocks = 0
             served_txs = 0
-            for item in message.payload.items:
+            for item in unique_items:
                 if item.object_type == "block":
                     block = self.service.get_block_by_hash(item.object_hash)
                     if block is not None:
@@ -1386,12 +1410,13 @@ class NodeRuntime:
                         await session.send_message(MessageEnvelope(command="tx", payload=TransactionMessage(transaction=transaction)))
             if block_requests or tx_requests:
                 self.logger.info(
-                    "served getdata peer=%s requested_blocks=%s served_blocks=%s requested_txs=%s served_txs=%s first_block=%s",
+                    "served getdata peer=%s requested_blocks=%s served_blocks=%s requested_txs=%s served_txs=%s duplicate_items=%s first_block=%s",
                     self._format_peer_for_logs(session),
                     len(block_requests),
                     served_blocks,
                     tx_requests,
                     served_txs,
+                    duplicate_items,
                     block_requests[0] if block_requests else None,
                 )
                 self._record_getdata_service_result(
