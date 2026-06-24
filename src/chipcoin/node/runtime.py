@@ -25,7 +25,12 @@ from ..consensus.models import Transaction
 from ..consensus.nodes import current_epoch, reward_node_is_active
 from ..crypto.keys import parse_private_key_hex
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
-from ..interfaces.http_api import HttpApiApp, ThreadingWSGIServer, load_allowed_origins_from_env
+from ..interfaces.http_api import (
+    HttpApiApp,
+    QuietMiningStatusRequestHandler,
+    ThreadingWSGIServer,
+    load_allowed_origins_from_env,
+)
 from ..utils.logging import configure_logging
 from ..wallet.signer import TransactionSigner, wallet_key_from_private_key
 from .p2p.errors import (
@@ -470,7 +475,13 @@ class NodeRuntime:
             mining_submit_handler=self.submit_mined_block_from_http,
             tx_submit_handler=self.submit_raw_transaction_from_http,
         )
-        self._http_server = make_server(self.http_host, self.http_port, app, server_class=ThreadingWSGIServer)
+        self._http_server = make_server(
+            self.http_host,
+            self.http_port,
+            app,
+            server_class=ThreadingWSGIServer,
+            handler_class=QuietMiningStatusRequestHandler,
+        )
         self._http_thread = threading.Thread(target=self._http_server.serve_forever, daemon=True)
         self._http_thread.start()
         self.logger.info("http api started host=%s port=%s", self.http_host, self.http_bound_port)

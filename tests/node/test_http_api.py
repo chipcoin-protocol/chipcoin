@@ -17,7 +17,7 @@ from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_block, serialize_transaction
 from chipcoin.interfaces.cli import main as cli_main
-from chipcoin.interfaces.http_api import HttpApiApp
+from chipcoin.interfaces.http_api import HttpApiApp, QuietMiningStatusRequestHandler
 from chipcoin.node.service import NodeService
 from chipcoin.wallet.signer import TransactionSigner
 from ..helpers import put_wallet_utxo, signed_payment, wallet_key
@@ -185,6 +185,27 @@ def test_http_api_logs_failed_mining_status_at_info(caplog, monkeypatch) -> None
 
         assert status == "500 Internal Server Error"
         assert "path=/mining/status" in caplog.text
+
+
+def test_http_api_access_log_suppresses_successful_mining_status(monkeypatch) -> None:
+    calls: list[tuple[str, tuple[object, ...]]] = []
+    handler = object.__new__(QuietMiningStatusRequestHandler)
+
+    def record_super_log(_self, fmt: str, *args) -> None:
+        calls.append((fmt, args))
+
+    monkeypatch.setattr("wsgiref.simple_server.WSGIRequestHandler.log_message", record_super_log)
+
+    handler.requestline = "GET /mining/status HTTP/1.1"
+    handler.log_message('"%s" %s %s', handler.requestline, "200", "573")
+    assert calls == []
+
+    handler.log_message('"%s" %s %s', handler.requestline, "500", "10")
+    assert calls == [('"%s" %s %s', (handler.requestline, "500", "10"))]
+
+    handler.requestline = "GET /v1/status HTTP/1.1"
+    handler.log_message('"%s" %s %s', handler.requestline, "200", "3254")
+    assert calls[-1] == ('"%s" %s %s', (handler.requestline, "200", "3254"))
 
 
 def test_http_api_status_uses_short_lived_cache() -> None:

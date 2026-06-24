@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
-from wsgiref.simple_server import WSGIServer, make_server
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from ..consensus.validation import ValidationError
 from ..crypto.addresses import is_valid_address
@@ -34,6 +34,17 @@ class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
     """Minimal threaded WSGI server so slow requests do not block the whole API."""
 
     daemon_threads = True
+
+
+class QuietMiningStatusRequestHandler(WSGIRequestHandler):
+    """Suppress noisy successful miner status poll access-log lines."""
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A002
+        request_line = self.requestline or ""
+        status = str(args[1]) if len(args) > 1 else ""
+        if request_line.startswith("GET /mining/status ") and status.startswith("200"):
+            return
+        super().log_message(format, *args)
 
 
 class HttpApiApp:
@@ -635,6 +646,12 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_logging(args.log_level)
     app = create_app(Path(args.data), network=args.network)
-    with make_server(args.host, args.port, app, server_class=ThreadingWSGIServer) as server:
+    with make_server(
+        args.host,
+        args.port,
+        app,
+        server_class=ThreadingWSGIServer,
+        handler_class=QuietMiningStatusRequestHandler,
+    ) as server:
         server.serve_forever()
     return 0
