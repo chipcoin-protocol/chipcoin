@@ -1,3 +1,8 @@
+from struct import pack
+
+import pytest
+
+from chipcoin.consensus.hashes import double_sha256
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.config import DEVNET_CONFIG, MAINNET_CONFIG
@@ -48,6 +53,11 @@ def _sample_block() -> Block:
         nonce=0,
     )
     return Block(header=header, transactions=(transaction,))
+
+
+def _frame(command: str, payload: bytes, *, magic: bytes = MAINNET_CONFIG.magic) -> bytes:
+    command_bytes = command.encode("ascii").ljust(12, b"\x00")
+    return b"".join((magic, command_bytes, pack("<I", len(payload)), double_sha256(payload)[:4], payload))
 
 
 def test_version_message_roundtrip() -> None:
@@ -210,3 +220,19 @@ def test_devnet_frame_is_rejected_by_mainnet_magic() -> None:
     except WrongNetworkMagicError:
         return
     raise AssertionError("Expected wrong-network magic validation to fail.")
+
+
+@pytest.mark.parametrize(
+    ("command", "payload"),
+    (
+        ("inv", b"\xfd"),
+        ("getdata", b"\x01\x01"),
+        ("getheaders", b"\x01\x02"),
+        ("getblocks", b"\x01\x02"),
+        ("version", b"\x01\x00"),
+        ("addr", b"\x01\x01\x02"),
+    ),
+)
+def test_decode_rejects_truncated_payloads_as_codec_errors(command: str, payload: bytes) -> None:
+    with pytest.raises(CodecError):
+        decode_message(_frame(command, payload), expected_magic=MAINNET_CONFIG.magic)

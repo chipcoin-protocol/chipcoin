@@ -11,7 +11,7 @@ Frame layout:
 
 from __future__ import annotations
 
-from struct import pack, unpack_from
+from struct import Struct, pack, unpack_from
 
 from ...config import MAINNET_CONFIG
 from ...consensus.hashes import double_sha256
@@ -48,6 +48,10 @@ FRAME_HEADER_SIZE = 24
 DEFAULT_MAGIC = MAINNET_CONFIG.magic
 INVENTORY_TYPE_CODES = {"tx": 1, "block": 2}
 INVENTORY_TYPE_NAMES = {value: key for key, value in INVENTORY_TYPE_CODES.items()}
+UINT16 = Struct("<H")
+UINT32 = Struct("<I")
+UINT64 = Struct("<Q")
+BOOL = Struct("<?")
 
 
 def encode_message(message: MessageEnvelope, *, magic: bytes = DEFAULT_MAGIC) -> bytes:
@@ -174,14 +178,14 @@ def _decode_payload(command: str, payload: bytes) -> MessageEnvelope:
     if command in {"verack", "getaddr"}:
         return MessageEnvelope(command=command, payload=EmptyPayload())
     if command == "version":
-        protocol_version = unpack_from("<I", payload, 0)[0]
+        protocol_version = _unpack_from(UINT32, payload, 0, "version protocol version")[0]
         offset = 4
         network, offset = _decode_string(payload, offset)
         node_id, offset = _decode_string(payload, offset)
-        start_height = unpack_from("<I", payload, offset)[0]
+        start_height = _unpack_from(UINT32, payload, offset, "version start height")[0]
         offset += 4
         user_agent, offset = _decode_string(payload, offset)
-        relay = bool(unpack_from("<?", payload, offset)[0])
+        relay = bool(_unpack_from(BOOL, payload, offset, "version relay flag")[0])
         offset += 1
         _ensure_fully_consumed(command, payload, offset)
         return MessageEnvelope(
@@ -249,12 +253,12 @@ def _decode_payload(command: str, payload: bytes) -> MessageEnvelope:
         count, offset = _decode_varint(payload, 0)
         addresses = []
         for _ in range(count):
-            timestamp = unpack_from("<I", payload, offset)[0]
+            timestamp = _unpack_from(UINT32, payload, offset, "addr timestamp")[0]
             offset += 4
-            services = unpack_from("<Q", payload, offset)[0]
+            services = _unpack_from(UINT64, payload, offset, "addr services")[0]
             offset += 8
             host, offset = _decode_string(payload, offset)
-            port = unpack_from("<H", payload, offset)[0]
+            port = _unpack_from(UINT16, payload, offset, "addr port")[0]
             offset += 2
             addresses.append(PeerAddress(host=host, port=port, services=services, timestamp=timestamp))
         _ensure_fully_consumed(command, payload, offset)
@@ -306,10 +310,10 @@ def _decode_varint(buffer: bytes, offset: int) -> tuple[int, int]:
     if prefix < 0xFD:
         return prefix, offset
     if prefix == 0xFD:
-        return unpack_from("<H", buffer, offset)[0], offset + 2
+        return _unpack_from(UINT16, buffer, offset, "varint uint16")[0], offset + 2
     if prefix == 0xFE:
-        return unpack_from("<I", buffer, offset)[0], offset + 4
-    return unpack_from("<Q", buffer, offset)[0], offset + 8
+        return _unpack_from(UINT32, buffer, offset, "varint uint32")[0], offset + 4
+    return _unpack_from(UINT64, buffer, offset, "varint uint64")[0], offset + 8
 
 
 def _encode_bytes(value: bytes) -> bytes:
@@ -376,7 +380,7 @@ def _decode_inventory(buffer: bytes, offset: int) -> tuple[list[InventoryVector]
     count, offset = _decode_varint(buffer, offset)
     items = []
     for _ in range(count):
-        object_type_code = unpack_from("<I", buffer, offset)[0]
+        object_type_code = _unpack_from(UINT32, buffer, offset, "inventory type")[0]
         offset += 4
         object_hash, offset = _decode_hash(buffer, offset)
         try:
@@ -402,7 +406,7 @@ def _encode_hash_locator(protocol_version: int, locator_hashes: tuple[str, ...],
 def _decode_hash_locator(buffer: bytes, offset: int) -> tuple[int, list[str], str, int]:
     """Decode a block-locator based request payload."""
 
-    protocol_version = unpack_from("<I", buffer, offset)[0]
+    protocol_version = _unpack_from(UINT32, buffer, offset, "locator protocol version")[0]
     offset += 4
     count, offset = _decode_varint(buffer, offset)
     locator_hashes = []
@@ -418,7 +422,7 @@ def _decode_fixed_nonce(*, command: str, payload: bytes, message_type):
 
     if len(payload) != 8:
         raise CodecError(f"{command} payload must be exactly eight bytes.")
-    nonce = unpack_from("<Q", payload, 0)[0]
+    nonce = _unpack_from(UINT64, payload, 0, f"{command} nonce")[0]
     return MessageEnvelope(command=command, payload=message_type(nonce=nonce))
 
 
@@ -427,3 +431,12 @@ def _ensure_fully_consumed(command: str, payload: bytes, offset: int) -> None:
 
     if offset != len(payload):
         raise CodecError(f"{command} payload contains trailing bytes.")
+
+
+def _unpack_from(struct: Struct, buffer: bytes, offset: int, context: str) -> tuple:
+    """Unpack a fixed-width field after explicit payload bounds checking."""
+
+    end = offset + struct.size
+    if offset < 0 or end > len(buffer):
+        raise CodecError(f"Unexpected end of payload while decoding {context}.")
+    return struct.unpack_from(buffer, offset)
