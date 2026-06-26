@@ -11,7 +11,9 @@ Supported browsers:
 Build commands:
 - `npm run build:chrome`
 - `npm run build:firefox`
+- `npm run lint:firefox`
 - `npm run package:firefox`
+- `npm run release:firefox`
 
 Install:
 - Chrome: build with `npm run build:chrome`, open `chrome://extensions`, enable Developer mode, then `Load unpacked` and select `apps/browser-wallet/dist/`
@@ -19,24 +21,22 @@ Install:
 
 Firefox normal install:
 - Firefox Release/Beta requires Mozilla signing for normal `.xpi` installation.
-- Build the Firefox extension, then package/sign it:
+- Build, lint, and package the Firefox extension:
 
 ```bash
-npm run build:firefox
-rm -rf dist-firefox
-mv dist dist-firefox
-npm run package:firefox
+npm run release:firefox
 ```
 
 - Without AMO credentials this creates `build/browser-wallet/chipcoin-browser-wallet-firefox-unsigned.xpi`, useful only for test/dev installs.
-- To create a normal installable self-distributed package, install `web-ext`, set AMO credentials, and rerun:
+- To create a normal installable self-distributed package, set AMO credentials and rerun:
 
 ```bash
-npm install -g web-ext
-AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run package:firefox
+AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run release:firefox
 ```
 
 - Upload the signed `.xpi` produced in `build/browser-wallet/` to the website downloads area.
+- The Firefox manifest uses the stable extension id `wallet@chipcoinprotocol.com`; do not change it after public release or users will get a different wallet storage namespace.
+- Current `web-ext lint` may report `UNSAFE_VAR_ASSIGNMENT` warnings from React's bundled DOM runtime in `assets/messages-*.js`. The wallet source does not use `dangerouslySetInnerHTML`, direct `innerHTML`, `eval`, or dynamic code generation.
 
 Connect to a node:
 - Open `Settings`

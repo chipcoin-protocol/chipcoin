@@ -41,6 +41,12 @@ Firefox:
 npm run build:firefox
 ```
 
+Firefox release candidate with Mozilla lint:
+
+```bash
+npm run release:firefox
+```
+
 Both:
 
 ```bash
@@ -79,10 +85,7 @@ Build and package:
 
 ```bash
 cd apps/browser-wallet
-npm run build:firefox
-rm -rf dist-firefox
-mv dist dist-firefox
-npm run package:firefox
+npm run release:firefox
 ```
 
 Without AMO credentials, this creates:
@@ -95,12 +98,21 @@ That unsigned package is not suitable for normal Firefox Release/Beta users.
 To produce the self-distributed signed package:
 
 ```bash
-npm install -g web-ext
-AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run package:firefox
+AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run release:firefox
 ```
 
 The signed `.xpi` emitted by `web-ext sign --channel unlisted` can then be
 hosted as the public Firefox wallet download.
+
+The Firefox manifest uses the stable extension id `wallet@chipcoinprotocol.com`.
+Do not change this id after public release, because Firefox uses it as part of
+the extension identity and storage namespace.
+
+`web-ext lint` may report `UNSAFE_VAR_ASSIGNMENT` warnings from React's bundled
+DOM runtime in `assets/messages-*.js`. The wallet source does not use
+`dangerouslySetInnerHTML`, direct `innerHTML`, `eval`, or dynamic code
+generation; treat those warnings as AMO review notes rather than wallet source
+findings.
 
 ## First Use
 

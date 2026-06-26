@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Chipcoin Wallet",
+  "short_name": "Chipcoin",
   "version": "0.1.0",
   "description": "Chipcoin devnet and testnet browser wallet",
+  "homepage_url": "https://chipcoinprotocol.com/wallet",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Chipcoin Wallet"
