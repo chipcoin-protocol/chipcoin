@@ -104,9 +104,20 @@ AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run release:firefox
 The signed `.xpi` emitted by `web-ext sign --channel unlisted` can then be
 hosted as the public Firefox wallet download.
 
-The Firefox manifest uses the stable extension id `wallet@chipcoinprotocol.com`.
+The Firefox manifest uses the stable extension id `browser-wallet@chipcoinprotocol.com`.
 Do not change this id after public release, because Firefox uses it as part of
 the extension identity and storage namespace.
+
+The Firefox release manifest intentionally uses narrow host permissions:
+
+- `https://testnet-api.chipcoinprotocol.com/*`
+- `https://api.chipcoinprotocol.com/*`
+- `http://127.0.0.1/*`
+- `http://localhost/*`
+
+This keeps the official Mozilla package review-friendly. Arbitrary remote node
+APIs are not supported by the Firefox release package unless they are added to
+the manifest and reviewed.
 
 `web-ext lint` may report `UNSAFE_VAR_ASSIGNMENT` warnings from React's bundled
 DOM runtime in `assets/messages-*.js`. The wallet source does not use
@@ -143,9 +154,11 @@ Never expose node HTTP `28081` publicly. Expose P2P `28444` only when operating 
 
 Do not use `https://explorer.chipcoinprotocol.com/api/testnet` as a wallet endpoint. The explorer proxy is readonly and is not suitable for `POST /v1/tx/submit` or other wallet send operations.
 
-The extension manifests allow `http://*/*` and `https://*/*`, which covers both
-the public wallet API and `http://127.0.0.1:28081`. Some browsers may still show
-or require host permission approval when the extension is installed or updated.
+The Chrome/dev manifest remains broad enough for arbitrary operator endpoints.
+The Firefox release manifest is narrower for AMO review and supports the public
+Chipcoin wallet APIs plus local node endpoints only. Some browsers may still
+show or require host permission approval when the extension is installed or
+updated.
 
 ## Connect To A Node
 
@@ -171,7 +184,7 @@ Behavior:
 
 - the fallback default is used on first run only
 - the user's chosen endpoint is persisted afterward
-- manual override in the UI remains available at any time
+- manual override in the UI remains available at any time, but Firefox release builds can only reach hosts allowed by the Firefox manifest
 - the wallet verifies both `/v1/health` and `/v1/status` before saving a new endpoint
 - the wallet rejects endpoints on the wrong network
 - submitted transaction state and wallet data cache are stored under network-scoped keys

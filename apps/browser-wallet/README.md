@@ -35,7 +35,8 @@ AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run release:firefox
 ```
 
 - Upload the signed `.xpi` produced in `build/browser-wallet/` to the website downloads area.
-- The Firefox manifest uses the stable extension id `wallet@chipcoinprotocol.com`; do not change it after public release or users will get a different wallet storage namespace.
+- The Firefox manifest uses the stable extension id `browser-wallet@chipcoinprotocol.com`; do not change it after public release or users will get a different wallet storage namespace.
+- The Firefox release manifest intentionally limits host permissions to the public Chipcoin wallet APIs and local node endpoints. Arbitrary remote node APIs are not supported by the official Mozilla package unless they are added to the manifest and reviewed.
 - Current `web-ext lint` may report `UNSAFE_VAR_ASSIGNMENT` warnings from React's bundled DOM runtime in `assets/messages-*.js`. The wallet source does not use `dangerouslySetInnerHTML`, direct `innerHTML`, `eval`, or dynamic code generation.
 
 Connect to a node:
@@ -45,7 +46,7 @@ Connect to a node:
 - Devnet remains available as an explicit alternative and uses `https://api.chipcoinprotocol.com`
 - Operators can override testnet to a local node API such as `http://127.0.0.1:28081`
 - Do not use the readonly explorer API as a wallet endpoint
-- If needed, set a different Node API endpoint in `Settings`
+- Firefox official builds allow only the public Chipcoin wallet APIs plus `localhost`/`127.0.0.1` node APIs. Chrome/dev builds may be configured more broadly.
 - After first run, the selected endpoint is persisted in extension storage
 - If the node is remote, set `CHIPCOIN_HTTP_ALLOWED_ORIGINS` on the node to allow the wallet origin
 - The wallet verifies `/v1/health` and `/v1/status` before saving a new endpoint

@@ -18,10 +18,15 @@
     "open_in_tab": true
   },
   "permissions": ["storage", "alarms"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": [
+    "https://testnet-api.chipcoinprotocol.com/*",
+    "https://api.chipcoinprotocol.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "wallet@chipcoinprotocol.com",
+      "id": "browser-wallet@chipcoinprotocol.com",
       "strict_min_version": "142.0",
       "data_collection_permissions": {
         "required": ["none"]
