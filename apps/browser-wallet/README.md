@@ -13,6 +13,7 @@ Build commands:
 - `npm run build:firefox`
 - `npm run lint:firefox`
 - `npm run package:firefox`
+- `npm run package:firefox:sources`
 - `npm run release:firefox`
 
 Install:
@@ -35,6 +36,15 @@ AMO_JWT_ISSUER=... AMO_JWT_SECRET=... npm run release:firefox
 ```
 
 - Upload the signed `.xpi` produced in `build/browser-wallet/` to the website downloads area.
+- Mozilla Add-ons may request source code for generated/minified builds. Create
+  the AMO source archive with:
+
+```bash
+npm run package:firefox:sources
+```
+
+- Upload `build/browser-wallet/chipcoin-browser-wallet-firefox-0.1.0-source.zip`
+  to the source code field for the matching AMO version.
 - The Firefox manifest uses the stable extension id `browser-wallet@chipcoinprotocol.com`; do not change it after public release or users will get a different wallet storage namespace.
 - The Firefox release manifest intentionally limits host permissions to the public Chipcoin wallet APIs and local node endpoints. Arbitrary remote node APIs are not supported by the official Mozilla package unless they are added to the manifest and reviewed.
 - Current `web-ext lint` may report `UNSAFE_VAR_ASSIGNMENT` warnings from React's bundled DOM runtime in `assets/messages-*.js`. The wallet source does not use `dangerouslySetInnerHTML`, direct `innerHTML`, `eval`, or dynamic code generation.
