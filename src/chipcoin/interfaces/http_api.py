@@ -180,6 +180,11 @@ class HttpApiApp:
             epoch_index = self._parse_required_int(query, "epoch_index", minimum=0)
             return {"api_version": self.API_VERSION, **self.service.reward_epoch_summary(epoch_index=epoch_index)}
 
+        if method == "GET" and path == "/v1/rewards/concentration":
+            query = parse_qs(environ.get("QUERY_STRING", ""))
+            epoch_index = self._parse_optional_int(query, "epoch_index", minimum=0)
+            return {"api_version": self.API_VERSION, **self.service.reward_concentration_report(epoch_index=epoch_index)}
+
         if method == "GET" and path == "/v1/rewards/attestations":
             query = parse_qs(environ.get("QUERY_STRING", ""))
             epoch_index = self._parse_optional_int(query, "epoch_index")

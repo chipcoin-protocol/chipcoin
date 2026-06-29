@@ -749,6 +749,65 @@ def test_http_api_reward_epoch_summary_errors_for_missing_or_invalid_epoch_index
         assert "epoch_index must be >= 0" in invalid_body["error"]["message"]
 
 
+def test_http_api_reward_concentration_reports_active_subnet_groups() -> None:
+    with TemporaryDirectory() as tempdir:
+        params = replace(
+            MAINNET_PARAMS,
+            node_reward_activation_height=0,
+            epoch_length_blocks=5,
+            reward_node_warmup_epochs=0,
+            reward_check_windows_per_epoch=4,
+            reward_target_checks_per_epoch=1,
+            reward_min_passed_checks_per_epoch=1,
+            reward_verifier_committee_size=1,
+            reward_verifier_quorum=1,
+            reward_final_confirmation_window_blocks=1,
+            max_rewarded_nodes_per_epoch=4,
+        )
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            params=params,
+            time_provider=lambda: next(timestamps),
+        )
+        app = HttpApiApp(service)
+        for index, host in enumerate(("203.0.113.10", "203.0.113.11", "198.51.100.20")):
+            service.node_registry.upsert(
+                NodeRecord(
+                    node_id=f"reward-node-{index}",
+                    payout_address=wallet_key(index).address,
+                    owner_pubkey=wallet_key(index).public_key,
+                    registered_height=0,
+                    last_renewed_height=10,
+                    node_pubkey=wallet_key(index).public_key,
+                    declared_host=host,
+                    declared_port=19000 + index,
+                    reward_registration=True,
+                )
+            )
+        for _ in range(11):
+            service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
+
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/rewards/concentration", query="epoch_index=2")
+
+        assert status == "200 OK"
+        assert body["api_version"] == "v1"
+        assert body["epoch_index"] == 2
+        assert body["active_reward_node_count"] == 3
+        assert body["concentration_policy"] == {
+            "consensus_concentration_key_cap": 1,
+            "subnet24_cap_enforced": False,
+            "subnet24_reporting_only": True,
+        }
+        assert body["attention"]["has_subnet24_concentration"] is True
+        assert body["attention"]["has_ipv4_concentration"] is False
+        assert body["concentrated_groups"]["by_ipv4"] == []
+        assert body["concentrated_groups"]["by_ipv4_subnet24"] == [
+            {"key": "203.0.113.0/24", "count": 2, "node_ids": ["reward-node-0", "reward-node-1"]}
+        ]
+        assert body["reward_state_anchor"]
+
+
 def test_http_api_submit_block_accepts_solved_template_and_rejects_stale() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

@@ -3248,6 +3248,87 @@ class NodeService:
             ),
         }
 
+    def reward_concentration_report(self, *, epoch_index: int | None = None) -> dict[str, object]:
+        """Return operator-facing concentration diagnostics for reward nodes."""
+
+        epoch_state = self.native_reward_epoch_state(epoch_index=epoch_index)
+        settlement_report = self.native_reward_settlement_report(epoch_index=int(epoch_state["epoch_index"]))
+        active_nodes = list(epoch_state["active_reward_nodes"])
+        node_evaluations = list(settlement_report["node_evaluations"])
+
+        host_groups: dict[str, list[str]] = {}
+        ipv4_groups: dict[str, list[str]] = {}
+        subnet24_groups: dict[str, list[str]] = {}
+        for row in active_nodes:
+            node_id = str(row["node_id"])
+            host = str(row.get("declared_host") or "")
+            if host:
+                host_groups.setdefault(host, []).append(node_id)
+                try:
+                    ipv4 = ipaddress.IPv4Address(host)
+                except ipaddress.AddressValueError:
+                    continue
+                ipv4_text = str(ipv4)
+                subnet24_text = str(ipaddress.IPv4Network(f"{ipv4_text}/24", strict=False))
+                ipv4_groups.setdefault(ipv4_text, []).append(node_id)
+                subnet24_groups.setdefault(subnet24_text, []).append(node_id)
+
+        concentration_groups: dict[str, list[str]] = {}
+        not_rewarded_by_reason: dict[str, list[str]] = {}
+        for row in node_evaluations:
+            node_id = str(row["node_id"])
+            concentration_key = str(row.get("concentration_key") or "")
+            if concentration_key:
+                concentration_groups.setdefault(concentration_key, []).append(node_id)
+            reason = row.get("not_rewarded_reason")
+            if reason is not None:
+                not_rewarded_by_reason.setdefault(str(reason), []).append(node_id)
+
+        def _group_rows(groups: dict[str, list[str]], *, min_size: int = 1) -> list[dict[str, object]]:
+            return [
+                {"key": key, "count": len(node_ids), "node_ids": sorted(node_ids)}
+                for key, node_ids in sorted(groups.items())
+                if len(node_ids) >= min_size
+            ]
+
+        concentrated_ipv4_groups = _group_rows(ipv4_groups, min_size=2)
+        concentrated_subnet24_groups = _group_rows(subnet24_groups, min_size=2)
+        concentrated_key_groups = _group_rows(concentration_groups, min_size=2)
+
+        return {
+            "epoch_index": int(epoch_state["epoch_index"]),
+            "tip_height": int(epoch_state["tip_height"]),
+            "tip_hash": epoch_state["tip_hash"],
+            "active_reward_node_count": int(epoch_state["active_reward_node_count"]),
+            "rewarded_node_count": int(settlement_report["rewarded_node_count"]),
+            "concentration_policy": {
+                "consensus_concentration_key_cap": 1,
+                "subnet24_cap_enforced": False,
+                "subnet24_reporting_only": True,
+            },
+            "active_groups": {
+                "by_host": _group_rows(host_groups),
+                "by_ipv4": _group_rows(ipv4_groups),
+                "by_ipv4_subnet24": _group_rows(subnet24_groups),
+            },
+            "concentrated_groups": {
+                "by_ipv4": concentrated_ipv4_groups,
+                "by_ipv4_subnet24": concentrated_subnet24_groups,
+                "by_concentration_key": concentrated_key_groups,
+            },
+            "settlement_concentration_exclusions": settlement_report["concentration_exclusions"],
+            "not_rewarded_by_reason": {
+                reason: sorted(node_ids) for reason, node_ids in sorted(not_rewarded_by_reason.items())
+            },
+            "node_evaluations": node_evaluations,
+            "attention": {
+                "has_ipv4_concentration": bool(concentrated_ipv4_groups),
+                "has_subnet24_concentration": bool(concentrated_subnet24_groups),
+                "has_consensus_concentration_exclusions": bool(settlement_report["concentration_exclusions"]),
+            },
+            "reward_state_anchor": epoch_state["reward_state_anchor"],
+        }
+
     def build_native_reward_settlement(
         self,
         *,
