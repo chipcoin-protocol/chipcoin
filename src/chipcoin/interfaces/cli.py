@@ -515,7 +515,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "wallet-generate":
             if args.scheme == "mldsa44":
-                _print_warning("Post-quantum support is experimental on testnet until audited.")
+                _print_warning(
+                    "Experimental testnet CHCQ wallet. Protect the signing device and backups carefully; "
+                    "deterministic ML-DSA signing is not a substitute for hardware-isolated key storage. "
+                    "Testnet coins have no monetary value."
+                )
             wallet_key = generate_wallet_key(scheme=args.scheme)
             _save_wallet_key(Path(args.wallet_file), wallet_key)
             _warn_wallet_private_key_output("wallet-generate")

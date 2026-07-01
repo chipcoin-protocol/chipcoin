@@ -40,7 +40,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | P2P payload decoding | malformed short payloads could raise low-level decode errors | fixed with explicit bounds checks | keep malformed-frame tests for every typed payload |
 | P2P collection sizes | valid frames could carry excessive decoded collections | fixed with codec and runtime count caps | review caps if protocol inventory/header needs grow |
 | Runtime log amplification | noisy peers can flood startup/sync logs with repetitive benign events | partially fixed with summarized alias logs and quiet mining-status polling | continue reducing low-signal 200 OK logs without hiding errors |
-| Post-quantum transaction support | consensus split, dependency divergence, CPU DoS, or misleading claims before audit | architecture and cheap structural checks added for testnet | pin one ML-DSA-44 backend, freeze vectors, and complete audit before activation |
+| Post-quantum transaction support | consensus split, dependency divergence, CPU DoS, or misleading claims before audit | architecture and cheap structural checks added for testnet | keep one pinned ML-DSA-44 backend, freeze vectors, and complete audit before activation |
 
 ## Traceability
 
@@ -86,9 +86,15 @@ Architecture added for testnet/devnet only:
 - v2 signatures include `chipcoin:tx-signature:v2:<network>`
 - ML-DSA-44 public key/signature sizes are checked before verifier calls
 
+### Backend Status
+
+The ML-DSA-44 backend is vendored from `mldsa-native` at commit
+`9b0ee84f4cf399043eca59eca4e5f8531ca1d61b` and compiled into the official
+package/image. It uses deterministic core APIs directly and does not use
+`liboqs`, runtime backend selection, or process-global RNG overrides.
+
 ### Remaining Work
 
-- Pin one consensus ML-DSA-44 backend across all node builds.
 - Add official FIPS 204 KAT coverage for the selected backend.
 - Freeze v2 transaction/signature vectors before activation.
 - Keep browser PQ signing disabled until CLI CHCQ spends verify on the node
@@ -96,6 +102,18 @@ Architecture added for testnet/devnet only:
 - Public wording must say "post-quantum support in testnet", "experimental",
   "not audited yet", and "designed for future quantum-resistance"; do not call
   this "quantum-proof mainnet".
+
+### Additional Risks
+
+- Deterministic ML-DSA signing avoids mutable RNG state but is less hardened
+  against fault-injection and some side-channel settings than randomized
+  signing. This is a low node-consensus risk because nodes primarily verify
+  signatures, but wallet warnings must tell users to protect signing devices
+  and backups carefully.
+- `mldsa-native` currently documents API stability as not guaranteed. The
+  source is pinned and the native wrapper has compile-time API guards plus CI
+  vectors so future upstream bumps fail loudly if the expected core API or
+  deterministic outputs change.
 
 ## 1. P2P Frame Size Limit
 

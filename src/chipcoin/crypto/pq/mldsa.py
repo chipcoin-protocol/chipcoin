@@ -1,12 +1,9 @@
-"""ML-DSA backend boundary.
-
-The current runtime dependency set may not expose ML-DSA. This module keeps the
-consensus call site stable while making backend availability explicit.
-"""
+"""ML-DSA backend boundary."""
 
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 
 ML_DSA_44_PUBLIC_KEY_SIZE = 1312
@@ -18,12 +15,26 @@ class MLDsaBackendUnavailable(RuntimeError):
     """Raised when no pinned ML-DSA backend is available."""
 
 
+def _backend() -> Any:
+    try:
+        from . import _mldsa_native
+    except Exception as exc:  # pragma: no cover - exercised when extension build is absent
+        raise MLDsaBackendUnavailable("Pinned mldsa-native ML-DSA-44 backend is not available.") from exc
+    return _mldsa_native
+
+
+def mldsa44_backend_info() -> dict[str, object]:
+    """Return metadata for the pinned ML-DSA-44 backend."""
+
+    return dict(_backend().backend_info())
+
+
 def mldsa44_backend_available() -> bool:
     """Return whether the configured runtime exposes ML-DSA-44."""
 
     try:
-        from cryptography.hazmat.primitives.asymmetric import mldsa  # noqa: F401
-    except Exception:
+        _backend()
+    except MLDsaBackendUnavailable:
         return False
     return True
 
@@ -33,7 +44,12 @@ def derive_mldsa44_keypair(seed: bytes) -> tuple[bytes, bytes]:
 
     if len(seed) != ML_DSA_SEED_SIZE:
         raise ValueError("ML-DSA-44 seed must be exactly 32 bytes.")
-    raise MLDsaBackendUnavailable("No pinned ML-DSA-44 key derivation backend is configured.")
+    private_key, public_key = _backend().derive_keypair(seed)
+    if len(private_key) != 2560:
+        raise MLDsaBackendUnavailable("Pinned ML-DSA-44 backend returned an unexpected private key size.")
+    if len(public_key) != ML_DSA_44_PUBLIC_KEY_SIZE:
+        raise MLDsaBackendUnavailable("Pinned ML-DSA-44 backend returned an unexpected public key size.")
+    return private_key, public_key
 
 
 def sign_mldsa44(seed: bytes, digest: bytes) -> bytes:
@@ -43,7 +59,10 @@ def sign_mldsa44(seed: bytes, digest: bytes) -> bytes:
         raise ValueError("ML-DSA-44 seed must be exactly 32 bytes.")
     if len(digest) != 32:
         raise ValueError("Transaction signature digest must be exactly 32 bytes.")
-    raise MLDsaBackendUnavailable("No pinned ML-DSA-44 signing backend is configured.")
+    signature = _backend().sign(seed, digest)
+    if len(signature) != ML_DSA_44_SIGNATURE_SIZE:
+        raise MLDsaBackendUnavailable("Pinned ML-DSA-44 backend returned an unexpected signature size.")
+    return signature
 
 
 def verify_mldsa44(public_key: bytes, digest: bytes, signature: bytes) -> bool:
@@ -55,7 +74,7 @@ def verify_mldsa44(public_key: bytes, digest: bytes, signature: bytes) -> bool:
         return False
     if len(digest) != 32:
         return False
-    raise MLDsaBackendUnavailable("No pinned ML-DSA-44 verification backend is configured.")
+    return bool(_backend().verify(public_key, digest, signature))
 
 
 def derive_mldsa44_test_keypair(seed: bytes) -> tuple[bytes, bytes]:

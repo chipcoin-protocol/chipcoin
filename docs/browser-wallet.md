@@ -10,6 +10,10 @@ CHCQ spending, and frozen v2 serialization/signature vectors must stabilize
 first. Browser-generated CHCQ signatures must verify against the node consensus
 backend before CHCQ sending is exposed in the extension.
 
+When CHCQ support is later added, the browser wallet must warn that deterministic
+ML-DSA signing is experimental testnet functionality and is not a substitute for
+hardware-isolated key storage or a clean signing device.
+
 It currently supports:
 
 - wallet creation

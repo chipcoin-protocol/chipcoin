@@ -1,0 +1,2 @@
+include src/chipcoin/crypto/pq/_mldsa_native.c
+recursive-include vendor/mldsa-native *

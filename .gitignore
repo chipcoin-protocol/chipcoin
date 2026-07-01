@@ -42,3 +42,11 @@ docs/remote-devnet.md
 scripts/remote-devnet/
 
 tests/bootstrap_seed/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
+
+# Local native extension build artifacts
+build/
+src/chipcoin/crypto/pq/_mldsa_native*.so

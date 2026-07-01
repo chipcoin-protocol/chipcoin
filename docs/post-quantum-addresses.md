@@ -170,8 +170,18 @@ Browser wallets may later use a different library, but browser-produced
 signatures must verify against the node consensus backend.
 
 The current implementation exposes the architecture and size/format checks.
-The runtime environment must still be upgraded to a pinned ML-DSA-44 backend
-before testnet activation.
+The runtime environment uses a vendored `mldsa-native` ML-DSA-44 backend pinned
+at commit `9b0ee84f4cf399043eca59eca4e5f8531ca1d61b`. It is compiled into the
+official package/image and does not use `liboqs`, process-global RNG overrides,
+or runtime backend selection.
+
+The vendored backend is still not sufficient for activation by itself. Official
+FIPS 204/backend KAT coverage, frozen v2 transaction/signature vectors,
+cross-platform CI, and review are required before any activation height is used.
+
+Wallet warnings must also mention that deterministic ML-DSA signing is not a
+replacement for protecting signing devices and backups from malware,
+side-channel exposure, or physical fault-injection attacks.
 
 ## Required Frozen Vectors
 

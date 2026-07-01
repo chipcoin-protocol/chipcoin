@@ -22,7 +22,8 @@ After activation, CHC and CHCQ can coexist.
 
 Activation must not proceed until:
 
-- one ML-DSA-44 consensus backend is pinned across node builds
+- the vendored `mldsa-native` ML-DSA-44 consensus backend is pinned and built
+  reproducibly across node builds
 - official FIPS 204/backend KAT tests pass
 - v2 sighash and transaction vectors are frozen
 - CLI CHCQ generation and spending work against the node backend
