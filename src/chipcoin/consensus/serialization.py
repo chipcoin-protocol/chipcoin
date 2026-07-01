@@ -110,6 +110,12 @@ def serialize_transaction(transaction: Transaction) -> bytes:
     for tx_input in transaction.inputs:
         encoded.extend(_encode_hash(tx_input.previous_output.txid))
         encoded.extend(pack("<I", tx_input.previous_output.index))
+        if transaction.version >= 2:
+            if tx_input.sig_scheme_id < 0 or tx_input.sig_scheme_id > 0xFF:
+                raise ValueError("Signature scheme id must fit in one byte.")
+            encoded.extend(bytes((tx_input.sig_scheme_id,)))
+        elif tx_input.sig_scheme_id != 0:
+            raise ValueError("Transaction v1 inputs cannot declare non-legacy signature schemes.")
         encoded.extend(_encode_bytes(tx_input.signature))
         encoded.extend(_encode_bytes(tx_input.public_key))
         encoded.extend(pack("<I", tx_input.sequence))
@@ -128,6 +134,7 @@ def serialize_transaction_for_signing(
     *,
     previous_output_value: int,
     previous_output_recipient: str,
+    network: str = "mainnet",
 ) -> bytes:
     """Serialize the canonical payload signed by one transaction input."""
 
@@ -136,7 +143,11 @@ def serialize_transaction_for_signing(
     stripped = Transaction(
         version=transaction.version,
         inputs=tuple(
-            TxInput(previous_output=tx_input.previous_output, sequence=tx_input.sequence)
+            TxInput(
+                previous_output=tx_input.previous_output,
+                sequence=tx_input.sequence,
+                sig_scheme_id=tx_input.sig_scheme_id,
+            )
             for tx_input in transaction.inputs
         ),
         outputs=transaction.outputs,
@@ -147,7 +158,11 @@ def serialize_transaction_for_signing(
     encoded.extend(pack("<I", input_index))
     encoded.extend(pack("<Q", previous_output_value))
     encoded.extend(_encode_string(previous_output_recipient))
-    encoded.extend(pack("<I", 1))
+    if transaction.version >= 2:
+        encoded.extend(_encode_string(f"chipcoin:tx-signature:v2:{network}"))
+        encoded.extend(pack("<I", 2))
+    else:
+        encoded.extend(pack("<I", 1))
     return bytes(encoded)
 
 
@@ -189,6 +204,12 @@ def deserialize_transaction(payload: bytes, offset: int = 0) -> tuple[Transactio
         offset += 32
         previous_index = unpack_from("<I", payload, offset)[0]
         offset += 4
+        sig_scheme_id = 0
+        if version >= 2:
+            if offset >= len(payload):
+                raise ValueError("Unexpected end of payload while decoding signature scheme id.")
+            sig_scheme_id = payload[offset]
+            offset += 1
         signature, offset = _decode_bytes(payload, offset)
         public_key, offset = _decode_bytes(payload, offset)
         sequence = unpack_from("<I", payload, offset)[0]
@@ -199,6 +220,7 @@ def deserialize_transaction(payload: bytes, offset: int = 0) -> tuple[Transactio
                 signature=signature,
                 public_key=public_key,
                 sequence=sequence,
+                sig_scheme_id=sig_scheme_id,
             )
         )
     output_count, offset = _decode_varint(payload, offset)

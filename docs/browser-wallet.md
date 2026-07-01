@@ -4,6 +4,12 @@
 
 The Chipcoin browser wallet is a minimal Chrome and Firefox extension for Chipcoin development networks.
 
+Post-quantum CHCQ signing is intentionally not enabled in the browser wallet
+yet. Consensus validation, node backend verification, CLI CHCQ generation, CLI
+CHCQ spending, and frozen v2 serialization/signature vectors must stabilize
+first. Browser-generated CHCQ signatures must verify against the node consensus
+backend before CHCQ sending is exposed in the extension.
+
 It currently supports:
 
 - wallet creation

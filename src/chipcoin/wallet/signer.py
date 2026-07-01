@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import secrets
 
 from ..consensus.models import ChipbitAmount, OutPoint, Transaction, TxInput, TxOutput
 from ..consensus.epoch_settlement import RewardAttestation, reward_attestation_signature_digest
@@ -13,8 +14,10 @@ from ..consensus.nodes import (
     special_node_transaction_signature_digest_v2,
 )
 from ..consensus.validation import transaction_signature_digest
-from ..crypto.addresses import is_valid_address, public_key_to_address
+from ..crypto.addresses import is_valid_address, public_key_to_address, public_key_to_pq_address
 from ..crypto.keys import derive_public_key, generate_private_key, serialize_public_key_hex
+from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44, get_signature_scheme
+from ..crypto.pq.mldsa import ML_DSA_SEED_SIZE
 from ..crypto.signatures import sign_digest
 from .models import BuiltTransaction, SpendCandidate, WalletKey
 from .selection import select_inputs
@@ -29,11 +32,41 @@ def wallet_key_from_private_key(private_key: bytes, *, compressed: bool = True) 
         public_key=public_key,
         address=public_key_to_address(public_key),
         compressed=compressed,
+        scheme_id=SIG_SCHEME_LEGACY_ECDSA,
+        scheme_name="secp256k1-ecdsa",
+        address_kind="legacy",
     )
 
 
-def generate_wallet_key(*, compressed: bool = True) -> WalletKey:
+def wallet_key_from_mldsa44_seed(seed: bytes) -> WalletKey:
+    """Build a CHCQ wallet key from canonical 32-byte ML-DSA-44 seed material."""
+
+    scheme = get_signature_scheme(SIG_SCHEME_ML_DSA_44)
+    private_material, public_key = scheme.derive_keypair(seed)
+    return WalletKey(
+        private_key=private_material,
+        private_seed=seed,
+        public_key=public_key,
+        address=public_key_to_pq_address(public_key, scheme_id=SIG_SCHEME_ML_DSA_44),
+        compressed=False,
+        scheme_id=SIG_SCHEME_ML_DSA_44,
+        scheme_name=scheme.name,
+        address_kind="pq",
+    )
+
+
+def generate_wallet_key(*, compressed: bool = True, scheme: str = "secp256k1") -> WalletKey:
     """Generate a new wallet key pair."""
+
+    if scheme in {"secp256k1", "ecdsa", "legacy"}:
+        return wallet_key_from_private_key(generate_private_key(), compressed=compressed)
+    if scheme == "mldsa44":
+        return wallet_key_from_mldsa44_seed(secrets.token_bytes(ML_DSA_SEED_SIZE))
+    raise ValueError(f"Unsupported wallet signature scheme: {scheme}")
+
+
+def generate_legacy_wallet_key(*, compressed: bool = True) -> WalletKey:
+    """Generate a legacy secp256k1 wallet key pair."""
 
     return wallet_key_from_private_key(generate_private_key(), compressed=compressed)
 
@@ -47,6 +80,10 @@ class TransactionSigner:
     def sign(self, digest: bytes) -> bytes:
         """Sign a digest with wallet-controlled key material."""
 
+        if self.wallet_key.scheme_id == SIG_SCHEME_ML_DSA_44:
+            scheme = get_signature_scheme(self.wallet_key.scheme_id)
+            seed = self.wallet_key.private_seed or self.wallet_key.private_key
+            return scheme.sign(seed, digest)
         return sign_digest(self.wallet_key.private_key, digest)
 
     def build_signed_transaction(
@@ -59,6 +96,7 @@ class TransactionSigner:
         change_recipient: str | None = None,
         locktime: int = 0,
         metadata: dict[str, str] | None = None,
+        network: str = "mainnet",
     ) -> BuiltTransaction:
         """Construct and sign a transaction spending wallet-owned UTXOs."""
 
@@ -67,14 +105,17 @@ class TransactionSigner:
         if fee_chipbits < 0:
             raise ValueError("Fee cannot be negative.")
         if not is_valid_address(recipient):
-            raise ValueError("Recipient must be a valid CHC address.")
+            raise ValueError("Recipient must be a valid Chipcoin address.")
         resolved_change_recipient = self.wallet_key.address if change_recipient is None else change_recipient
         if not is_valid_address(resolved_change_recipient):
-            raise ValueError("Change recipient must be a valid CHC address.")
+            raise ValueError("Change recipient must be a valid Chipcoin address.")
 
         selection = select_inputs(spend_candidates, amount_chipbits + fee_chipbits)
         inputs = tuple(
-            TxInput(previous_output=OutPoint(txid=candidate.txid, index=candidate.index))
+            TxInput(
+                previous_output=OutPoint(txid=candidate.txid, index=candidate.index),
+                sig_scheme_id=self.wallet_key.scheme_id,
+            )
             for candidate in selection.selected
         )
         outputs = [TxOutput(value=ChipbitAmount(amount_chipbits), recipient=recipient)]
@@ -87,7 +128,7 @@ class TransactionSigner:
             )
 
         transaction = Transaction(
-            version=1,
+            version=1 if self.wallet_key.scheme_id == SIG_SCHEME_LEGACY_ECDSA else 2,
             inputs=inputs,
             outputs=tuple(outputs),
             locktime=locktime,
@@ -102,6 +143,7 @@ class TransactionSigner:
                 transaction,
                 input_index,
                 previous_output=TxOutput(value=ChipbitAmount(candidate.amount_chipbits), recipient=candidate.recipient),
+                network=network,
             )
             signature = self.sign(digest)
             signed_inputs.append(
@@ -109,6 +151,7 @@ class TransactionSigner:
                     transaction.inputs[input_index],
                     signature=signature,
                     public_key=self.wallet_key.public_key,
+                    sig_scheme_id=self.wallet_key.scheme_id,
                 )
             )
 

@@ -29,6 +29,10 @@ class WalletKey:
     public_key: bytes
     address: str
     compressed: bool = True
+    scheme_id: int = 0
+    scheme_name: str = "secp256k1-ecdsa"
+    address_kind: str = "legacy"
+    private_seed: bytes | None = None
 
 
 @dataclass(frozen=True)

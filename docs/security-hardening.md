@@ -40,6 +40,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | P2P payload decoding | malformed short payloads could raise low-level decode errors | fixed with explicit bounds checks | keep malformed-frame tests for every typed payload |
 | P2P collection sizes | valid frames could carry excessive decoded collections | fixed with codec and runtime count caps | review caps if protocol inventory/header needs grow |
 | Runtime log amplification | noisy peers can flood startup/sync logs with repetitive benign events | partially fixed with summarized alias logs and quiet mining-status polling | continue reducing low-signal 200 OK logs without hiding errors |
+| Post-quantum transaction support | consensus split, dependency divergence, CPU DoS, or misleading claims before audit | architecture and cheap structural checks added for testnet | pin one ML-DSA-44 backend, freeze vectors, and complete audit before activation |
 
 ## Traceability
 
@@ -62,6 +63,39 @@ Recent hardening commits:
 - `061ac36` and `ded7c35` - quiet successful mining-status polling logs
 - `6abd480` - summarize peer alias cleanup logs
 - `e800c42` - deduplicate duplicate `getdata` inventory requests
+
+## 0a. Post-Quantum Testnet Support
+
+### Finding
+
+Adding CHCQ post-quantum addresses changes UTXO ownership and spending rules.
+It does not change mining, PoW hashes, block hashes, txids, Merkle roots, or
+block format. The security risks are concentrated in address parsing,
+transaction versioning, signature verification, dependency choice, and public
+wording.
+
+### Status
+
+Architecture added for testnet/devnet only:
+
+- `CHCQ` parses before `CHC`
+- CHCQ payload version is fixed at `0x50`
+- CHCQ public-key commitments use `SHA3-256`
+- transaction v1 serialization remains byte-identical
+- transaction v2 carries per-input `sig_scheme_id`
+- v2 signatures include `chipcoin:tx-signature:v2:<network>`
+- ML-DSA-44 public key/signature sizes are checked before verifier calls
+
+### Remaining Work
+
+- Pin one consensus ML-DSA-44 backend across all node builds.
+- Add official FIPS 204 KAT coverage for the selected backend.
+- Freeze v2 transaction/signature vectors before activation.
+- Keep browser PQ signing disabled until CLI CHCQ spends verify on the node
+  backend.
+- Public wording must say "post-quantum support in testnet", "experimental",
+  "not audited yet", and "designed for future quantum-resistance"; do not call
+  this "quantum-proof mainnet".
 
 ## 1. P2P Frame Size Limit
 

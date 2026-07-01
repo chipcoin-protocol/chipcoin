@@ -1,6 +1,19 @@
 import json
 from dataclasses import replace
 
+import pytest
+
+from chipcoin.crypto.addresses import public_key_to_pq_address
+from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
+from chipcoin.crypto.pq.base import SignatureScheme
+from chipcoin.crypto.pq.mldsa import (
+    ML_DSA_44_PUBLIC_KEY_SIZE,
+    ML_DSA_44_SIGNATURE_SIZE,
+    derive_mldsa44_test_keypair,
+    sign_mldsa44_test,
+    verify_mldsa44_test,
+)
+from chipcoin.crypto.pq import schemes as pq_schemes
 from chipcoin.consensus.economics import block_subsidy, subsidy_split_chipbits
 from chipcoin.consensus.economics import renew_reward_node_fee_chipbits, register_reward_node_fee_chipbits
 from chipcoin.consensus.epoch_settlement import (
@@ -1168,3 +1181,172 @@ def test_validate_transaction_rejects_invalid_signature() -> None:
     )
 
     _expect_raises(ContextualValidationError, lambda: validate_transaction(invalid_transaction, context))
+
+
+def _install_mldsa44_test_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        pq_schemes._SCHEMES,  # type: ignore[attr-defined]
+        SIG_SCHEME_ML_DSA_44,
+        SignatureScheme(
+            scheme_id=SIG_SCHEME_ML_DSA_44,
+            name="mldsa44-test",
+            public_key_size=ML_DSA_44_PUBLIC_KEY_SIZE,
+            signature_size=ML_DSA_44_SIGNATURE_SIZE,
+            supports_sign=True,
+            supports_verify=True,
+            supports_addresses=True,
+            activated=True,
+            signer=sign_mldsa44_test,
+            verifier=verify_mldsa44_test,
+            key_deriver=derive_mldsa44_test_keypair,
+        ),
+    )
+
+
+def _signed_pq_spend(
+    *,
+    previous_outpoint: OutPoint,
+    previous_value: int = 100,
+    fee: int = 10,
+    network: str = "testnet",
+    seed: bytes = b"\x7a" * 32,
+    override_public_key: bytes | None = None,
+    override_signature: bytes | None = None,
+    override_scheme_id: int = SIG_SCHEME_ML_DSA_44,
+) -> tuple[Transaction, str, bytes, bytes]:
+    private_seed, public_key = derive_mldsa44_test_keypair(seed)
+    address = public_key_to_pq_address(public_key, scheme_id=SIG_SCHEME_ML_DSA_44)
+    recipient = wallet_key(1).address
+    unsigned = Transaction(
+        version=2,
+        inputs=(TxInput(previous_output=previous_outpoint, sig_scheme_id=override_scheme_id),),
+        outputs=(TxOutput(value=previous_value - fee, recipient=recipient),),
+        metadata={"kind": "payment"},
+    )
+    digest = transaction_signature_digest(
+        unsigned,
+        0,
+        previous_output=TxOutput(value=previous_value, recipient=address),
+        network=network,
+    )
+    signature = sign_mldsa44_test(private_seed, digest)
+    signed = replace(
+        unsigned,
+        inputs=(
+            TxInput(
+                previous_output=previous_outpoint,
+                signature=signature if override_signature is None else override_signature,
+                public_key=public_key if override_public_key is None else override_public_key,
+                sig_scheme_id=override_scheme_id,
+            ),
+        ),
+    )
+    return signed, address, public_key, signature
+
+
+def test_validate_transaction_accepts_valid_mldsa44_pq_spend(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mldsa44_test_scheme(monkeypatch)
+    previous_outpoint = OutPoint(txid="aa" * 32, index=0)
+    transaction, address, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint)
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
+    )
+    context = ValidationContext(
+        height=120_000,
+        median_time_past=0,
+        params=MAINNET_PARAMS,
+        utxo_view=utxo_view,
+        network="testnet",
+    )
+
+    assert validate_transaction(transaction, context) == 10
+
+
+def test_validate_transaction_rejects_chcq_spend_before_activation(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mldsa44_test_scheme(monkeypatch)
+    previous_outpoint = OutPoint(txid="ab" * 32, index=0)
+    transaction, address, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint)
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
+    )
+    context = ValidationContext(
+        height=119_999,
+        median_time_past=0,
+        params=MAINNET_PARAMS,
+        utxo_view=utxo_view,
+        network="testnet",
+    )
+
+    _expect_raises(ContextualValidationError, lambda: validate_transaction(transaction, context))
+
+
+def test_validate_transaction_rejects_unknown_signature_scheme() -> None:
+    previous_outpoint = OutPoint(txid="ac" * 32, index=0)
+    transaction, address, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint, override_scheme_id=99)
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
+    )
+    context = ValidationContext(
+        height=120_000,
+        median_time_past=0,
+        params=MAINNET_PARAMS,
+        utxo_view=utxo_view,
+        network="testnet",
+    )
+
+    _expect_raises(StatelessValidationError, lambda: validate_transaction(transaction, context))
+
+
+def test_validate_transaction_rejects_wrong_mldsa44_public_key_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mldsa44_test_scheme(monkeypatch)
+    previous_outpoint = OutPoint(txid="ad" * 32, index=0)
+    transaction, address, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint, override_public_key=b"\x01" * 1311)
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
+    )
+    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+
+    _expect_raises(ContextualValidationError, lambda: validate_transaction(transaction, context))
+
+
+def test_validate_transaction_rejects_wrong_mldsa44_signature_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mldsa44_test_scheme(monkeypatch)
+    previous_outpoint = OutPoint(txid="ae" * 32, index=0)
+    transaction, address, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint, override_signature=b"\x01" * 2419)
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
+    )
+    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+
+    _expect_raises(ContextualValidationError, lambda: validate_transaction(transaction, context))
+
+
+def test_validate_transaction_rejects_pq_commitment_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mldsa44_test_scheme(monkeypatch)
+    previous_outpoint = OutPoint(txid="af" * 32, index=0)
+    transaction, _, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint)
+    wrong_address = public_key_to_pq_address(b"\x55" * ML_DSA_44_PUBLIC_KEY_SIZE, scheme_id=SIG_SCHEME_ML_DSA_44)
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=wrong_address), height=1, is_coinbase=False))]
+    )
+    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+
+    _expect_raises(ContextualValidationError, lambda: validate_transaction(transaction, context))
+
+
+def test_validate_block_rejects_invalid_pq_spend(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mldsa44_test_scheme(monkeypatch)
+    previous_outpoint = OutPoint(txid="ba" * 32, index=0)
+    transaction, address, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint, override_signature=b"\x00" * ML_DSA_44_SIGNATURE_SIZE)
+    coinbase = _coinbase_transaction(50, recipient=wallet_key(2).address)
+    merkle = merkle_root([coinbase.txid(), transaction.txid()])
+    block = Block(
+        header=_mine_easy_header("00" * 32, merkle),
+        transactions=(coinbase, transaction),
+    )
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
+    )
+    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+
+    _expect_raises(ContextualValidationError, lambda: validate_block(block, context))

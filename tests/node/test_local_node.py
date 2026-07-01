@@ -19,7 +19,9 @@ from chipcoin.consensus.validation import (
     transaction_signature_digest,
 )
 from chipcoin.consensus.utxo import InMemoryUtxoView
+from chipcoin.crypto.addresses import public_key_to_pq_address
 from chipcoin.crypto.keys import parse_private_key_hex
+from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.crypto.signatures import sign_digest
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
@@ -3664,6 +3666,44 @@ def test_node_service_rejects_transaction_with_invalid_output_address_by_policy(
             assert "valid CHC address" in str(exc)
             return
         raise AssertionError("Expected invalid output address to be rejected by mempool policy.")
+
+
+def test_mempool_rejects_chcq_output_before_activation() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="testnet")
+        owner = wallet_key(0)
+        funding_outpoint = OutPoint(txid="9a" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=100, owner=owner)
+        pq_recipient = public_key_to_pq_address(b"\x77" * 1312, scheme_id=SIG_SCHEME_ML_DSA_44)
+        unsigned = Transaction(
+            version=1,
+            inputs=(TxInput(previous_output=funding_outpoint),),
+            outputs=(TxOutput(value=90, recipient=pq_recipient),),
+            metadata={"kind": "payment"},
+        )
+        digest = transaction_signature_digest(
+            unsigned,
+            0,
+            previous_output=TxOutput(value=100, recipient=owner.address),
+            network=service.network,
+        )
+        signed = replace(
+            unsigned,
+            inputs=(
+                replace(
+                    unsigned.inputs[0],
+                    signature=sign_digest(owner.private_key, digest),
+                    public_key=owner.public_key,
+                ),
+            ),
+        )
+
+        try:
+            service.receive_transaction(signed)
+        except ValidationError as exc:
+            assert "CHCQ outputs are not active" in str(exc)
+            return
+        raise AssertionError("Expected pre-activation CHCQ output to be rejected by mempool validation.")
 
 
 def test_mempool_eviction_prefers_higher_fee_transactions() -> None:

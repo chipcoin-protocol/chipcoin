@@ -25,6 +25,7 @@ class TxInput:
     signature: bytes = b""
     public_key: bytes = b""
     sequence: int = 0xFFFFFFFF
+    sig_scheme_id: int = 0
 
 
 @dataclass(frozen=True)

@@ -514,6 +514,16 @@ chipcoin wallet-generate --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet
 chipcoin wallet-address --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
 ```
 
+Experimental post-quantum testnet wallets use explicit opt-in only:
+
+```bash
+chipcoin wallet-generate --scheme mldsa44 --wallet-file /var/lib/chipcoin/wallets/chipcoin-pq-wallet.json
+```
+
+CHCQ support is experimental, not audited yet, and designed for future
+quantum-resistance. Do not describe it as quantum-proof mainnet. A pinned
+ML-DSA-44 consensus backend and frozen vectors are required before activation.
+
 ### Start The Stack
 
 Node only:

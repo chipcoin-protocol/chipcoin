@@ -218,6 +218,31 @@ Validation rules:
 - the ECDSA signature must verify against the canonical digest
 - any mutation of outputs, metadata, previous-output binding, or input ordering invalidates the signature
 
+## Post-Quantum Testnet Addresses
+
+Chipcoin also defines an experimental post-quantum UTXO ownership path for
+testnet/devnet under the `CHCQ` address prefix. This does not change PoW,
+block hashes, txids, Merkle roots, block format, or mining consensus.
+
+CHCQ addresses use:
+
+```text
+CHCQ + Base58Check(0x50 || scheme_id:uint8 || SHA3-256(raw_pq_public_key))
+```
+
+Address parsing is longest-prefix-first: `CHCQ` before `CHC`.
+
+Transaction version `1` remains byte-identical. Transaction version `2` adds a
+per-input `sig_scheme_id:uint8` before the input signature/public key fields.
+The v2 signature digest includes:
+
+```text
+chipcoin:tx-signature:v2:<network>
+```
+
+See `docs/post-quantum-addresses.md` for the scheme registry, activation
+heights, backend policy, and required frozen test vectors.
+
 Wallets keep private keys off-node. Nodes only receive signed transactions and verify them during mempool admission and block validation.
 
 ## Validity vs Policy

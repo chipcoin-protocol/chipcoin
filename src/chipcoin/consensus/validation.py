@@ -7,7 +7,10 @@ import logging
 from dataclasses import dataclass, field
 from string import hexdigits
 
-from ..crypto.addresses import public_key_to_address
+from ..crypto.addresses import parse_address, pq_public_key_commitment, public_key_to_address
+from ..crypto.addresses import PQ_ADDRESS_PREFIX
+from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, get_signature_scheme, is_known_signature_scheme
+from ..crypto.pq.mldsa import MLDsaBackendUnavailable
 from ..crypto.signatures import verify_digest
 from .epoch_settlement import (
     REWARD_ATTESTATION_BUNDLE_KIND,
@@ -53,12 +56,16 @@ from .nodes import (
     validate_special_node_transaction_stateless,
 )
 from .params import ConsensusParams, MAINNET_PARAMS
+from .pq_activation import PQ_TRANSACTION_VERSION, pq_support_is_active
 from .pow import bits_to_target, verify_proof_of_work
 from .serialization import serialize_transaction, serialize_transaction_for_signing
 from .utxo import UtxoView
 
 
 LOGGER = logging.getLogger(__name__)
+
+MAX_TRANSACTION_PUBLIC_KEY_BYTES = 4096
+MAX_TRANSACTION_SIGNATURE_BYTES = 8192
 
 
 class ValidationError(Exception):
@@ -154,6 +161,16 @@ def validate_transaction_stateless(transaction: Transaction) -> None:
         if tx_input.previous_output in seen_outpoints:
             raise StatelessValidationError("Transaction cannot spend the same outpoint twice.")
         seen_outpoints.add(tx_input.previous_output)
+        if tx_input.sig_scheme_id < 0 or tx_input.sig_scheme_id > 0xFF:
+            raise StatelessValidationError("Signature scheme id must fit in one byte.")
+        if transaction.version == 1 and tx_input.sig_scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+            raise StatelessValidationError("Transaction v1 inputs cannot declare non-legacy signature schemes.")
+        if transaction.version >= PQ_TRANSACTION_VERSION and not is_known_signature_scheme(tx_input.sig_scheme_id):
+            raise StatelessValidationError("Transaction input declares an unknown signature scheme.")
+        if len(tx_input.public_key) > MAX_TRANSACTION_PUBLIC_KEY_BYTES:
+            raise StatelessValidationError("Transaction input public key exceeds maximum size.")
+        if len(tx_input.signature) > MAX_TRANSACTION_SIGNATURE_BYTES:
+            raise StatelessValidationError("Transaction input signature exceeds maximum size.")
         if not tx_input.signature:
             raise StatelessValidationError("Non-coinbase inputs must include a signature.")
         if not tx_input.public_key:
@@ -162,6 +179,8 @@ def validate_transaction_stateless(transaction: Transaction) -> None:
 
 def validate_transaction_stateful(transaction: Transaction, context: ValidationContext) -> int:
     """Validate a transaction against current UTXO state and return its fee."""
+
+    _validate_transaction_outputs_for_activation(transaction, context)
 
     if is_coinbase_transaction(transaction):
         return 0
@@ -182,15 +201,7 @@ def validate_transaction_stateful(transaction: Transaction, context: ValidationC
             raise ContextualValidationError("Referenced input does not exist in the UTXO set.")
         if context.enforce_coinbase_maturity and not is_coinbase_mature(entry, context.height, context.params):
             raise ContextualValidationError("Coinbase output is not mature enough to spend.")
-        try:
-            derived_recipient = public_key_to_address(tx_input.public_key)
-        except ValueError as exc:
-            raise ContextualValidationError("Input public key is not a valid secp256k1 public key.") from exc
-        if derived_recipient != entry.output.recipient:
-            raise ContextualValidationError("Input public key does not match the referenced output recipient.")
-        digest = transaction_signature_digest(transaction, input_index, previous_output=entry.output)
-        if not verify_digest(tx_input.public_key, digest, tx_input.signature):
-            raise ContextualValidationError("Input signature is invalid.")
+        _validate_standard_input_signature(transaction, input_index, tx_input, entry.output, context)
         input_total_chipbits += int(entry.output.value)
 
     output_total_chipbits = transaction_output_total(transaction)
@@ -352,7 +363,13 @@ def block_weight_units(block: Block) -> int:
     return sum(transaction_weight_units(transaction) for transaction in block.transactions)
 
 
-def transaction_signature_digest(transaction: Transaction, input_index: int, *, previous_output: TxOutput) -> bytes:
+def transaction_signature_digest(
+    transaction: Transaction,
+    input_index: int,
+    *,
+    previous_output: TxOutput,
+    network: str = "mainnet",
+) -> bytes:
     """Return the digest that must be signed for one transaction input."""
 
     return double_sha256(
@@ -361,8 +378,99 @@ def transaction_signature_digest(transaction: Transaction, input_index: int, *, 
             input_index,
             previous_output_value=int(previous_output.value),
             previous_output_recipient=previous_output.recipient,
+            network=network,
         )
     )
+
+
+def _validate_transaction_outputs_for_activation(transaction: Transaction, context: ValidationContext) -> None:
+    """Reject CHCQ outputs before activation."""
+
+    for output in transaction.outputs:
+        if not output.recipient.startswith(PQ_ADDRESS_PREFIX):
+            continue
+        try:
+            info = parse_address(output.recipient)
+        except ValueError as exc:
+            raise ContextualValidationError("Transaction output recipient is not a valid CHCQ address.") from exc
+        if info.kind == "pq" and not pq_support_is_active(network=context.network, height=context.height):
+            raise ContextualValidationError("CHCQ outputs are not active on this network at this height.")
+
+
+def _validate_standard_input_signature(
+    transaction: Transaction,
+    input_index: int,
+    tx_input,
+    previous_output: TxOutput,
+    context: ValidationContext,
+) -> None:
+    """Validate one standard UTXO spend signature using cheap checks first."""
+
+    try:
+        address_info = parse_address(previous_output.recipient)
+    except ValueError as exc:
+        raise ContextualValidationError("Referenced output recipient is not a valid Chipcoin address.") from exc
+
+    if transaction.version == 1:
+        if address_info.kind != "legacy":
+            raise ContextualValidationError("Transaction v1 cannot spend CHCQ outputs.")
+        if tx_input.sig_scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+            raise ContextualValidationError("Transaction v1 inputs must use the legacy signature scheme.")
+        _validate_legacy_input_signature(transaction, input_index, tx_input, previous_output, context)
+        return
+
+    if transaction.version >= PQ_TRANSACTION_VERSION and not pq_support_is_active(network=context.network, height=context.height):
+        raise ContextualValidationError("Transaction v2 wallet spends are not active on this network at this height.")
+
+    if address_info.kind == "legacy":
+        if tx_input.sig_scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+            raise ContextualValidationError("CHC spends must use the legacy signature scheme.")
+        _validate_legacy_input_signature(transaction, input_index, tx_input, previous_output, context)
+        return
+
+    if not pq_support_is_active(network=context.network, height=context.height):
+        raise ContextualValidationError("CHCQ spends are not active on this network at this height.")
+    if tx_input.sig_scheme_id != address_info.scheme_id:
+        raise ContextualValidationError("Input signature scheme does not match the CHCQ address.")
+    try:
+        scheme = get_signature_scheme(tx_input.sig_scheme_id)
+    except ValueError as exc:
+        raise ContextualValidationError("Input signature scheme is unknown.") from exc
+    if not scheme.activated or not scheme.supports_verify or scheme.verifier is None:
+        raise ContextualValidationError("Input signature scheme is not verification-capable.")
+    if scheme.public_key_size is None or scheme.signature_size is None:
+        raise ContextualValidationError("Input signature scheme has no fixed consensus sizes.")
+    if len(tx_input.public_key) != scheme.public_key_size:
+        raise ContextualValidationError("Input public key has the wrong size for its signature scheme.")
+    if len(tx_input.signature) != scheme.signature_size:
+        raise ContextualValidationError("Input signature has the wrong size for its signature scheme.")
+    if pq_public_key_commitment(tx_input.public_key) != address_info.hash_or_commitment:
+        raise ContextualValidationError("Input public key does not match the CHCQ commitment.")
+    digest = transaction_signature_digest(transaction, input_index, previous_output=previous_output, network=context.network)
+    try:
+        verified = scheme.verify(tx_input.public_key, digest, tx_input.signature)
+    except MLDsaBackendUnavailable as exc:
+        raise ContextualValidationError("Input signature scheme backend is unavailable.") from exc
+    if not verified:
+        raise ContextualValidationError("Input signature is invalid.")
+
+
+def _validate_legacy_input_signature(
+    transaction: Transaction,
+    input_index: int,
+    tx_input,
+    previous_output: TxOutput,
+    context: ValidationContext,
+) -> None:
+    try:
+        derived_recipient = public_key_to_address(tx_input.public_key)
+    except ValueError as exc:
+        raise ContextualValidationError("Input public key is not a valid secp256k1 public key.") from exc
+    if derived_recipient != previous_output.recipient:
+        raise ContextualValidationError("Input public key does not match the referenced output recipient.")
+    digest = transaction_signature_digest(transaction, input_index, previous_output=previous_output, network=context.network)
+    if not verify_digest(tx_input.public_key, digest, tx_input.signature):
+        raise ContextualValidationError("Input signature is invalid.")
 
 
 def _validate_coinbase_distribution(

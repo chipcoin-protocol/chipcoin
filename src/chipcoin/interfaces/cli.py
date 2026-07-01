@@ -22,6 +22,7 @@ from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
 from ..crypto.addresses import is_valid_address
 from ..crypto.keys import parse_private_key_hex, serialize_private_key_hex, serialize_public_key_hex
+from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44
 from ..miner.config import MinerWorkerConfig
 from ..miner.worker import MinerWorker
 from ..node.messages import MessageEnvelope, TransactionMessage
@@ -38,7 +39,7 @@ from ..node.snapshots import (
 )
 from ..node.sync import SyncManager
 from ..wallet.models import WalletKey
-from ..wallet.signer import TransactionSigner, generate_wallet_key, wallet_key_from_private_key
+from ..wallet.signer import TransactionSigner, generate_wallet_key, wallet_key_from_mldsa44_seed, wallet_key_from_private_key
 from .presenters import format_amount_chc, format_tip, format_transaction_lookup
 
 
@@ -513,7 +514,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "wallet-generate":
-            wallet_key = generate_wallet_key()
+            if args.scheme == "mldsa44":
+                _print_warning("Post-quantum support is experimental on testnet until audited.")
+            wallet_key = generate_wallet_key(scheme=args.scheme)
             _save_wallet_key(Path(args.wallet_file), wallet_key)
             _warn_wallet_private_key_output("wallet-generate")
             _print_json(_format_wallet_private_key(wallet_key))
@@ -925,6 +928,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     wallet_generate = subparsers.add_parser("wallet-generate")
     wallet_generate.add_argument("--wallet-file", required=True)
+    wallet_generate.add_argument("--scheme", choices=("secp256k1", "mldsa44"), default="secp256k1")
 
     wallet_import = subparsers.add_parser("wallet-import")
     wallet_import.add_argument("--wallet-file", required=True)
@@ -1539,11 +1543,23 @@ def _save_wallet_key(path: Path, wallet_key: WalletKey) -> None:
     """Persist a minimal wallet key file."""
 
     payload = {
-        "private_key_hex": serialize_private_key_hex(wallet_key.private_key),
-        "public_key_hex": serialize_public_key_hex(wallet_key.public_key),
+        "scheme_id": wallet_key.scheme_id,
+        "scheme_name": wallet_key.scheme_name,
+        "address_kind": wallet_key.address_kind,
         "address": wallet_key.address,
-        "compressed": wallet_key.compressed,
+        "public_key_hex": (
+            serialize_public_key_hex(wallet_key.public_key)
+            if wallet_key.scheme_id == SIG_SCHEME_LEGACY_ECDSA
+            else wallet_key.public_key.hex()
+        ),
     }
+    if wallet_key.scheme_id == SIG_SCHEME_ML_DSA_44:
+        if wallet_key.private_seed is None:
+            raise ValueError("PQ wallet files require canonical private_seed_hex material.")
+        payload["private_seed_hex"] = wallet_key.private_seed.hex()
+    else:
+        payload["private_key_hex"] = serialize_private_key_hex(wallet_key.private_key)
+        payload["compressed"] = wallet_key.compressed
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     try:
@@ -1560,6 +1576,18 @@ def _load_wallet_key(path: Path) -> WalletKey:
     """Load and validate a minimal wallet key file."""
 
     payload = json.loads(path.read_text(encoding="utf-8"))
+    scheme_id = int(payload.get("scheme_id", SIG_SCHEME_LEGACY_ECDSA))
+    if scheme_id == SIG_SCHEME_ML_DSA_44:
+        wallet_key = wallet_key_from_mldsa44_seed(bytes.fromhex(str(payload["private_seed_hex"])))
+        stored_public_key_hex = payload.get("public_key_hex")
+        stored_address = payload.get("address")
+        if stored_public_key_hex is not None and stored_public_key_hex != wallet_key.public_key.hex():
+            raise ValueError("Wallet file public key does not match the stored private seed.")
+        if stored_address is not None and stored_address != wallet_key.address:
+            raise ValueError("Wallet file address does not match the stored private seed.")
+        return wallet_key
+    if scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+        raise ValueError(f"Unsupported wallet signature scheme id: {scheme_id}")
     wallet_key = wallet_key_from_private_key(
         parse_private_key_hex(str(payload["private_key_hex"])),
         compressed=bool(payload.get("compressed", True)),
@@ -1577,7 +1605,14 @@ def _format_wallet_public_key(wallet_key: WalletKey) -> dict[str, str | bool]:
     """Convert a wallet key to public CLI/HTTP-friendly text values."""
 
     return {
-        "public_key_hex": serialize_public_key_hex(wallet_key.public_key),
+        "scheme_id": wallet_key.scheme_id,
+        "scheme_name": wallet_key.scheme_name,
+        "address_kind": wallet_key.address_kind,
+        "public_key_hex": (
+            serialize_public_key_hex(wallet_key.public_key)
+            if wallet_key.scheme_id == SIG_SCHEME_LEGACY_ECDSA
+            else wallet_key.public_key.hex()
+        ),
         "address": wallet_key.address,
         "compressed": wallet_key.compressed,
     }
@@ -1587,6 +1622,10 @@ def _format_wallet_private_key(wallet_key: WalletKey) -> dict[str, str | bool]:
     """Convert a wallet key to CLI text values including private key material."""
 
     payload = _format_wallet_public_key(wallet_key)
+    if wallet_key.scheme_id == SIG_SCHEME_ML_DSA_44:
+        if wallet_key.private_seed is None:
+            raise ValueError("PQ wallet key is missing private seed material.")
+        return {"private_seed_hex": wallet_key.private_seed.hex(), **payload}
     return {"private_key_hex": serialize_private_key_hex(wallet_key.private_key), **payload}
 
 
@@ -1594,7 +1633,7 @@ def _warn_wallet_private_key_output(command: str) -> None:
     """Warn operators when a wallet command prints private key material."""
 
     _print_warning(
-        f"{command} output includes private_key_hex. Treat it as secret key material and avoid pasting it into logs."
+        f"{command} output includes private_key_hex or private_seed_hex. Treat it as secret key material and avoid pasting it into logs."
     )
 
 
@@ -1798,6 +1837,7 @@ def _build_wallet_transaction(service: NodeService, wallet_key: WalletKey, args)
         fee_chipbits=args.fee,
         change_recipient=args.change_address,
         metadata={"kind": "payment"},
+        network=service.network,
     )
 
 
