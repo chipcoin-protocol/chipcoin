@@ -144,8 +144,8 @@ Current constants:
 
 ```text
 mainnet: 0
-devnet:  120000
-testnet: 120000
+devnet:  30000
+testnet: 30000
 ```
 
 Before activation:

@@ -1252,7 +1252,7 @@ def test_validate_transaction_accepts_valid_mldsa44_pq_spend(monkeypatch: pytest
         [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
     )
     context = ValidationContext(
-        height=120_000,
+        height=30_000,
         median_time_past=0,
         params=MAINNET_PARAMS,
         utxo_view=utxo_view,
@@ -1270,7 +1270,7 @@ def test_validate_transaction_rejects_chcq_spend_before_activation(monkeypatch: 
         [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
     )
     context = ValidationContext(
-        height=119_999,
+        height=29_999,
         median_time_past=0,
         params=MAINNET_PARAMS,
         utxo_view=utxo_view,
@@ -1287,7 +1287,7 @@ def test_validate_transaction_rejects_unknown_signature_scheme() -> None:
         [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
     )
     context = ValidationContext(
-        height=120_000,
+        height=30_000,
         median_time_past=0,
         params=MAINNET_PARAMS,
         utxo_view=utxo_view,
@@ -1304,7 +1304,7 @@ def test_validate_transaction_rejects_wrong_mldsa44_public_key_size(monkeypatch:
     utxo_view = InMemoryUtxoView.from_entries(
         [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
     )
-    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+    context = ValidationContext(height=30_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
 
     _expect_raises(ContextualValidationError, lambda: validate_transaction(transaction, context))
 
@@ -1316,7 +1316,7 @@ def test_validate_transaction_rejects_wrong_mldsa44_signature_size(monkeypatch: 
     utxo_view = InMemoryUtxoView.from_entries(
         [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
     )
-    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+    context = ValidationContext(height=30_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
 
     _expect_raises(ContextualValidationError, lambda: validate_transaction(transaction, context))
 
@@ -1329,7 +1329,7 @@ def test_validate_transaction_rejects_pq_commitment_mismatch(monkeypatch: pytest
     utxo_view = InMemoryUtxoView.from_entries(
         [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=wrong_address), height=1, is_coinbase=False))]
     )
-    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+    context = ValidationContext(height=30_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
 
     _expect_raises(ContextualValidationError, lambda: validate_transaction(transaction, context))
 
@@ -1347,6 +1347,6 @@ def test_validate_block_rejects_invalid_pq_spend(monkeypatch: pytest.MonkeyPatch
     utxo_view = InMemoryUtxoView.from_entries(
         [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
     )
-    context = ValidationContext(height=120_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
+    context = ValidationContext(height=30_000, median_time_past=0, params=MAINNET_PARAMS, utxo_view=utxo_view, network="testnet")
 
     _expect_raises(ContextualValidationError, lambda: validate_block(block, context))

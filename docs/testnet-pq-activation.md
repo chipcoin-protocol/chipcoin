@@ -12,8 +12,8 @@ src/chipcoin/consensus/pq_activation.py
 Current scheduled heights:
 
 ```text
-devnet:  120000
-testnet: 120000
+devnet:  30000
+testnet: 30000
 mainnet: 0 for future genesis support
 ```
 
