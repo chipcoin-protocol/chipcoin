@@ -190,6 +190,8 @@ def main() -> int:
     env_values = dict(DEFAULTS)
     _apply_network_defaults(env_values, network)
     _apply_setup_mode(env_values, setup_mode, role, network=network)
+    if role in {"miner", "both"}:
+        _configure_miner_workers(env_values)
     if role in {"node", "both"}:
         _configure_node_discovery(env_values, setup_mode=setup_mode)
         _configure_node_bootstrap(env_values, setup_mode=setup_mode)
@@ -359,6 +361,39 @@ def _ask_port(prompt: str, default: str) -> str:
         if answer.isdigit() and 1 <= int(answer) <= 65535:
             return answer
         print("Invalid port. Expected an integer between 1 and 65535.")
+
+
+def _detect_cpu_core_count() -> int:
+    """Return the best local CPU core count hint for miner worker selection."""
+
+    detected = os.cpu_count()
+    if detected is None or detected < 1:
+        return 1
+    return detected
+
+
+def _ask_miner_worker_count(*, detected_cores: int, default: str = "1") -> str:
+    """Ask how many local mining worker processes should be used."""
+
+    max_workers = max(1, detected_cores)
+    while True:
+        answer = input(
+            "How many CPU cores should the miner use? "
+            f"Detected {max_workers}. [{default}]: "
+        ).strip()
+        candidate = default if not answer else answer
+        if candidate.isdigit() and 1 <= int(candidate) <= max_workers:
+            return str(int(candidate))
+        print(f"Invalid worker count. Enter an integer between 1 and {max_workers}.")
+
+
+def _configure_miner_workers(env_values: dict[str, str]) -> None:
+    """Configure local miner process parallelism."""
+
+    env_values["MINING_WORKER_COUNT"] = _ask_miner_worker_count(
+        detected_cores=_detect_cpu_core_count(),
+        default=env_values.get("MINING_WORKER_COUNT", "1"),
+    )
 
 
 def _looks_public_host(host: str) -> bool:
@@ -922,6 +957,10 @@ def _preflight_validate(env_values: dict[str, str], *, role: str) -> None:
                 _die(f"REWARD_NODE_AUTO_DECLARED_PORT must be a valid TCP port: {declared_port}")
     if role in {"miner", "both"} and not env_values.get("MINING_NODE_URLS", "").strip():
         _die("Miner mode requires at least one mining node endpoint.")
+    if role in {"miner", "both"}:
+        worker_count = env_values.get("MINING_WORKER_COUNT", "1").strip()
+        if not worker_count.isdigit() or int(worker_count) < 1:
+            _die(f"MINING_WORKER_COUNT must be a positive integer: {worker_count}")
 
 
 def _prepare_node_bootstrap(env_values: dict[str, str], *, network: str) -> list[str]:

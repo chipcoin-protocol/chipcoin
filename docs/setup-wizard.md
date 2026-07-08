@@ -55,6 +55,7 @@ This mode uses public testnet defaults:
 - explorer status API: `https://explorer.chipcoinprotocol.com/api/testnet/v1/status`
 - miner minimum block interval: `10.0` seconds
 - miner nonce batch size: `50000`
+- miner worker count: `1` by default
 
 This is the shortest path if you want to connect quickly to the public testnet
 candidate. Public testnet endpoints are provided for convenience and may change
@@ -195,6 +196,11 @@ If you run `miner` or `both`, the wizard also offers:
 
 The wallet file is written to the configured runtime directory, not intended for version control.
 
+The wizard also detects the local CPU core count and asks how many cores the
+miner should use. The default is `1`; choosing a higher value writes
+`MINING_WORKER_COUNT` and lets one miner container run multiple local mining
+worker processes.
+
 If you run `node` or `both`, the wizard now also asks whether the node should be:
 
 - a passive full node
@@ -241,6 +247,7 @@ Wizard defaults by operator mode:
   - node uses public testnet bootstrap discovery
   - miner uses `http://node:28081`
   - miner uses conservative public-testnet defaults to avoid one-to-two-second block production
+  - miner uses one CPU core unless you choose a higher worker count
 - miner-only host
   - miner must use a private/full node API, not `https://testnet-api.chipcoinprotocol.com`
 - local/self-hosted node + miner

@@ -115,6 +115,47 @@ def test_devnet_env_path_defaults_to_dedicated_legacy_env_file(monkeypatch) -> N
     assert env_path == REPO_ROOT / ".env.devnet"
 
 
+def test_detect_cpu_core_count_falls_back_to_one(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard.os, "cpu_count", lambda: None)
+
+    assert wizard._detect_cpu_core_count() == 1
+
+
+def test_configure_miner_workers_defaults_to_one(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    monkeypatch.setattr(wizard, "_detect_cpu_core_count", lambda: 8)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+
+    wizard._configure_miner_workers(env_values)
+
+    assert env_values["MINING_WORKER_COUNT"] == "1"
+
+
+def test_configure_miner_workers_accepts_multicore_choice(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    monkeypatch.setattr(wizard, "_detect_cpu_core_count", lambda: 8)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "4")
+
+    wizard._configure_miner_workers(env_values)
+
+    assert env_values["MINING_WORKER_COUNT"] == "4"
+
+
+def test_configure_miner_workers_retries_above_detected_cores(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    answers = iter(["9", "2"])
+    monkeypatch.setattr(wizard, "_detect_cpu_core_count", lambda: 4)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    wizard._configure_miner_workers(env_values)
+
+    assert env_values["MINING_WORKER_COUNT"] == "2"
+
+
 def test_write_env_supports_dedicated_testnet_env_file(monkeypatch) -> None:
     wizard = load_wizard_module()
     with TemporaryDirectory() as tempdir:
@@ -343,6 +384,19 @@ def test_prepare_runtime_files_skips_node_db_for_miner_only() -> None:
         wizard._prepare_runtime_files(env_values, role="miner")
 
         assert node_data_path.exists() is False
+
+
+def test_preflight_rejects_invalid_miner_worker_count() -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    env_values["MINING_WORKER_COUNT"] = "0"
+
+    try:
+        wizard._preflight_validate(env_values, role="miner")
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("Expected invalid worker count to abort preflight.")
 
 
 def test_prepare_runtime_files_creates_node_db_for_node_role() -> None:
