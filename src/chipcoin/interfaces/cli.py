@@ -819,6 +819,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mine_parser.add_argument("--polling-interval-seconds", type=float, default=2.0)
     mine_parser.add_argument("--request-timeout-seconds", type=float, default=10.0)
     mine_parser.add_argument("--nonce-batch-size", type=int, default=250000)
+    mine_parser.add_argument("--worker-count", type=int, default=1, help="Number of local mining worker processes.")
     mine_parser.add_argument("--template-refresh-skew-seconds", type=int, default=1)
     mine_parser.add_argument(
         "--mining-min-interval-seconds",
@@ -1388,6 +1389,7 @@ def _run_miner_worker(args) -> dict[str, object]:
         polling_interval_seconds=float(args.polling_interval_seconds),
         request_timeout_seconds=float(args.request_timeout_seconds),
         nonce_batch_size=int(args.nonce_batch_size),
+        worker_count=int(args.worker_count),
         template_refresh_skew_seconds=int(args.template_refresh_skew_seconds),
         mining_min_interval_seconds=float(args.mining_min_interval_seconds),
         run_seconds=args.run_seconds,

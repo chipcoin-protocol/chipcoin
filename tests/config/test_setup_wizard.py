@@ -89,6 +89,7 @@ def test_testnet_network_defaults_use_public_testnet_bootstrap_and_snapshot() ->
     assert env_values["NODE_HTTP_PUBLISH_HOST"] == "127.0.0.1"
     assert env_values["MINING_MIN_INTERVAL_SECONDS"] == "10.0"
     assert env_values["MINING_NONCE_BATCH_SIZE"] == "50000"
+    assert env_values["MINING_WORKER_COUNT"] == "1"
     assert env_values["DEFAULT_BOOTSTRAP_PEER"] == "chipcoinprotocol.com:28444"
     assert env_values["NODE_BOOTSTRAP_URL"] == "https://bootstrap.chipcoinprotocol.com"
     assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
@@ -238,6 +239,7 @@ def test_env_examples_expose_service_specific_discovery_defaults() -> None:
         assert "NODE_HTTP_BIND_PORT=28081" in content
         assert "MINING_MIN_INTERVAL_SECONDS=10.0" in content
         assert "MINING_NONCE_BATCH_SIZE=50000" in content
+        assert "MINING_WORKER_COUNT=1" in content
         assert "BOOTSTRAP_ANNOUNCE_ENABLED=" in content
         assert "NODE_PUBLIC_HOST=" in content
         assert "NODE_PUBLIC_P2P_PORT=" in content

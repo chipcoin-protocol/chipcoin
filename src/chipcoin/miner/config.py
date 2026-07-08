@@ -19,4 +19,4 @@ class MinerWorkerConfig:
     template_refresh_skew_seconds: int = 1
     mining_min_interval_seconds: float = 0.0
     run_seconds: float | None = None
-
+    worker_count: int = 1

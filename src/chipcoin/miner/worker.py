@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -35,6 +36,80 @@ class TemplateRefreshDecision:
     details: dict[str, object]
 
 
+def _build_coinbase_from_template(template_payload: dict[str, Any], *, miner_id: str, extra_nonce: int) -> Transaction:
+    """Construct one coinbase transaction for a template/extra-nonce pair."""
+
+    return Transaction(
+        version=1,
+        inputs=(),
+        outputs=(
+            TxOutput(
+                value=int(template_payload["coinbase_value_chipbits"]),
+                recipient=str(template_payload["payout_address"]),
+            ),
+            *tuple(
+                TxOutput(
+                    value=int(output["amount_chipbits"]),
+                    recipient=str(output["recipient"]),
+                )
+                for output in template_payload["node_reward_outputs"]
+            ),
+        ),
+        metadata={
+            "coinbase": "true",
+            "height": str(template_payload["height"]),
+            "extra_nonce": str(extra_nonce),
+            "miner_id": miner_id,
+        },
+    )
+
+
+def _decode_template_transactions_from_payload(template_payload: dict[str, Any]) -> tuple[Transaction, ...]:
+    """Decode non-coinbase template transactions from raw hex."""
+
+    transactions: list[Transaction] = []
+    for row in template_payload["transactions"]:
+        raw_bytes = bytes.fromhex(str(row["raw_hex"]))
+        transaction, offset = deserialize_transaction(raw_bytes)
+        if offset != len(raw_bytes):
+            raise ValueError("Template transaction contained trailing bytes.")
+        transactions.append(transaction)
+    return tuple(transactions)
+
+
+def _mine_extra_nonce_batch(
+    template_payload: dict[str, Any],
+    *,
+    miner_id: str,
+    extra_nonce: int,
+    nonce_batch_size: int,
+) -> Block | None:
+    """Search one nonce batch for one extra-nonce value."""
+
+    coinbase = _build_coinbase_from_template(template_payload, miner_id=miner_id, extra_nonce=extra_nonce)
+    transactions = (coinbase, *_decode_template_transactions_from_payload(template_payload))
+    header_base = BlockHeader(
+        version=int(template_payload["version"]),
+        previous_block_hash=str(template_payload["previous_block_hash"]),
+        merkle_root=merkle_root([transaction.txid() for transaction in transactions]),
+        timestamp=max(int(template_payload["curtime"]), int(template_payload["mintime"])),
+        bits=int(template_payload["bits"]),
+        nonce=0,
+    )
+    for nonce in range(nonce_batch_size):
+        header = BlockHeader(
+            version=header_base.version,
+            previous_block_hash=header_base.previous_block_hash,
+            merkle_root=header_base.merkle_root,
+            timestamp=header_base.timestamp,
+            bits=header_base.bits,
+            nonce=nonce,
+        )
+        if verify_proof_of_work(header):
+            return Block(header=header, transactions=transactions)
+    return None
+
+
 class MinerWorker:
     """A lightweight worker that mines only from node-provided block templates."""
 
@@ -54,6 +129,8 @@ class MinerWorker:
         ]
         if not self.clients:
             raise ValueError("At least one mining node URL is required.")
+        if config.worker_count < 1:
+            raise ValueError("worker_count must be at least 1.")
         self._active_client_index = 0
         self.accepted_blocks = 0
         self.rejected_blocks = 0
@@ -61,56 +138,62 @@ class MinerWorker:
         self.failover_count = 0
         self.current_node_url: str | None = None
         self.current_template_id: str | None = None
+        self._process_pool: ProcessPoolExecutor | None = None
 
     def run(self) -> dict[str, object]:
         """Start mining until stopped or until the optional run budget expires."""
 
         deadline = None if self.config.run_seconds is None else self.time.monotonic() + self.config.run_seconds
         active_template: ActiveTemplate | None = None
-        while True:
-            if deadline is not None and self.time.monotonic() >= deadline:
-                break
-            if active_template is None:
-                try:
-                    active_template = self._acquire_template()
-                except MiningApiError as exc:
-                    self.logger.warning("all mining nodes unavailable error=%s", exc)
+        try:
+            while True:
+                if deadline is not None and self.time.monotonic() >= deadline:
+                    break
+                if active_template is None:
+                    try:
+                        active_template = self._acquire_template()
+                    except MiningApiError as exc:
+                        self.logger.warning("all mining nodes unavailable error=%s", exc)
+                        continue
                     continue
-                continue
-            solved_block, active_template = self._mine_batch(active_template)
-            if solved_block is None:
-                refresh_decision, active_template = self._template_refresh_decision(active_template)
-                if refresh_decision is not None:
-                    self._log_template_refresh(active_template, refresh_decision)
-                    active_template = None
-                continue
-            result = self._submit_block(active_template, solved_block)
-            if bool(result.get("accepted")):
-                self.accepted_blocks += 1
-                self.logger.info(
-                    "block accepted height=%s hash=%s node=%s template_id=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
-                    active_template.payload["height"],
-                    result.get("block_hash"),
-                    active_template.node_url,
-                    active_template.payload["template_id"],
-                    self.accepted_blocks,
-                    self.rejected_blocks,
-                    self.failover_count,
-                )
-                if self.config.mining_min_interval_seconds > 0:
-                    self.time.sleep(self.config.mining_min_interval_seconds)
-            else:
-                self.rejected_blocks += 1
-                self.logger.info(
-                    "block rejected reason=%s template_id=%s node=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
-                    result.get("reason"),
-                    active_template.payload["template_id"],
-                    active_template.node_url,
-                    self.accepted_blocks,
-                    self.rejected_blocks,
-                    self.failover_count,
-                )
-            active_template = None
+                solved_block, active_template = self._mine_batch(active_template)
+                if solved_block is None:
+                    refresh_decision, active_template = self._template_refresh_decision(active_template)
+                    if refresh_decision is not None:
+                        self._log_template_refresh(active_template, refresh_decision)
+                        active_template = None
+                    continue
+                result = self._submit_block(active_template, solved_block)
+                if bool(result.get("accepted")):
+                    self.accepted_blocks += 1
+                    self.logger.info(
+                        "block accepted height=%s hash=%s node=%s template_id=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
+                        active_template.payload["height"],
+                        result.get("block_hash"),
+                        active_template.node_url,
+                        active_template.payload["template_id"],
+                        self.accepted_blocks,
+                        self.rejected_blocks,
+                        self.failover_count,
+                    )
+                    if self.config.mining_min_interval_seconds > 0:
+                        self.time.sleep(self.config.mining_min_interval_seconds)
+                else:
+                    self.rejected_blocks += 1
+                    self.logger.info(
+                        "block rejected reason=%s template_id=%s node=%s submit_accepted_count=%s submit_rejected_count=%s failover_count=%s",
+                        result.get("reason"),
+                        active_template.payload["template_id"],
+                        active_template.node_url,
+                        self.accepted_blocks,
+                        self.rejected_blocks,
+                        self.failover_count,
+                    )
+                active_template = None
+        finally:
+            if self._process_pool is not None:
+                self._process_pool.shutdown(cancel_futures=True)
+                self._process_pool = None
         return self.diagnostics()
 
     def diagnostics(self) -> dict[str, object]:
@@ -128,6 +211,7 @@ class MinerWorker:
             "failover_count": self.failover_count,
             "accepted_blocks": self.accepted_blocks,
             "rejected_blocks": self.rejected_blocks,
+            "worker_count": self.config.worker_count,
         }
 
     def _acquire_template(self) -> ActiveTemplate:
@@ -184,36 +268,57 @@ class MinerWorker:
     def _mine_batch(self, active_template: ActiveTemplate) -> tuple[Block | None, ActiveTemplate]:
         """Search one nonce batch for a valid PoW solution."""
 
+        if self.config.worker_count > 1:
+            return self._mine_batch_parallel(active_template)
+
         template_payload = active_template.payload
-        coinbase = self._build_coinbase(template_payload, active_template.extra_nonce)
-        transactions = (coinbase, *self._decode_template_transactions(template_payload))
-        header_base = BlockHeader(
-            version=int(template_payload["version"]),
-            previous_block_hash=str(template_payload["previous_block_hash"]),
-            merkle_root=merkle_root([transaction.txid() for transaction in transactions]),
-            timestamp=max(int(template_payload["curtime"]), int(template_payload["mintime"])),
-            bits=int(template_payload["bits"]),
-            nonce=0,
+        solved_block = _mine_extra_nonce_batch(
+            template_payload,
+            miner_id=self.config.miner_id,
+            extra_nonce=active_template.extra_nonce,
+            nonce_batch_size=self.config.nonce_batch_size,
         )
-        start_nonce = active_template.nonce_cursor
-        end_nonce = start_nonce + self.config.nonce_batch_size
-        for nonce in range(start_nonce, end_nonce):
-            header = BlockHeader(
-                version=header_base.version,
-                previous_block_hash=header_base.previous_block_hash,
-                merkle_root=header_base.merkle_root,
-                timestamp=header_base.timestamp,
-                bits=header_base.bits,
-                nonce=nonce,
-            )
-            if verify_proof_of_work(header):
-                return Block(header=header, transactions=transactions), active_template
+        if solved_block is not None:
+            return solved_block, active_template
         return None, ActiveTemplate(
             node_url=active_template.node_url,
             payload=active_template.payload,
             fetched_at=active_template.fetched_at,
             next_status_check_at=active_template.next_status_check_at,
             extra_nonce=active_template.extra_nonce + 1,
+            nonce_cursor=0,
+        )
+
+    def _mine_batch_parallel(self, active_template: ActiveTemplate) -> tuple[Block | None, ActiveTemplate]:
+        """Search nonce batches in multiple worker processes."""
+
+        if self._process_pool is None:
+            self._process_pool = ProcessPoolExecutor(max_workers=self.config.worker_count)
+
+        futures = [
+            self._process_pool.submit(
+                _mine_extra_nonce_batch,
+                active_template.payload,
+                miner_id=self.config.miner_id,
+                extra_nonce=active_template.extra_nonce + worker_index,
+                nonce_batch_size=self.config.nonce_batch_size,
+            )
+            for worker_index in range(self.config.worker_count)
+        ]
+        solved_block: Block | None = None
+        for future in as_completed(futures):
+            candidate = future.result()
+            if candidate is not None and solved_block is None:
+                solved_block = candidate
+
+        if solved_block is not None:
+            return solved_block, active_template
+        return None, ActiveTemplate(
+            node_url=active_template.node_url,
+            payload=active_template.payload,
+            fetched_at=active_template.fetched_at,
+            next_status_check_at=active_template.next_status_check_at,
+            extra_nonce=active_template.extra_nonce + self.config.worker_count,
             nonce_cursor=0,
         )
 
@@ -329,37 +434,9 @@ class MinerWorker:
     def _build_coinbase(self, template_payload: dict[str, Any], extra_nonce: int) -> Transaction:
         """Construct one worker-side coinbase for the active template."""
 
-        return Transaction(
-            version=1,
-            inputs=(),
-            outputs=(
-                TxOutput(
-                    value=int(template_payload["coinbase_value_chipbits"]),
-                    recipient=str(template_payload["payout_address"]),
-                ),
-                *tuple(
-                    TxOutput(
-                        value=int(output["amount_chipbits"]),
-                        recipient=str(output["recipient"]),
-                    )
-                    for output in template_payload["node_reward_outputs"]
-                ),
-            ),
-            metadata={
-                "coinbase": "true",
-                "height": str(template_payload["height"]),
-                "extra_nonce": str(extra_nonce),
-                "miner_id": self.config.miner_id,
-            },
-        )
+        return _build_coinbase_from_template(template_payload, miner_id=self.config.miner_id, extra_nonce=extra_nonce)
 
     def _decode_template_transactions(self, template_payload: dict[str, Any]) -> tuple[Transaction, ...]:
         """Decode non-coinbase template transactions from raw hex."""
 
-        transactions: list[Transaction] = []
-        for row in template_payload["transactions"]:
-            transaction, offset = deserialize_transaction(bytes.fromhex(str(row["raw_hex"])))
-            if offset != len(bytes.fromhex(str(row["raw_hex"]))):
-                raise ValueError("Template transaction contained trailing bytes.")
-            transactions.append(transaction)
-        return tuple(transactions)
+        return _decode_template_transactions_from_payload(template_payload)

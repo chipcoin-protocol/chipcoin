@@ -1070,6 +1070,7 @@ run_miner() {
     --polling-interval-seconds "${MINING_POLLING_INTERVAL_SECONDS:-2.0}" \
     --request-timeout-seconds "${MINING_REQUEST_TIMEOUT_SECONDS:-10.0}" \
     --nonce-batch-size "${MINING_NONCE_BATCH_SIZE:-250000}" \
+    --worker-count "${MINING_WORKER_COUNT:-1}" \
     --template-refresh-skew-seconds "${MINING_TEMPLATE_REFRESH_SKEW_SECONDS:-1}" \
     --mining-min-interval-seconds "${MINING_MIN_INTERVAL_SECONDS}" \
     "${miner_id_args[@]}"

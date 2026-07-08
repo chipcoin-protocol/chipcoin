@@ -22,6 +22,7 @@ Relevant `.env` keys:
 - `MINING_POLLING_INTERVAL_SECONDS`
 - `MINING_REQUEST_TIMEOUT_SECONDS`
 - `MINING_NONCE_BATCH_SIZE`
+- `MINING_WORKER_COUNT`
 - `MINING_TEMPLATE_REFRESH_SKEW_SECONDS`
 
 ## Wallet Requirement
@@ -69,6 +70,8 @@ docker compose logs -f miner
 - Rewards are paid to the address derived from `MINER_WALLET_FILE`.
 - Reward redistribution can be done later with standard wallet transactions.
 - The miner no longer keeps a local chain database or performs historical sync.
+- `MINING_WORKER_COUNT` controls local mining process parallelism. The default
+  is `1`; set it to the number of CPU cores you want one miner container to use.
 - In the default Docker Compose stack, the miner points at the private in-stack node API: `http://node:28081`.
 - Do not mine through `https://testnet-api.chipcoinprotocol.com`; it is wallet-safe and not a miner endpoint.
 - For a miner-only host, set `MINING_NODE_URLS` to a local/private full node API you operate or explicitly trust.

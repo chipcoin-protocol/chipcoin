@@ -32,6 +32,7 @@ Relevant `.env` keys:
 - `NODE_DATA_PATH`
 - `MINER_WALLET_FILE`
 - `MINING_NODE_URLS`
+- `MINING_WORKER_COUNT`
 
 ## Start
 
@@ -78,6 +79,8 @@ docker compose logs -f miner
 - The node runtime currently does not use a wallet file.
 - The miner runtime does use `MINER_WALLET_FILE`.
 - The miner no longer keeps a local chain database.
+- `MINING_WORKER_COUNT` can be raised above `1` to use multiple local CPU cores
+  inside one miner container.
 - The default Docker profile is public testnet.
 - The default node HTTP API is published on `http://127.0.0.1:28081`; do not expose it directly to the internet unless you intentionally override `NODE_HTTP_PUBLISH_HOST`.
 - Use public P2P `28444/tcp` and local-only HTTP `127.0.0.1:28081`; public firewall rules should expose only P2P.

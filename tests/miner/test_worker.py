@@ -4,6 +4,8 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, BlockHeader, Transaction, TxOutput
 from chipcoin.consensus.pow import verify_proof_of_work
@@ -129,6 +131,33 @@ def test_miner_worker_fetches_template_immediately_and_mines_remote_block() -> N
         assert result["submit_accepted_count"] >= 1
         assert result["submit_rejected_count"] == 0
         assert service.chain_tip() is not None
+
+
+def test_miner_worker_rejects_invalid_worker_count() -> None:
+    with pytest.raises(ValueError, match="worker_count must be at least 1"):
+        MinerWorker(
+            MinerWorkerConfig(
+                network="mainnet",
+                payout_address=wallet_key(0).address,
+                node_urls=("memory://node",),
+                miner_id="worker-a",
+                worker_count=0,
+            )
+        )
+
+
+def test_miner_worker_diagnostics_reports_worker_count() -> None:
+    worker = MinerWorker(
+        MinerWorkerConfig(
+            network="mainnet",
+            payout_address=wallet_key(0).address,
+            node_urls=("memory://node",),
+            miner_id="worker-a",
+            worker_count=3,
+        )
+    )
+
+    assert worker.diagnostics()["worker_count"] == 3
 
 
 def test_miner_worker_marks_template_stale_after_tip_change() -> None:
