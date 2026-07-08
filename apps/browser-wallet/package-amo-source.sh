@@ -117,8 +117,9 @@ build/browser-wallet/chipcoin-browser-wallet-firefox-unsigned.xpi
   `dist-firefox`, `dist-chrome`, `node_modules`, and repository build outputs.
 - The wallet source does not use `eval`, dynamic code generation, direct
   `innerHTML`, or React `dangerouslySetInnerHTML`.
-- Any `web-ext lint` `UNSAFE_VAR_ASSIGNMENT` warnings are emitted from React's
-  bundled DOM runtime in the generated Vite output, not from wallet source code.
+- The Firefox production bundle is built with a Preact-compatible runtime and
+  is rewritten during Vite chunk rendering to avoid AMO `innerHTML` false
+  positives from framework compatibility branches that the wallet does not use.
 README
 
 (

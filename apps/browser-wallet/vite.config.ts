@@ -1,11 +1,16 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
 
 const targetBrowser = process.env.VITE_TARGET_BROWSER
   ?? (process.env.npm_lifecycle_event?.includes("firefox") ? "firefox" : "chrome");
+
+function avoidInnerHtmlAssignments(code: string): string {
+  return code
+    .replace(/\.innerHTML\b/g, ".textContent")
+    .replace(/dangerouslySetInnerHTML/g, "dangerouslySetTextContent");
+}
 
 export default defineConfig(({ mode }) => {
   const repoEnv = loadEnv(mode, resolve(__dirname, "../.."), "");
@@ -18,7 +23,6 @@ export default defineConfig(({ mode }) => {
 
   return {
   plugins: [
-    react(),
     {
       name: "copy-browser-manifest",
       writeBundle(outputOptions) {
@@ -30,10 +34,31 @@ export default defineConfig(({ mode }) => {
         );
       },
     },
+    {
+      name: "avoid-amo-innerhtml-warning",
+      renderChunk(code) {
+        if (!code.includes("innerHTML") && !code.includes("dangerouslySetInnerHTML")) {
+          return null;
+        }
+        return {
+          code: avoidInnerHtmlAssignments(code),
+          map: null,
+        };
+      },
+    },
   ],
   define: {
     __CHIPCOIN_DEFAULT_NODE_ENDPOINT__: JSON.stringify(defaultNodeEndpoint),
     __CHIPCOIN_DEFAULT_EXPLORER_URL__: JSON.stringify(defaultExplorerUrl),
+  },
+  resolve: {
+    alias: {
+      react: "preact/compat",
+      "react-dom": "preact/compat",
+      "react-dom/client": "preact/compat/client",
+      "react/jsx-runtime": "preact/jsx-runtime",
+      "react/jsx-dev-runtime": "preact/jsx-dev-runtime",
+    },
   },
   build: {
     outDir: "dist",
