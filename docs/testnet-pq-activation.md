@@ -61,3 +61,14 @@ raw_tx_len: 3934
 
 The regression test lives in `tests/wallet/test_wallet_signer.py` as
 `test_transaction_signer_builds_post_activation_pq_vector`.
+
+## Local node regression coverage
+
+`tests/node/test_local_node.py` covers the post-activation node path for:
+
+- legacy CHC input creating a CHCQ output
+- CHCQ input spending back to a legacy CHC output
+- mempool admission, block template inclusion, block validation, and mempool
+  cleanup for the CHCQ spend
+
+The same file keeps the pre-activation rejection test for CHCQ outputs.

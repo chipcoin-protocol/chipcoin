@@ -35,7 +35,7 @@ from chipcoin.node.service import NodeService
 from chipcoin.node.sync import BlockDownloadAssignment, BlockIngestResult, BlockRequestState, HeaderIngestResult
 from chipcoin.storage.peers import SQLitePeerRepository
 from chipcoin.storage.mempool import MempoolEntry
-from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_private_key
+from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed, wallet_key_from_private_key
 from tests.helpers import put_wallet_utxo, signed_payment, spend_candidates_for_wallet, wallet_key
 
 
@@ -3704,6 +3704,60 @@ def test_mempool_rejects_chcq_output_before_activation() -> None:
             assert "CHCQ outputs are not active" in str(exc)
             return
         raise AssertionError("Expected pre-activation CHCQ output to be rejected by mempool validation.")
+
+
+def test_mempool_accepts_and_mines_chcq_spend_after_activation(monkeypatch) -> None:
+    monkeypatch.setattr("chipcoin.consensus.validation.pq_support_is_active", lambda *, network, height: True)
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="testnet")
+        pq_owner = wallet_key_from_mldsa44_seed(bytes(range(32)))
+        recipient = wallet_key(1).address
+        funding_outpoint = OutPoint(txid="9b" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=1_234_567_890, owner=pq_owner)
+        built = TransactionSigner(pq_owner).build_signed_transaction(
+            spend_candidates=spend_candidates_for_wallet(funding_outpoint, value=1_234_567_890, owner=pq_owner),
+            recipient=recipient,
+            amount_chipbits=1_000_000_000,
+            fee_chipbits=1_000,
+            metadata={"kind": "payment", "purpose": "pq-node-e2e"},
+            network=service.network,
+        )
+
+        accepted = service.receive_transaction(built.transaction)
+        candidate = service.build_candidate_block(wallet_key(2).address)
+        mined_block = _mine_block(candidate.block)
+        total_fees = service.apply_block(mined_block)
+
+        assert accepted.transaction.txid() == built.transaction.txid()
+        assert accepted.fee == 1_000
+        assert total_fees == 1_000
+        assert service.list_mempool_transactions() == []
+        assert service.find_transaction(built.transaction.txid())["location"] == "chain"
+        assert service.chainstate.get(funding_outpoint) is None
+
+
+def test_mempool_accepts_chcq_output_after_activation(monkeypatch) -> None:
+    monkeypatch.setattr("chipcoin.consensus.validation.pq_support_is_active", lambda *, network, height: True)
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="testnet")
+        owner = wallet_key(0)
+        funding_outpoint = OutPoint(txid="9c" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=100, owner=owner)
+        pq_recipient = wallet_key_from_mldsa44_seed(bytes(range(32))).address
+        transaction = signed_payment(
+            funding_outpoint,
+            value=100,
+            sender=owner,
+            recipient=pq_recipient,
+            amount=90,
+            fee=10,
+        )
+
+        accepted = service.receive_transaction(transaction)
+
+        assert accepted.transaction.txid() == transaction.txid()
+        assert accepted.fee == 10
+        assert service.list_mempool_transactions() == [transaction]
 
 
 def test_mempool_eviction_prefers_higher_fee_transactions() -> None:
