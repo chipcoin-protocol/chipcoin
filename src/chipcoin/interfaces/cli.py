@@ -714,6 +714,11 @@ def main(argv: list[str] | None = None) -> int:
                     "raw_hex": serialize_transaction(built.transaction).hex(),
                     "fee_chipbits": built.fee_chipbits,
                     "change_chipbits": built.change_chipbits,
+                    "wallet_address": wallet_key.address,
+                    "address_kind": wallet_key.address_kind,
+                    "scheme_id": wallet_key.scheme_id,
+                    "scheme_name": wallet_key.scheme_name,
+                    "transaction_version": built.transaction.version,
                 }
             )
             return 0
@@ -738,6 +743,11 @@ def main(argv: list[str] | None = None) -> int:
                     "txid": built.transaction.txid(),
                     "fee_chipbits": built.fee_chipbits,
                     "change_chipbits": built.change_chipbits,
+                    "wallet_address": wallet_key.address,
+                    "address_kind": wallet_key.address_kind,
+                    "scheme_id": wallet_key.scheme_id,
+                    "scheme_name": wallet_key.scheme_name,
+                    "transaction_version": built.transaction.version,
                 }
             )
             return 0

@@ -72,3 +72,21 @@ The regression test lives in `tests/wallet/test_wallet_signer.py` as
   cleanup for the CHCQ spend
 
 The same file keeps the pre-activation rejection test for CHCQ outputs.
+
+## CLI smoke coverage
+
+`tests/node/test_cli.py` covers the operator-facing CHCQ wallet flow:
+
+- `wallet-generate --scheme mldsa44`
+- `wallet-address`
+- `wallet-utxos`
+- `wallet-build`
+- `wallet-send` in local submission mode
+
+The smoke test funds a local testnet CHCQ wallet, builds a version 2 transaction,
+submits it to the local mempool with post-activation validation enabled, and
+asserts that the resulting transaction uses scheme id `10` (`mldsa44`).
+
+`wallet-build` and `wallet-send` output include the wallet address, address kind,
+signature scheme id/name, and transaction version so operators can confirm that a
+CHCQ wallet is producing a v2 ML-DSA-44 transaction.

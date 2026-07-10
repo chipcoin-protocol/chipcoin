@@ -20,6 +20,7 @@ from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import serialize_transaction
 from chipcoin.crypto.keys import serialize_private_key_hex, serialize_public_key_hex
+from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.interfaces import cli as cli_module
 from chipcoin.interfaces.cli import main
 from chipcoin.node.runtime import NodeRuntime
@@ -2811,6 +2812,127 @@ def test_cli_wallet_generate_address_build_and_send_local() -> None:
         assert send_payload["fee_chipbits"] == 5
         assert send_payload["mode"] == "local"
         assert service.find_transaction(send_payload["txid"]) is not None
+
+
+def test_cli_pq_wallet_build_and_send_local_after_activation(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        db_path = Path(tempdir) / "pq-test.sqlite3"
+        wallet_path = Path(tempdir) / "pq-wallet.json"
+        service = NodeService.open_sqlite(db_path, network="testnet")
+
+        generate_code, generate_stdout, generate_stderr = _run_cli_with_stderr(
+            [
+                "--network",
+                "testnet",
+                "wallet-generate",
+                "--scheme",
+                "mldsa44",
+                "--wallet-file",
+                str(wallet_path),
+            ]
+        )
+        generate_payload = json.loads(generate_stdout)
+        owner = cli_module._load_wallet_key(wallet_path)
+        funding_outpoint = OutPoint(txid="25" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=1_234_567_890, owner=owner)
+        service.connection.commit()
+        service.connection.close()
+        funding_check_service = NodeService.open_sqlite(db_path, network="testnet")
+        assert funding_check_service.list_spendable_outputs(owner.address)
+        funding_check_service.connection.close()
+
+        address_code, address_payload = _run_cli(
+            [
+                "--network",
+                "testnet",
+                "wallet-address",
+                "--wallet-file",
+                str(wallet_path),
+            ]
+        )
+        utxos_code, utxos_payload = _run_cli(
+            [
+                "--network",
+                "testnet",
+                "--data",
+                str(db_path),
+                "wallet-utxos",
+                "--wallet-file",
+                str(wallet_path),
+            ]
+        )
+        assert address_code == 0
+        assert address_payload["address"] == owner.address
+        assert utxos_code == 0
+        assert utxos_payload
+
+        build_code, build_payload = _run_cli(
+            [
+                "--network",
+                "testnet",
+                "--data",
+                str(db_path),
+                "wallet-build",
+                "--wallet-file",
+                str(wallet_path),
+                "--to",
+                wallet_key(1).address,
+                "--amount",
+                "1000000000",
+                "--fee",
+                "1000",
+            ]
+        )
+        monkeypatch.setattr("chipcoin.consensus.validation.pq_support_is_active", lambda *, network, height: True)
+        send_code, send_payload = _run_cli(
+            [
+                "--network",
+                "testnet",
+                "--data",
+                str(db_path),
+                "wallet-send",
+                "--wallet-file",
+                str(wallet_path),
+                "--to",
+                wallet_key(1).address,
+                "--amount",
+                "1000000000",
+                "--fee",
+                "1000",
+            ]
+        )
+        verified_service = NodeService.open_sqlite(db_path, network="testnet")
+        mempool_transactions = verified_service.list_mempool_transactions()
+
+        assert generate_code == 0
+        assert build_code == 0
+        assert send_code == 0
+        assert generate_payload["address"].startswith("CHCQ")
+        assert generate_payload["address_kind"] == "pq"
+        assert generate_payload["scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert generate_payload["scheme_name"] == "mldsa44"
+        assert "private_seed_hex" in generate_payload
+        assert "private_seed_hex" in generate_stderr
+        assert address_payload["address"] == generate_payload["address"] == owner.address
+        assert "private_seed_hex" not in address_payload
+        assert wallet_path.stat().st_mode & 0o777 == 0o600
+        assert build_payload["wallet_address"] == owner.address
+        assert build_payload["address_kind"] == "pq"
+        assert build_payload["scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert build_payload["scheme_name"] == "mldsa44"
+        assert build_payload["transaction_version"] == 2
+        assert build_payload["fee_chipbits"] == 1000
+        assert build_payload["change_chipbits"] == 234_566_890
+        assert build_payload["raw_hex"]
+        assert send_payload["mode"] == "local"
+        assert send_payload["transaction_version"] == 2
+        assert send_payload["scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert send_payload["address_kind"] == "pq"
+        assert send_payload["txid"] == build_payload["txid"]
+        assert len(mempool_transactions) == 1
+        assert mempool_transactions[0].txid() == send_payload["txid"]
+        assert mempool_transactions[0].version == 2
+        assert mempool_transactions[0].inputs[0].sig_scheme_id == SIG_SCHEME_ML_DSA_44
 
 
 def test_cli_wallet_send_can_submit_over_p2p_boundary() -> None:
