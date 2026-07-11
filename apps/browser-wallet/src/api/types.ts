@@ -98,10 +98,14 @@ export interface TxLookup {
       sequence: number;
       signature_hex: string | null;
       public_key_hex: string | null;
+      sig_scheme_id?: number;
+      sig_scheme_name?: string | null;
     }>;
     outputs: Array<{
       value: number;
       recipient: string;
+      address_kind?: "legacy" | "pq";
+      address_scheme_id?: number;
     }>;
     metadata: Record<string, string>;
   };

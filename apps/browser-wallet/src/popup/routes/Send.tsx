@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { AppState } from "../../state/app_state";
+import { parseAddress } from "../../crypto/addresses";
 import { getSupportedNetwork } from "../../shared/constants";
 import { parseChcToChipbits } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
@@ -19,14 +20,26 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
   const connectedNetwork = state.nodeStatus?.network ?? null;
   const hasNetworkMismatch = connectedNetwork !== null && connectedNetwork !== state.expectedNetwork;
   const hasEndpointValidationFailure = connectedNetwork === null || hasNetworkMismatch;
+  const trimmedRecipient = recipient.trim();
 
   if (connectedNetwork === null) {
     formError = "Node endpoint is unavailable or has not passed network validation.";
   } else if (hasNetworkMismatch) {
     formError = `Wrong network. Expected ${state.expectedNetwork}, got ${connectedNetwork}.`;
-  } else if (!recipient.trim()) {
+  } else if (!trimmedRecipient) {
     formError = "Recipient address is required.";
   } else {
+    try {
+      const recipientInfo = parseAddress(trimmedRecipient);
+      if (recipientInfo.kind === "pq") {
+        formError = "CHCQ recipients are recognized, but browser wallet CHCQ sending is not enabled yet.";
+      }
+    } catch {
+      formError = "Recipient must be a valid CHC or CHCQ address.";
+    }
+  }
+
+  if (!formError) {
     try {
       parsedAmountChipbits = parseChcToChipbits(amountChc);
     } catch (error) {
@@ -50,7 +63,7 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
     try {
       const response = await sendWalletMessage<{ status: string; txid?: string }>({
         type: "wallet:submit",
-        recipient: recipient.trim(),
+        recipient: trimmedRecipient,
         amountChipbits: parsedAmountChipbits,
         feeChipbits: parsedFeeChipbits,
       });
@@ -83,7 +96,7 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
       <div className="stack">
         <label className="stack">
           <span>Recipient address</span>
-          <input value={recipient} onChange={(event) => { setRecipient(event.target.value); setResult(null); }} placeholder="CHC recipient address" />
+          <input value={recipient} onChange={(event) => { setRecipient(event.target.value); setResult(null); }} placeholder="CHC or CHCQ recipient address" />
         </label>
         <label className="stack">
           <span>Amount (CHC)</span>

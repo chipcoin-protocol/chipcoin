@@ -18,6 +18,7 @@ const SENDER_PRIVATE_KEY = "0000000000000000000000000000000000000000000000000000
 const RECIPIENT_PRIVATE_KEY = "0000000000000000000000000000000000000000000000000000000000000002";
 const SENDER_ADDRESS = "CHCCT9A8CEgF7qJ3T6QuXSFQN31kEexxxa2oX";
 const RECIPIENT_ADDRESS = "CHCCH5FG4NCAWBFqa2zZKufrdnAa7rRE1gH5C";
+const PQ_RECIPIENT_ADDRESS = "CHCQCqjJWcT8Jqxvmn9xspxBWnTojXQp93Wqu9sP5F6GkFd1f5xKiRhE";
 const SENDER_PUBLIC_KEY = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const EXPECTED_DIGEST = "062cee33f23423fad188b375d429a0b1a09069d41f7062075403c9ec4c0794ba";
 const EXPECTED_SIGNING_PAYLOAD = "01000000011111111111111111111111111111111111111111111111111111111111111111000000000000ffffffff02bc02000000000000254348434348354647344e43415742467161327a5a4b756672646e4161377252453167483543c8000000000000002543484343543941384345674637714a3354365175585346514e33316b456578787861326f58000000000000000000e8030000000000002543484343543941384345674637714a3354365175585346514e33316b456578787861326f5801000000";
@@ -157,5 +158,26 @@ describe("transaction parity", () => {
     expect(typeof built.rawHex).toBe("string");
     expect(built.rawHex.length % 2).toBe(0);
     expect(built.txid).toHaveLength(64);
+  });
+
+  it("keeps browser wallet CHCQ sending disabled until PQ signing is enabled", () => {
+    expect(() => buildSignedPaymentTransaction({
+      privateKeyHex: SENDER_PRIVATE_KEY,
+      walletAddress: SENDER_ADDRESS,
+      recipient: PQ_RECIPIENT_ADDRESS,
+      amountChipbits: 700,
+      feeChipbits: 100,
+      utxos: [
+        {
+          txid: "11".repeat(32),
+          vout: 0,
+          amount_chipbits: 1000,
+          coinbase: false,
+          mature: true,
+          status: "unspent",
+          origin_height: 0,
+        },
+      ],
+    })).toThrow("CHCQ recipients are recognized");
   });
 });

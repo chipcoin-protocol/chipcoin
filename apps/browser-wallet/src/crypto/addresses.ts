@@ -5,7 +5,20 @@ import { bytesToHex, derivePublicKeyHex, hexToBytes } from "./keys";
 
 const ADDRESS_PREFIX = "CHC";
 const ADDRESS_VERSION = 0x1c;
+const PQ_ADDRESS_PREFIX = "CHCQ";
+const PQ_ADDRESS_VERSION = 0x50;
+const PQ_PUBLIC_KEY_COMMITMENT_SIZE = 32;
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+export type AddressKind = "legacy" | "pq";
+
+export interface AddressInfo {
+  prefix: string;
+  version: number;
+  schemeId: number;
+  kind: AddressKind;
+  hashOrCommitment: Uint8Array;
+}
 
 export function privateKeyHexToAddress(privateKeyHex: string): string {
   return publicKeyHexToAddress(derivePublicKeyHex(privateKeyHex));
@@ -21,16 +34,33 @@ export function publicKeyHexToAddress(publicKeyHex: string): string {
 
 export function isValidAddress(address: string): boolean {
   try {
-    void addressToPublicKeyHash(address);
+    void parseAddress(address);
     return true;
   } catch {
     return false;
   }
 }
 
-export function addressToPublicKeyHash(address: string): Uint8Array {
+export function parseAddress(address: string): AddressInfo {
+  if (address.startsWith(PQ_ADDRESS_PREFIX)) {
+    const payload = base58CheckDecode(address.slice(PQ_ADDRESS_PREFIX.length));
+    if (payload.length !== 2 + PQ_PUBLIC_KEY_COMMITMENT_SIZE) {
+      throw new Error("CHCQ address payload has an unexpected length.");
+    }
+    if (payload[0] !== PQ_ADDRESS_VERSION) {
+      throw new Error("CHCQ address version byte is not recognised.");
+    }
+    return {
+      prefix: PQ_ADDRESS_PREFIX,
+      version: payload[0],
+      schemeId: payload[1],
+      kind: "pq",
+      hashOrCommitment: payload.slice(2),
+    };
+  }
+
   if (!address.startsWith(ADDRESS_PREFIX)) {
-    throw new Error("Address does not start with the CHC prefix.");
+    throw new Error("Address does not start with a recognised Chipcoin prefix.");
   }
   const payload = base58CheckDecode(address.slice(ADDRESS_PREFIX.length));
   if (payload.length !== 21) {
@@ -39,7 +69,25 @@ export function addressToPublicKeyHash(address: string): Uint8Array {
   if (payload[0] !== ADDRESS_VERSION) {
     throw new Error("Address version byte is not recognised.");
   }
-  return payload.slice(1);
+  return {
+    prefix: ADDRESS_PREFIX,
+    version: payload[0],
+    schemeId: 0,
+    kind: "legacy",
+    hashOrCommitment: payload.slice(1),
+  };
+}
+
+export function addressKind(address: string): AddressKind {
+  return parseAddress(address).kind;
+}
+
+export function addressToPublicKeyHash(address: string): Uint8Array {
+  const info = parseAddress(address);
+  if (info.kind !== "legacy") {
+    throw new Error("Address is not a legacy CHC address.");
+  }
+  return info.hashOrCommitment;
 }
 
 function hash160(payload: Uint8Array): Uint8Array {

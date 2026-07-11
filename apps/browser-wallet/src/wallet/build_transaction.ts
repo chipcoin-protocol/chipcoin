@@ -1,4 +1,4 @@
-import { isValidAddress, privateKeyHexToAddress } from "../crypto/addresses";
+import { parseAddress, privateKeyHexToAddress } from "../crypto/addresses";
 import {
   serializeSignedTransactionToRawHex,
   transactionId,
@@ -35,8 +35,14 @@ export function buildSendPlan(args: {
   if (feeChipbits < 0) {
     throw new Error("Fee cannot be negative.");
   }
-  if (!isValidAddress(recipient)) {
-    throw new Error("Recipient must be a valid CHC address.");
+  let recipientInfo: ReturnType<typeof parseAddress>;
+  try {
+    recipientInfo = parseAddress(recipient);
+  } catch {
+    throw new Error("Recipient must be a valid CHC or CHCQ address.");
+  }
+  if (recipientInfo.kind === "pq") {
+    throw new Error("CHCQ recipients are recognized, but browser wallet CHCQ sending is not enabled yet.");
   }
   const selection = selectInputs(filterSpendableCandidates(walletAddress, utxos), amountChipbits + feeChipbits);
   return {

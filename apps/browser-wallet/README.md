@@ -112,6 +112,7 @@ Included in this milestone:
 - Phase 2 API client wiring
 - read-only address, balance, history, and node-health flows
 - local transaction build, sign, serialize, and submit aligned with the current Chipcoin wallet primitives
+- CHCQ address recognition for API/UI compatibility, while CHCQ sending and browser-side PQ signing remain disabled
 - submitted transaction tracking and confirmation polling
 
 Manual smoke test:
@@ -128,6 +129,7 @@ Manual smoke test:
 Not included:
 - multisig
 - multiple accounts
+- browser-side CHCQ wallet generation or PQ transaction signing
 - mainnet support
 
 Storage model:
