@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 
-import type { HistoryEntry } from "../../api/types";
+import { ChipcoinApiClient } from "../../api/client";
+import type { HistoryEntry, TxLookup } from "../../api/types";
 import type { AppState } from "../../state/app_state";
 import { DEFAULT_EXPLORER_URL } from "../../shared/constants";
 import { formatChc, shortHash } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
 import { unixToIso } from "../../shared/time";
+import { AddressWithBadge } from "../components/AddressWithBadge";
+import { TransactionDetails } from "../components/TransactionDetails";
 
 export function Activity({ state }: { state: AppState }): JSX.Element {
   const [history, setHistory] = useState<HistoryEntry[]>(state.overview.history);
+  const [txDetails, setTxDetails] = useState<Record<string, TxLookup>>({});
   const [isLoadingHistory, setIsLoadingHistory] = useState(state.overview.history.length === 0);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
@@ -47,6 +51,41 @@ export function Activity({ state }: { state: AppState }): JSX.Element {
     };
   }, [state.address, state.nodeApiBaseUrl, state.expectedNetwork]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const txids = state.overview.submittedTransactions
+      .filter((entry) => entry.status === "submitted" || entry.status === "confirmed")
+      .slice(0, 5)
+      .map((entry) => entry.txid);
+    if (txids.length === 0) {
+      setTxDetails({});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function loadDetails(): Promise<void> {
+      const client = ChipcoinApiClient.fromBaseUrl(state.nodeApiBaseUrl);
+      const next: Record<string, TxLookup> = {};
+      for (const txid of txids) {
+        try {
+          next[txid] = await client.tx(txid);
+        } catch {
+          // Details are optional; the compact activity row remains usable.
+        }
+      }
+      if (!cancelled) {
+        setTxDetails(next);
+      }
+    }
+
+    void loadDetails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.nodeApiBaseUrl, state.overview.submittedTransactions]);
+
   function transactionUrl(txid: string): string {
     const explorerBaseUrl = DEFAULT_EXPLORER_URL.trim().replace(/\/+$/, "");
     if (explorerBaseUrl) {
@@ -81,7 +120,8 @@ export function Activity({ state }: { state: AppState }): JSX.Element {
               <a className="tx-link" href={transactionUrl(entry.txid)} target="_blank" rel="noreferrer">
                 <strong>{shortHash(entry.txid)}</strong>
               </a>{" "}
-              {entry.status} · {formatChc(entry.amountChipbits)} to {entry.recipient}
+              {entry.status} · {formatChc(entry.amountChipbits)} to <AddressWithBadge address={entry.recipient} short />
+              {txDetails[entry.txid] ? <TransactionDetails lookup={txDetails[entry.txid]} /> : null}
             </li>
           ))}
         </ul>

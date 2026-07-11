@@ -184,6 +184,55 @@ select {
   word-break: break-all;
 }
 
+.address-with-badge,
+.transaction-scheme {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.address-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.scheme-badge,
+.scheme-version {
+  display: inline-block;
+  border: 1px solid rgba(244, 239, 232, 0.22);
+  border-radius: 999px;
+  color: #f4efe8;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.scheme-badge-legacy {
+  background: #1f5d3a;
+}
+
+.scheme-badge-pq {
+  background: #5b4770;
+}
+
+.scheme-badge-unknown {
+  background: #70431d;
+}
+
+.scheme-version {
+  background: #2a3a31;
+  color: #ead9ba;
+}
+
+.recipient-status {
+  margin: 0;
+}
+
 .pill {
   display: inline-block;
   border-radius: 999px;
@@ -230,6 +279,36 @@ select {
 .activity-list {
   display: grid;
   gap: 8px;
+  padding-left: 18px;
+}
+
+.activity-list li {
+  overflow-wrap: anywhere;
+}
+
+.transaction-detail {
+  background: rgba(16, 23, 18, 0.48);
+  border: 1px solid rgba(201, 169, 101, 0.16);
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+}
+
+.detail-row {
+  margin: 0;
+}
+
+.detail-block {
+  display: grid;
+  gap: 4px;
+}
+
+.compact-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
   padding-left: 18px;
 }
 

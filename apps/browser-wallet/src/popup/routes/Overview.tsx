@@ -2,13 +2,15 @@ import type { AppState } from "../../state/app_state";
 import { copyText } from "../../shared/clipboard";
 import { getSupportedNetwork } from "../../shared/constants";
 import { formatChc } from "../../shared/formatting";
+import { AddressWithBadge } from "../components/AddressWithBadge";
 
 export function Overview(
   { state, isLoading, onRefresh }: { state: AppState; isLoading: boolean; onRefresh(): Promise<void> },
 ): JSX.Element {
   const summary = state.overview.summary;
   const activeNetwork = getSupportedNetwork(state.expectedNetwork);
-  const hasAddress = typeof state.address === "string" && state.address.length > 0;
+  const walletAddress = state.address ?? "";
+  const hasAddress = walletAddress.length > 0;
   const connectedNetwork = isLoading && state.nodeStatus === null
     ? "Loading…"
     : (state.nodeStatus?.network ?? "Unavailable");
@@ -22,8 +24,8 @@ export function Overview(
       <h2>Overview</h2>
       <div className="stack">
         <div className="inline-row">
-          <p><strong>Address:</strong> <span className="mono">{state.address}</span></p>
-          <button className="secondary-button" disabled={!hasAddress} onClick={() => hasAddress ? void copyText(state.address) : undefined}>
+          <p><strong>Receive address:</strong> {hasAddress ? <AddressWithBadge address={walletAddress} /> : "Unavailable"}</p>
+          <button className="secondary-button" disabled={!hasAddress} onClick={() => hasAddress ? void copyText(walletAddress) : undefined}>
             Copy address
           </button>
         </div>

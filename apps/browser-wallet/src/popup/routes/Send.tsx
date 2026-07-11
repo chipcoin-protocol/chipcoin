@@ -1,10 +1,64 @@
 import { useState } from "react";
 
 import type { AppState } from "../../state/app_state";
-import { parseAddress } from "../../crypto/addresses";
+import { validateBrowserSendRecipient } from "../../shared/address_scheme";
 import { getSupportedNetwork } from "../../shared/constants";
 import { parseChcToChipbits } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
+import { AddressWithBadge } from "../components/AddressWithBadge";
+
+export interface SendFormState {
+  parsedAmountChipbits: number;
+  parsedFeeChipbits: number;
+  formError: string | null;
+  isSubmitDisabled: boolean;
+  recipientValidation: ReturnType<typeof validateBrowserSendRecipient>;
+}
+
+export function computeSendFormState(args: {
+  connectedNetwork: string | null;
+  expectedNetwork: string;
+  recipient: string;
+  amountChc: string;
+  feeChc: string;
+  isSubmitting: boolean;
+}): SendFormState {
+  let parsedAmountChipbits = 0;
+  let parsedFeeChipbits = 0;
+  let formError: string | null = null;
+  const hasNetworkMismatch = args.connectedNetwork !== null && args.connectedNetwork !== args.expectedNetwork;
+  const recipientValidation = validateBrowserSendRecipient(args.recipient.trim());
+
+  if (args.connectedNetwork === null) {
+    formError = "Node endpoint is unavailable or has not passed network validation.";
+  } else if (hasNetworkMismatch) {
+    formError = `Wrong network. Expected ${args.expectedNetwork}, got ${args.connectedNetwork}.`;
+  } else if (recipientValidation.status !== "sendable") {
+    formError = recipientValidation.error;
+  } else {
+    try {
+      parsedAmountChipbits = parseChcToChipbits(args.amountChc);
+    } catch (error) {
+      formError = error instanceof Error ? error.message : "Amount must be a valid CHC value.";
+    }
+  }
+
+  if (!formError) {
+    try {
+      parsedFeeChipbits = parseChcToChipbits(args.feeChc);
+    } catch (error) {
+      formError = error instanceof Error ? error.message.replace("Amount", "Fee") : "Fee must be a valid CHC value.";
+    }
+  }
+
+  return {
+    parsedAmountChipbits,
+    parsedFeeChipbits,
+    formError,
+    isSubmitDisabled: Boolean(formError) || args.isSubmitting,
+    recipientValidation,
+  };
+}
 
 export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promise<void> }): JSX.Element {
   const [recipient, setRecipient] = useState("");
@@ -13,50 +67,27 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
   const [result, setResult] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  let parsedAmountChipbits = 0;
-  let parsedFeeChipbits = 0;
-  let formError: string | null = null;
   const activeNetwork = getSupportedNetwork(state.expectedNetwork);
   const connectedNetwork = state.nodeStatus?.network ?? null;
   const hasNetworkMismatch = connectedNetwork !== null && connectedNetwork !== state.expectedNetwork;
   const hasEndpointValidationFailure = connectedNetwork === null || hasNetworkMismatch;
   const trimmedRecipient = recipient.trim();
-
-  if (connectedNetwork === null) {
-    formError = "Node endpoint is unavailable or has not passed network validation.";
-  } else if (hasNetworkMismatch) {
-    formError = `Wrong network. Expected ${state.expectedNetwork}, got ${connectedNetwork}.`;
-  } else if (!trimmedRecipient) {
-    formError = "Recipient address is required.";
-  } else {
-    try {
-      const recipientInfo = parseAddress(trimmedRecipient);
-      if (recipientInfo.kind === "pq") {
-        formError = "CHCQ recipients are recognized, but browser wallet CHCQ sending is not enabled yet.";
-      }
-    } catch {
-      formError = "Recipient must be a valid CHC or CHCQ address.";
-    }
-  }
-
-  if (!formError) {
-    try {
-      parsedAmountChipbits = parseChcToChipbits(amountChc);
-    } catch (error) {
-      formError = error instanceof Error ? error.message : "Amount must be a valid CHC value.";
-    }
-  }
-
-  if (!formError) {
-    try {
-      parsedFeeChipbits = parseChcToChipbits(feeChc);
-    } catch (error) {
-      formError = error instanceof Error ? error.message.replace("Amount", "Fee") : "Fee must be a valid CHC value.";
-    }
-  }
+  const { parsedAmountChipbits, parsedFeeChipbits, formError, isSubmitDisabled, recipientValidation } = computeSendFormState({
+    connectedNetwork,
+    expectedNetwork: state.expectedNetwork,
+    recipient,
+    amountChc,
+    feeChc,
+    isSubmitting,
+  });
 
   async function handleSubmit(): Promise<void> {
     if (formError || isSubmitting) {
+      return;
+    }
+    const submitRecipientValidation = validateBrowserSendRecipient(trimmedRecipient);
+    if (submitRecipientValidation.status !== "sendable") {
+      setResult(submitRecipientValidation.error ?? "Recipient is not sendable.");
       return;
     }
     setIsSubmitting(true);
@@ -92,12 +123,17 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
       <p><strong>Network:</strong> <span className="pill">{activeNetwork.label}</span></p>
       <p><strong>Node API:</strong> <span className="mono">{state.nodeApiBaseUrl}</span></p>
       {hasEndpointValidationFailure ? <p className="message error">Endpoint validation failed. Switch to a reachable {state.expectedNetwork} node before submitting transactions.</p> : null}
-      <p><strong>From wallet:</strong> <span className="mono">{state.address}</span></p>
+      <p><strong>From wallet:</strong> {state.address ? <AddressWithBadge address={state.address} /> : "Unavailable"}</p>
       <div className="stack">
         <label className="stack">
           <span>Recipient address</span>
           <input value={recipient} onChange={(event) => { setRecipient(event.target.value); setResult(null); }} placeholder="CHC or CHCQ recipient address" />
         </label>
+        {trimmedRecipient && recipientValidation.scheme ? (
+          <p className="message recipient-status">
+            Recipient: <AddressWithBadge address={trimmedRecipient} />
+          </p>
+        ) : null}
         <label className="stack">
           <span>Amount (CHC)</span>
           <input value={amountChc} onChange={(event) => { setAmountChc(event.target.value); setResult(null); }} placeholder="e.g. 50 or 0.25" />
@@ -106,7 +142,7 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
           <span>Fee (CHC)</span>
           <input value={feeChc} onChange={(event) => { setFeeChc(event.target.value); setResult(null); }} placeholder="e.g. 0.00001" />
         </label>
-        <button className="primary-button" disabled={Boolean(formError) || isSubmitting} onClick={() => void handleSubmit()}>
+        <button className="primary-button" disabled={isSubmitDisabled} onClick={() => void handleSubmit()}>
           {isSubmitting ? "Submitting..." : "Submit transaction"}
         </button>
       </div>

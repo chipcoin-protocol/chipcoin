@@ -178,6 +178,6 @@ describe("transaction parity", () => {
           origin_height: 0,
         },
       ],
-    })).toThrow("CHCQ recipients are recognized");
+    })).toThrow("valid post-quantum CHCQ address");
   });
 });
