@@ -90,3 +90,15 @@ asserts that the resulting transaction uses scheme id `10` (`mldsa44`).
 `wallet-build` and `wallet-send` output include the wallet address, address kind,
 signature scheme id/name, and transaction version so operators can confirm that a
 CHCQ wallet is producing a v2 ML-DSA-44 transaction.
+
+## HTTP/API observability coverage
+
+`tests/node/test_http_api.py` covers the explorer-facing CHCQ transaction path:
+
+- `POST /v1/tx/submit` accepts a post-activation CHCQ spend
+- `GET /v1/tx/<txid>` exposes transaction version, input signature scheme id/name,
+  and output address kind/scheme id
+- `GET /v1/mempool` exposes the staged CHCQ transaction metadata
+- `GET /v1/address/<address>` and `/utxos` report CHCQ wallet balances
+- `GET /v1/address/<address>/history` reports confirmed CHCQ change and legacy
+  recipient history after the transaction is mined

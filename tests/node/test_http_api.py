@@ -16,10 +16,11 @@ from chipcoin.consensus.params import MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_block, serialize_transaction
+from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.interfaces.cli import main as cli_main
 from chipcoin.interfaces.http_api import HttpApiApp, QuietMiningStatusRequestHandler
 from chipcoin.node.service import NodeService
-from chipcoin.wallet.signer import TransactionSigner
+from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed
 from ..helpers import put_wallet_utxo, signed_payment, wallet_key
 
 
@@ -916,6 +917,80 @@ def test_http_api_transaction_lookup_and_submit() -> None:
         assert tx_status == "200 OK"
         assert tx_body["location"] == "mempool"
         assert tx_body["transaction"]["txid"] == transaction.txid()
+
+
+def test_http_api_exposes_pq_wallet_transaction_fields(monkeypatch) -> None:
+    monkeypatch.setattr("chipcoin.consensus.validation.pq_support_is_active", lambda *, network, height: True)
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="testnet")
+        owner = wallet_key_from_mldsa44_seed(bytes(range(32)))
+        recipient = wallet_key(1)
+        funding_outpoint = OutPoint(txid="12" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=1_234_567_890, owner=owner)
+        built = TransactionSigner(owner).build_signed_transaction(
+            spend_candidates=service.list_spendable_outputs(owner.address),
+            recipient=recipient.address,
+            amount_chipbits=1_000_000_000,
+            fee_chipbits=1_000,
+            metadata={"kind": "payment", "purpose": "pq-http-smoke"},
+            network=service.network,
+        )
+        app = HttpApiApp(service)
+        raw_hex = serialize_transaction(built.transaction).hex()
+
+        address_status, _, address_body = _call_wsgi(app, method="GET", path=f"/v1/address/{owner.address}")
+        utxos_status, _, utxos_body = _call_wsgi(app, method="GET", path=f"/v1/address/{owner.address}/utxos")
+        submit_status, _, submit_body = _call_wsgi(app, method="POST", path="/v1/tx/submit", body={"raw_hex": raw_hex})
+        tx_status, _, tx_body = _call_wsgi(app, method="GET", path=f"/v1/tx/{built.transaction.txid()}")
+        mempool_status, _, mempool_body = _call_wsgi(app, method="GET", path="/v1/mempool")
+        mined = _mine_block(service.build_candidate_block(wallet_key(2).address).block)
+        service.apply_block(mined)
+        chain_tx_status, _, chain_tx_body = _call_wsgi(app, method="GET", path=f"/v1/tx/{built.transaction.txid()}")
+        owner_history_status, _, owner_history = _call_wsgi(
+            app,
+            method="GET",
+            path=f"/v1/address/{owner.address}/history",
+            query="limit=10&order=desc",
+        )
+        recipient_history_status, _, recipient_history = _call_wsgi(
+            app,
+            method="GET",
+            path=f"/v1/address/{recipient.address}/history",
+            query="limit=10&order=desc",
+        )
+
+        assert address_status == "200 OK"
+        assert address_body["address"] == owner.address
+        assert address_body["spendable_balance_chipbits"] == 1_234_567_890
+        assert utxos_status == "200 OK"
+        assert utxos_body[0]["txid"] == funding_outpoint.txid
+        assert submit_status == "200 OK"
+        assert submit_body["accepted"] is True
+        assert submit_body["fee"] == 1_000
+        assert tx_status == "200 OK"
+        assert tx_body["location"] == "mempool"
+        assert tx_body["transaction"]["version"] == 2
+        assert tx_body["transaction"]["inputs"][0]["sig_scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert tx_body["transaction"]["inputs"][0]["sig_scheme_name"] == "mldsa44"
+        assert tx_body["transaction"]["outputs"][0]["recipient"] == recipient.address
+        assert tx_body["transaction"]["outputs"][0]["address_kind"] == "legacy"
+        assert tx_body["transaction"]["outputs"][0]["address_scheme_id"] == 0
+        assert tx_body["transaction"]["outputs"][1]["recipient"] == owner.address
+        assert tx_body["transaction"]["outputs"][1]["address_kind"] == "pq"
+        assert tx_body["transaction"]["outputs"][1]["address_scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert mempool_status == "200 OK"
+        assert mempool_body[0]["txid"] == built.transaction.txid()
+        assert mempool_body[0]["metadata"]["purpose"] == "pq-http-smoke"
+        assert chain_tx_status == "200 OK"
+        assert chain_tx_body["location"] == "chain"
+        assert chain_tx_body["transaction"]["inputs"][0]["sig_scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert owner_history_status == "200 OK"
+        assert owner_history[0]["txid"] == built.transaction.txid()
+        assert owner_history[0]["incoming_chipbits"] == 234_566_890
+        assert owner_history[0]["net_chipbits"] == 234_566_890
+        assert recipient_history_status == "200 OK"
+        assert recipient_history[0]["txid"] == built.transaction.txid()
+        assert recipient_history[0]["incoming_chipbits"] == 1_000_000_000
 
 
 def test_http_api_submit_tx_reports_invalid_and_validation_errors() -> None:
