@@ -878,6 +878,9 @@ def test_http_api_blocks_and_block_lookup_by_height_and_hash() -> None:
         assert by_height_status == "200 OK"
         assert by_height_body["block_hash"] == second.block_hash()
         assert by_height_body["height"] == 1
+        assert by_height_body["transactions"][0]["version"] == 1
+        assert by_height_body["transactions"][0]["outputs"][0]["address_kind"] == "unknown"
+        assert by_height_body["transactions"][0]["outputs"][0]["address_scheme_id"] is None
         assert by_hash_status == "200 OK"
         assert by_hash_body["block_hash"] == first.block_hash()
         assert by_hash_body["height"] == 0
@@ -961,9 +964,13 @@ def test_http_api_exposes_pq_wallet_transaction_fields(monkeypatch) -> None:
 
         assert address_status == "200 OK"
         assert address_body["address"] == owner.address
+        assert address_body["address_kind"] == "pq"
+        assert address_body["address_scheme_id"] == SIG_SCHEME_ML_DSA_44
         assert address_body["spendable_balance_chipbits"] == 1_234_567_890
         assert utxos_status == "200 OK"
         assert utxos_body[0]["txid"] == funding_outpoint.txid
+        assert utxos_body[0]["address_kind"] == "pq"
+        assert utxos_body[0]["address_scheme_id"] == SIG_SCHEME_ML_DSA_44
         assert submit_status == "200 OK"
         assert submit_body["accepted"] is True
         assert submit_body["fee"] == 1_000
@@ -986,10 +993,17 @@ def test_http_api_exposes_pq_wallet_transaction_fields(monkeypatch) -> None:
         assert chain_tx_body["transaction"]["inputs"][0]["sig_scheme_id"] == SIG_SCHEME_ML_DSA_44
         assert owner_history_status == "200 OK"
         assert owner_history[0]["txid"] == built.transaction.txid()
+        assert owner_history[0]["transaction_version"] == 2
+        assert owner_history[0]["address_kind"] == "pq"
+        assert owner_history[0]["address_scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert owner_history[0]["input_schemes"][0]["sig_scheme_id"] == SIG_SCHEME_ML_DSA_44
+        assert owner_history[0]["input_schemes"][0]["sig_scheme_name"] == "mldsa44"
         assert owner_history[0]["incoming_chipbits"] == 234_566_890
         assert owner_history[0]["net_chipbits"] == 234_566_890
         assert recipient_history_status == "200 OK"
         assert recipient_history[0]["txid"] == built.transaction.txid()
+        assert recipient_history[0]["address_kind"] == "legacy"
+        assert recipient_history[0]["address_scheme_id"] == 0
         assert recipient_history[0]["incoming_chipbits"] == 1_000_000_000
 
 
@@ -1117,9 +1131,13 @@ def test_http_api_address_summary_and_utxos() -> None:
         assert summary_body["confirmed_balance_chipbits"] == 125
         assert summary_body["immature_balance_chipbits"] == 50
         assert summary_body["spendable_balance_chipbits"] == 75
+        assert summary_body["address_kind"] == "legacy"
+        assert summary_body["address_scheme_id"] == 0
         assert utxos_status == "200 OK"
         assert len(utxos_body) == 2
         assert {row["txid"] for row in utxos_body} == {"33" * 32, "44" * 32}
+        assert {row["address_kind"] for row in utxos_body} == {"legacy"}
+        assert {row["address_scheme_id"] for row in utxos_body} == {0}
 
 
 def test_http_api_address_history() -> None:
@@ -1145,6 +1163,12 @@ def test_http_api_address_history() -> None:
         assert status == "200 OK"
         assert len(body) >= 1
         assert body[0]["txid"] == transaction.txid()
+        assert body[0]["transaction_version"] == 1
+        assert body[0]["address_kind"] == "legacy"
+        assert body[0]["address_scheme_id"] == 0
+        assert body[0]["input_schemes"][0]["sig_scheme_id"] == 0
+        assert body[0]["input_schemes"][0]["sig_scheme_name"] == "secp256k1-ecdsa"
+        assert body[0]["output_schemes"][0]["address_kind"] == "legacy"
         assert body[0]["incoming_chipbits"] > 0
         assert "net_chipbits" in body[0]
 
@@ -1220,6 +1244,11 @@ def test_http_api_mempool_includes_machine_friendly_fee_rate() -> None:
         assert status == "200 OK"
         assert len(body) == 1
         assert body[0]["txid"] == transaction.txid()
+        assert body[0]["version"] == 1
+        assert body[0]["inputs"][0]["sig_scheme_id"] == 0
+        assert body[0]["inputs"][0]["sig_scheme_name"] == "secp256k1-ecdsa"
+        assert body[0]["outputs"][0]["address_kind"] == "legacy"
+        assert body[0]["outputs"][0]["address_scheme_id"] == 0
         assert "fee_rate" in body[0]
         assert "fee_rate_chipbits_per_weight_unit" in body[0]
         assert isinstance(body[0]["fee_rate_chipbits_per_weight_unit"], float)
@@ -1618,10 +1647,17 @@ def test_http_api_stable_client_subset_shapes() -> None:
         assert blocks and {"height", "block_hash", "timestamp", "bits", "difficulty_target", "difficulty_ratio", "cumulative_work", "weight_units", "transaction_count"}.issubset(blocks[0].keys())
         assert {"block_hash", "height", "header", "cumulative_work", "weight_units", "fees_chipbits", "miner_payout_chipbits", "node_reward_payouts", "transaction_count", "transactions"}.issubset(block.keys())
         assert {"location", "block_hash", "height", "transaction"}.issubset(tx.keys())
-        assert {"address", "confirmed_balance_chipbits", "immature_balance_chipbits", "spendable_balance_chipbits", "utxo_count"}.issubset(address.keys())
+        assert {"address", "address_kind", "address_scheme_id", "confirmed_balance_chipbits", "immature_balance_chipbits", "spendable_balance_chipbits", "utxo_count"}.issubset(address.keys())
+        assert block["transactions"] and {"version", "inputs", "outputs"}.issubset(block["transactions"][0].keys())
         assert isinstance(utxos, list)
+        assert all({"address_kind", "address_scheme_id"}.issubset(row.keys()) for row in utxos)
         assert isinstance(history, list)
+        assert all(
+            {"transaction_version", "address_kind", "address_scheme_id", "input_schemes", "output_schemes"}.issubset(row.keys())
+            for row in history
+        )
         assert isinstance(mempool, list)
+        assert all({"version", "inputs", "outputs"}.issubset(row.keys()) for row in mempool)
         assert peers and {
             "host",
             "port",

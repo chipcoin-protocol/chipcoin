@@ -78,6 +78,8 @@ from ..storage.native_rewards import (
 from ..storage.node_registry import SQLiteNodeRegistryRepository
 from ..storage.peers import SQLitePeerRepository
 from ..utils.time import unix_time
+from ..crypto.addresses import parse_address
+from ..crypto.pq import get_signature_scheme, is_known_signature_scheme
 from .mempool import AcceptedTransaction, MempoolManager, MempoolPolicy
 from .messages import GetBlocksMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector
 from .mining import BlockTemplate, MiningCoordinator, build_coinbase_transaction, transaction_weight_units
@@ -141,6 +143,55 @@ def _peer_sort_key(peer: dict[str, object]) -> tuple[int, int, str, int]:
     score = int(peer["score"]) if isinstance(peer.get("score"), int) else 0
     disconnects = int(peer["disconnect_count"]) if isinstance(peer.get("disconnect_count"), int) else 0
     return (score, -disconnects, str(peer["host"]), int(peer["port"]))
+
+
+def _address_metadata(address: str) -> dict[str, object]:
+    """Return stable address scheme metadata for API diagnostics."""
+
+    try:
+        info = parse_address(address)
+    except ValueError:
+        return {
+            "address_kind": "unknown",
+            "address_scheme_id": None,
+        }
+    return {
+        "address_kind": info.kind,
+        "address_scheme_id": info.scheme_id,
+    }
+
+
+def _signature_scheme_name(scheme_id: int) -> str | None:
+    """Return the registered signature scheme name for API diagnostics."""
+
+    if not is_known_signature_scheme(scheme_id):
+        return None
+    return get_signature_scheme(scheme_id).name
+
+
+def _transaction_scheme_metadata(transaction: Transaction) -> dict[str, object]:
+    """Return non-consensus transaction metadata useful for explorers."""
+
+    return {
+        "version": transaction.version,
+        "inputs": [
+            {
+                "txid": tx_input.previous_output.txid,
+                "index": tx_input.previous_output.index,
+                "sig_scheme_id": tx_input.sig_scheme_id,
+                "sig_scheme_name": _signature_scheme_name(tx_input.sig_scheme_id),
+            }
+            for tx_input in transaction.inputs
+        ],
+        "outputs": [
+            {
+                "value": int(tx_output.value),
+                "recipient": tx_output.recipient,
+                **_address_metadata(tx_output.recipient),
+            }
+            for tx_output in transaction.outputs
+        ],
+    }
 
 
 def _disconnect_sort_key(peer: dict[str, object]) -> tuple[int, int, str, int]:
@@ -2269,6 +2320,7 @@ class NodeService:
                 {
                     "txid": transaction.txid(),
                     "weight_units": len(self._serialize_transaction(transaction)),
+                    **_transaction_scheme_metadata(transaction),
                 }
                 for transaction in block.transactions
             ],
@@ -2300,6 +2352,7 @@ class NodeService:
             diagnostics.append(
                 {
                     "txid": entry.transaction.txid(),
+                    **_transaction_scheme_metadata(entry.transaction),
                     "metadata": dict(entry.transaction.metadata),
                     "fee_chipbits": entry.fee,
                     "weight_units": weight_units,
@@ -2618,6 +2671,7 @@ class NodeService:
                     "txid": outpoint.txid,
                     "vout": outpoint.index,
                     "amount_chipbits": int(entry.output.value),
+                    **_address_metadata(entry.output.recipient),
                     "coinbase": bool(entry.is_coinbase),
                     "mature": mature,
                     "status": "unspent",
@@ -2637,6 +2691,7 @@ class NodeService:
         spendable_balance_chipbits = sum(int(utxo["amount_chipbits"]) for utxo in utxos if utxo["mature"])
         return {
             "address": recipient,
+            **_address_metadata(recipient),
             "confirmed_balance_chipbits": confirmed_balance_chipbits,
             "immature_balance_chipbits": immature_balance_chipbits,
             "spendable_balance_chipbits": spendable_balance_chipbits,
@@ -3945,15 +4000,32 @@ class NodeService:
                         if spent_entry is not None and spent_entry.output.recipient == recipient:
                             outgoing_chipbits += int(spent_entry.output.value)
                 if incoming_chipbits or outgoing_chipbits:
+                    recipient_metadata = _address_metadata(recipient)
                     rows.append(
                         {
                             "block_height": height,
                             "block_hash": block.block_hash(),
                             "txid": transaction.txid(),
+                            "transaction_version": transaction.version,
                             "incoming_chipbits": incoming_chipbits,
                             "outgoing_chipbits": outgoing_chipbits,
                             "net_chipbits": incoming_chipbits - outgoing_chipbits,
                             "timestamp": block.header.timestamp,
+                            **recipient_metadata,
+                            "input_schemes": [
+                                {
+                                    "sig_scheme_id": tx_input.sig_scheme_id,
+                                    "sig_scheme_name": _signature_scheme_name(tx_input.sig_scheme_id),
+                                }
+                                for tx_input in transaction.inputs
+                            ],
+                            "output_schemes": [
+                                {
+                                    "recipient": tx_output.recipient,
+                                    **_address_metadata(tx_output.recipient),
+                                }
+                                for tx_output in transaction.outputs
+                            ],
                         }
                     )
                 if not is_special_node_transaction(transaction):
