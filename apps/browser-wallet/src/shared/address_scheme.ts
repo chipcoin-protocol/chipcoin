@@ -31,6 +31,13 @@ export interface SendRecipientValidation {
   error: string | null;
 }
 
+export interface WatchOnlyAddressValidation {
+  status: "empty" | "invalid" | "watch_only" | "not_watch_only" | "unsupported_scheme";
+  normalizedAddress: string | null;
+  scheme: SchemeUiInfo | null;
+  error: string | null;
+}
+
 const LEGACY_SCHEME: SchemeUiInfo = {
   kind: "legacy",
   label: "Legacy CHC",
@@ -175,6 +182,43 @@ export function validateBrowserSendRecipient(recipient: string): SendRecipientVa
     status: "unsupported_scheme",
     scheme,
     error: "Recipient uses an unsupported or unknown address scheme.",
+  };
+}
+
+export function validateWatchOnlyAddress(address: string): WatchOnlyAddressValidation {
+  const trimmed = address.trim();
+  if (!trimmed) {
+    return { status: "empty", normalizedAddress: null, scheme: null, error: "Address is required." };
+  }
+
+  let parsed: ReturnType<typeof parseAddress>;
+  try {
+    parsed = parseAddress(trimmed);
+  } catch {
+    return { status: "invalid", normalizedAddress: null, scheme: null, error: "Enter a valid CHCQ address." };
+  }
+
+  const scheme = classifyAddressScheme({
+    address: trimmed,
+    address_kind: parsed.kind,
+    address_scheme_id: parsed.schemeId,
+  });
+  if (scheme.kind === "pq") {
+    return { status: "watch_only", normalizedAddress: trimmed, scheme, error: null };
+  }
+  if (scheme.kind === "legacy") {
+    return {
+      status: "not_watch_only",
+      normalizedAddress: trimmed,
+      scheme,
+      error: "Legacy CHC addresses are already managed by the wallet and do not need CHCQ watch-only tracking.",
+    };
+  }
+  return {
+    status: "unsupported_scheme",
+    normalizedAddress: trimmed,
+    scheme,
+    error: "Only supported CHCQ post-quantum addresses can be added as watch-only.",
   };
 }
 

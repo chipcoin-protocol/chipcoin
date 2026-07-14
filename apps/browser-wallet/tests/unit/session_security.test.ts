@@ -83,6 +83,7 @@ describe("wallet session security", () => {
     const { loadSubmittedTransactions } = await import("../../src/storage/session_store");
     const { loadWalletDataCache, saveWalletDataCache } = await import("../../src/storage/wallet_data_store");
     const { loadWalletRecord } = await import("../../src/storage/wallet_store");
+    const { loadWatchOnlyAddressRecords, saveWatchOnlyAddressRecords } = await import("../../src/storage/watch_only_store");
 
     const state = await session.createWallet("phase6-password");
     await session.rememberSubmittedTransaction(createSubmittedTransactionRecord({
@@ -98,6 +99,10 @@ describe("wallet session security", () => {
       history: [],
       updatedAt: Date.now(),
     });
+    await saveWatchOnlyAddressRecords([{
+      address: "CHCQCqjJWcT8Jqxvmn9xspxBWnTojXQp93Wqu9sP5F6GkFd1f5xKiRhE",
+      addedAt: Date.now(),
+    }]);
 
     await session.removeWallet();
 
@@ -110,5 +115,6 @@ describe("wallet session security", () => {
       history: [],
       updatedAt: null,
     });
+    await expect(loadWatchOnlyAddressRecords()).resolves.toEqual([]);
   });
 });

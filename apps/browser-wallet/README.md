@@ -12,14 +12,15 @@ CHCQ status:
 
 | Status | Browser wallet behavior |
 | --- | --- |
-| Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, and receive/address display badges |
+| Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, receive/address display badges, and CHCQ watch-only balance/history tracking |
 | Scheduled | Testnet consensus activation at height `30000` for CHCQ outputs and v2 wallet spends |
 | Not yet available | Browser-side ML-DSA signing, CHCQ wallet generation, CHCQ spending, and Send to CHCQ recipients |
 
 Before activation, testnet consensus rejects CHCQ outputs and CHCQ spends. After
 activation, the browser wallet will still block CHCQ sending until the full
 ML-DSA browser signing path is implemented and verified against the node
-consensus backend.
+consensus backend. Watch-only CHCQ tracking stores only public addresses and
+optional local labels; it does not make CHCQ funds browser-spendable.
 
 Build commands:
 - `npm run build:chrome`
@@ -127,6 +128,7 @@ Included in this milestone:
 - local transaction build, sign, serialize, and submit aligned with the current Chipcoin wallet primitives
 - CHCQ address recognition for API/UI compatibility, while CHCQ sending and browser-side PQ signing remain disabled
 - CHCQ labels for receive/address display and transaction metadata returned by the node API
+- CHCQ watch-only balance/history tracking without keys or signing
 - submitted transaction tracking and confirmation polling
 
 Manual smoke test:
@@ -144,6 +146,7 @@ Not included:
 - multisig
 - multiple accounts
 - browser-side CHCQ wallet generation or PQ transaction signing
+- CHCQ spending from watch-only addresses
 - mainnet support
 
 Storage model:

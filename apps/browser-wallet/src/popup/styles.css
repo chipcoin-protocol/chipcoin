@@ -38,7 +38,7 @@ a {
 .nav-tabs {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
   margin-bottom: 12px;
 }
 
@@ -318,4 +318,22 @@ select {
 
 .tx-link:hover {
   color: #ffe3b6;
+}
+
+.watch-list {
+  display: grid;
+  gap: 12px;
+}
+
+.watch-card {
+  background: rgba(16, 23, 18, 0.48);
+  border: 1px solid rgba(201, 169, 101, 0.16);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.watch-card h4 {
+  margin: 0;
 }

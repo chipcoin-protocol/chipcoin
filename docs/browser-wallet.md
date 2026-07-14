@@ -7,9 +7,10 @@ The Chipcoin browser wallet is a minimal Chrome and Firefox extension for Chipco
 Post-quantum CHCQ signing is intentionally not enabled in the browser wallet
 yet. The extension recognizes CHCQ addresses for validation/API compatibility,
 shows CHCQ labels where address or transaction scheme metadata is available,
-but it blocks CHCQ recipients in the Send flow and does not generate CHCQ wallet
-keys or v2 PQ spends. Browser-generated CHCQ signatures must verify against the
-node consensus backend before CHCQ sending is exposed in the extension.
+and can track CHCQ addresses as watch-only. It blocks CHCQ recipients in the
+Send flow and does not generate CHCQ wallet keys or v2 PQ spends.
+Browser-generated CHCQ signatures must verify against the node consensus backend
+before CHCQ sending is exposed in the extension.
 
 When CHCQ support is later added, the browser wallet must warn that deterministic
 ML-DSA signing is experimental testnet functionality and is not a substitute for
@@ -26,13 +27,14 @@ It currently supports:
 - local transaction build, sign, and broadcast
 - CHCQ address recognition for testnet API compatibility, with CHCQ sending
   disabled until browser PQ signing is complete
+- CHCQ watch-only tracking for balance/history visibility only
 - network switching between `devnet` and the public `testnet` candidate
 
 ## CHCQ Status
 
 | Status | Browser wallet behavior |
 | --- | --- |
-| Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, and receive/address display badges |
+| Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, receive/address display badges, and CHCQ watch-only balance/history tracking |
 | Scheduled | Testnet consensus activation at height `30000` for CHCQ outputs and v2 wallet spends |
 | Not yet available | Browser-side ML-DSA signing, CHCQ wallet generation, CHCQ spending, and Send to CHCQ recipients |
 
@@ -42,8 +44,9 @@ disabled until the full ML-DSA browser signing path is implemented, tested
 against frozen vectors, and verified by the node consensus backend.
 
 CHCQ receive/address display in the extension is recognition-only: the browser
-wallet can label post-quantum addresses, but it cannot yet create or spend a
-browser-managed CHCQ wallet.
+wallet can label and watch post-quantum addresses, but it cannot yet create or
+spend a browser-managed CHCQ wallet. Watch-only CHCQ records store only public
+addresses and optional local labels.
 
 ## Prerequisites
 

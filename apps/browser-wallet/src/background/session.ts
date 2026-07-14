@@ -30,6 +30,7 @@ import {
 } from "../shared/constants";
 import { minutesToMilliseconds } from "../shared/time";
 import { normalizeNodeEndpoint, requireMinPasswordLength } from "../shared/validation";
+import { validateWatchOnlyAddress } from "../shared/address_scheme";
 import type {
   AppState,
   EncryptedWalletRecord,
@@ -38,6 +39,8 @@ import type {
   WalletDataCache,
   WalletOverviewState,
   WalletSettings,
+  WatchOnlyAddressRecord,
+  WatchOnlyAddressState,
 } from "../state/app_state";
 import { loadSettings, saveSettings } from "../storage/preferences_store";
 import {
@@ -51,6 +54,11 @@ import {
   saveWalletDataCache,
 } from "../storage/wallet_data_store";
 import { clearWalletRecord, loadWalletRecord, saveWalletRecord } from "../storage/wallet_store";
+import {
+  clearAllWatchOnlyAddressRecords,
+  loadWatchOnlyAddressRecords,
+  saveWatchOnlyAddressRecords,
+} from "../storage/watch_only_store";
 import { AUTO_LOCK_ALARM } from "./alarms";
 
 let activeSession: UnlockedSession | null = null;
@@ -101,7 +109,21 @@ export async function unlockWallet(password: string): Promise<AppState> {
     record.iterations,
   );
   const settings = await loadSettings();
-  activeSession = makeUnlockedSession(secret, settings.autoLockMinutes, record.accountIndex);
+  if (secret.walletType === "private_key") {
+    if (!secret.privateKeyHex) {
+      throw new Error("Wallet payload does not include a private key.");
+    }
+    activeSession = makeUnlockedSession({ walletType: "private_key", privateKeyHex: secret.privateKeyHex }, settings.autoLockMinutes, record.accountIndex);
+  } else {
+    if (!secret.recoveryPhrase) {
+      throw new Error("Wallet payload does not include a recovery phrase.");
+    }
+    activeSession = makeUnlockedSession(
+      { walletType: "seed_phrase", recoveryPhrase: secret.recoveryPhrase, accountIndex: secret.accountIndex },
+      settings.autoLockMinutes,
+      record.accountIndex,
+    );
+  }
   await scheduleAutoLock(settings.autoLockMinutes);
   await reconcileSubmittedTransactions(settings, activeSession.address, { forceCheckAll: true });
   await refreshWalletDataCache(settings, activeSession.address, { includeHistory: false });
@@ -121,6 +143,7 @@ export async function removeWallet(): Promise<AppState> {
   await clearWalletRecord();
   await clearAllSubmittedTransactions();
   await clearAllWalletDataCaches();
+  await clearAllWatchOnlyAddressRecords();
   return getAppState();
 }
 
@@ -194,6 +217,45 @@ export async function refreshWalletData(): Promise<AppState> {
     await reconcileSubmittedTransactions(settings, activeSession.address, { forceCheckAll: true });
     await refreshWalletDataCache(settings, activeSession.address, { includeHistory: false });
   }
+  return getAppState();
+}
+
+export async function addWatchOnlyAddress(args: { address: string; label?: string }): Promise<AppState> {
+  await touchSession();
+  const settings = await loadSettings();
+  const walletRecord = await requireWalletRecord();
+  const validation = validateWatchOnlyAddress(args.address);
+  if (validation.status !== "watch_only" || !validation.normalizedAddress) {
+    throw new Error(validation.error ?? "Only supported CHCQ post-quantum addresses can be added as watch-only.");
+  }
+  if (validation.normalizedAddress === walletRecord.address) {
+    throw new Error("The active wallet address is already managed by this wallet.");
+  }
+
+  const current = await loadWatchOnlyAddressRecords(settings.expectedNetwork);
+  if (current.some((record) => record.address === validation.normalizedAddress)) {
+    throw new Error("This CHCQ watch-only address is already tracked.");
+  }
+
+  await saveWatchOnlyAddressRecords([
+    ...current,
+    {
+      address: validation.normalizedAddress,
+      label: args.label?.trim() || undefined,
+      addedAt: Date.now(),
+    },
+  ], settings.expectedNetwork);
+  return getAppState();
+}
+
+export async function removeWatchOnlyAddress(address: string): Promise<AppState> {
+  await touchSession();
+  const settings = await loadSettings();
+  const current = await loadWatchOnlyAddressRecords(settings.expectedNetwork);
+  await saveWatchOnlyAddressRecords(
+    current.filter((record) => record.address !== address.trim()),
+    settings.expectedNetwork,
+  );
   return getAppState();
 }
 
@@ -274,12 +336,16 @@ export async function submitTransaction(args: {
 export async function getAppState(): Promise<AppState> {
   await touchSession();
   const [walletRecord, settings] = await Promise.all([loadWalletRecord(), loadSettings()]);
-  const [submittedTransactions, walletDataCache] = await Promise.all([
+  const [submittedTransactions, walletDataCache, watchOnlyRecords] = await Promise.all([
     loadSubmittedTransactions(settings.expectedNetwork),
     loadWalletDataCache(settings.expectedNetwork),
+    loadWatchOnlyAddressRecords(settings.expectedNetwork),
   ]);
 
-  const overview = await buildOverview(walletRecord, settings, submittedTransactions, walletDataCache);
+  const [overview, watchOnlyAddresses] = await Promise.all([
+    buildOverview(walletRecord, settings, submittedTransactions, walletDataCache),
+    buildWatchOnlyState(settings, watchOnlyRecords),
+  ]);
   return {
     hasWallet: walletRecord !== null,
     isLocked: activeSession === null,
@@ -292,6 +358,7 @@ export async function getAppState(): Promise<AppState> {
     autoLockMinutes: settings.autoLockMinutes,
     nodeStatus: overview.status,
     overview,
+    watchOnlyAddresses,
   };
 }
 
@@ -458,6 +525,39 @@ async function refreshWalletDataCache(
   };
   await saveWalletDataCache(next, settings.expectedNetwork);
   return next;
+}
+
+async function buildWatchOnlyState(
+  settings: WalletSettings,
+  records: WatchOnlyAddressRecord[],
+): Promise<WatchOnlyAddressState[]> {
+  if (records.length === 0) {
+    return [];
+  }
+  const client = ChipcoinApiClient.fromBaseUrl(settings.nodeApiBaseUrl);
+  return Promise.all(records.map(async (record) => {
+    try {
+      const [summary, history] = await Promise.all([
+        client.address(record.address, API_TIMEOUTS_MS.summary),
+        client.history(record.address, 10, API_TIMEOUTS_MS.history),
+      ]);
+      return {
+        ...record,
+        summary,
+        history,
+        error: null,
+        updatedAt: Date.now(),
+      };
+    } catch (error) {
+      return {
+        ...record,
+        summary: null,
+        history: [],
+        error: error instanceof Error ? error.message : "Unable to load watch-only address data.",
+        updatedAt: null,
+      };
+    }
+  }));
 }
 
 async function reconcileSubmittedTransactions(

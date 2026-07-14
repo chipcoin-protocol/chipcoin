@@ -64,6 +64,19 @@ export interface WalletDataCache {
   updatedAt: number | null;
 }
 
+export interface WatchOnlyAddressRecord {
+  address: string;
+  label?: string;
+  addedAt: number;
+}
+
+export interface WatchOnlyAddressState extends WatchOnlyAddressRecord {
+  summary: AddressSummary | null;
+  history: HistoryEntry[];
+  error: string | null;
+  updatedAt: number | null;
+}
+
 export interface AppState {
   hasWallet: boolean;
   isLocked: boolean;
@@ -76,4 +89,5 @@ export interface AppState {
   autoLockMinutes: number;
   nodeStatus: NodeStatus | null;
   overview: WalletOverviewState;
+  watchOnlyAddresses: WatchOnlyAddressState[];
 }

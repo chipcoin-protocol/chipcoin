@@ -18,6 +18,7 @@ declare const __CHIPCOIN_DEFAULT_EXPLORER_URL__: string;
 export const DEFAULT_NODE_ENDPOINT = __CHIPCOIN_DEFAULT_NODE_ENDPOINT__;
 export const DEFAULT_EXPLORER_URL = __CHIPCOIN_DEFAULT_EXPLORER_URL__;
 export const DEFAULT_NETWORK: SupportedNetworkId = "testnet";
+export const TESTNET_PQ_ACTIVATION_HEIGHT = 30_000;
 export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
   {
     id: "devnet",
@@ -63,6 +64,7 @@ export const STORAGE_KEYS = {
   settings: "chipcoin.settings",
   submittedTransactions: "chipcoin.submittedTransactions",
   walletDataCache: "chipcoin.walletDataCache",
+  watchOnlyAddresses: "chipcoin.watchOnlyAddresses",
 } as const;
 
 export function isSupportedNetwork(value: string): value is SupportedNetworkId {

@@ -1,5 +1,6 @@
 import type { BackgroundRequest, BackgroundResponse } from "../state/actions";
 import {
+  addWatchOnlyAddress,
   createWallet,
   createWalletFromSeed,
   exportPrivateKey,
@@ -12,6 +13,7 @@ import {
   importWallet,
   lockWallet,
   removeWallet,
+  removeWatchOnlyAddress,
   refreshWalletData,
   recoverWalletFromSeed,
   submitTransaction,
@@ -83,6 +85,10 @@ async function handleMessage(message: BackgroundRequest): Promise<BackgroundResp
         return { ok: true, payload: await updateNodeEndpoint(message.nodeApiBaseUrl, message.expectedNetwork) };
       case "wallet:refresh":
         return { ok: true, payload: await refreshWalletData() };
+      case "wallet:addWatchOnlyAddress":
+        return { ok: true, payload: await addWatchOnlyAddress(message) };
+      case "wallet:removeWatchOnlyAddress":
+        return { ok: true, payload: await removeWatchOnlyAddress(message.address) };
       case "wallet:submit":
         return { ok: true, payload: await submitTransaction(message) };
       default:

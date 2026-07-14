@@ -10,8 +10,9 @@ import { Overview } from "./routes/Overview";
 import { Send } from "./routes/Send";
 import { Settings } from "./routes/Settings";
 import { SetupWallet } from "./routes/SetupWallet";
+import { WatchOnly } from "./routes/WatchOnly";
 
-type Route = "overview" | "activity" | "send" | "backup" | "settings";
+type Route = "overview" | "activity" | "send" | "watch" | "backup" | "settings";
 
 export function App(): JSX.Element {
   const [route, setRoute] = useState<Route>("overview");
@@ -68,12 +69,14 @@ export function App(): JSX.Element {
         <button className={route === "overview" ? "is-active" : ""} onClick={() => setRoute("overview")}>Overview</button>
         <button className={route === "activity" ? "is-active" : ""} onClick={() => setRoute("activity")}>Activity</button>
         <button className={route === "send" ? "is-active" : ""} onClick={() => setRoute("send")}>Send</button>
+        <button className={route === "watch" ? "is-active" : ""} onClick={() => setRoute("watch")}>Watch</button>
         <button className={route === "backup" ? "is-active" : ""} onClick={() => setRoute("backup")}>Backup</button>
         <button className={route === "settings" ? "is-active" : ""} onClick={() => setRoute("settings")}>Settings</button>
       </nav>
       {route === "overview" && <Overview state={state} isLoading={isLoadingState} onRefresh={loadState} />}
       {route === "activity" && <Activity state={state} />}
       {route === "send" && <Send state={state} onRefresh={loadState} />}
+      {route === "watch" && <WatchOnly state={state} onUpdated={setState} />}
       {route === "backup" && <Backup />}
       {route === "settings" && <Settings state={state} onUpdated={setState} onOpenBackup={() => setRoute("backup")} />}
     </main>

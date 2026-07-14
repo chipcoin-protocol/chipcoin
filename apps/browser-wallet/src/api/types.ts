@@ -58,6 +58,8 @@ export interface TipResponse {
 
 export interface AddressSummary {
   address: string;
+  address_kind?: "legacy" | "pq" | string;
+  address_scheme_id?: number | null;
   confirmed_balance_chipbits: number;
   immature_balance_chipbits: number;
   spendable_balance_chipbits: number;

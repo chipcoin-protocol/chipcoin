@@ -10,6 +10,7 @@ import {
   classifySignatureScheme,
   classifyTransactionSchemes,
   validateBrowserSendRecipient,
+  validateWatchOnlyAddress,
 } from "../../src/shared/address_scheme";
 import { privateKeyHexToAddress } from "../../src/crypto/addresses";
 
@@ -160,6 +161,37 @@ describe("send recipient validation", () => {
     expect(validateBrowserSendRecipient(UNKNOWN_CHCQ_ADDRESS)).toMatchObject({
       status: "unsupported_scheme",
       error: "Recipient uses an unsupported or unknown address scheme.",
+    });
+  });
+});
+
+describe("watch-only CHCQ validation", () => {
+  it("allows supported CHCQ addresses as watch-only", () => {
+    expect(validateWatchOnlyAddress(CHCQ_ADDRESS)).toMatchObject({
+      status: "watch_only",
+      normalizedAddress: CHCQ_ADDRESS,
+      error: null,
+    });
+  });
+
+  it("rejects legacy CHC addresses for CHCQ watch-only tracking", () => {
+    expect(validateWatchOnlyAddress(LEGACY_ADDRESS)).toMatchObject({
+      status: "not_watch_only",
+      error: "Legacy CHC addresses are already managed by the wallet and do not need CHCQ watch-only tracking.",
+    });
+  });
+
+  it("rejects invalid watch-only addresses distinctly from valid CHCQ", () => {
+    expect(validateWatchOnlyAddress("not-a-valid-address")).toMatchObject({
+      status: "invalid",
+      error: "Enter a valid CHCQ address.",
+    });
+  });
+
+  it("rejects unsupported CHCQ schemes for watch-only tracking", () => {
+    expect(validateWatchOnlyAddress(UNKNOWN_CHCQ_ADDRESS)).toMatchObject({
+      status: "unsupported_scheme",
+      error: "Only supported CHCQ post-quantum addresses can be added as watch-only.",
     });
   });
 });

@@ -17,6 +17,8 @@ export type BackgroundRequest =
   | { type: "wallet:exportRecoveryPhrase"; password?: string; confirmActiveSession?: boolean }
   | { type: "wallet:updateNode"; nodeApiBaseUrl: string; expectedNetwork: SupportedNetworkId }
   | { type: "wallet:refresh" }
+  | { type: "wallet:addWatchOnlyAddress"; address: string; label?: string }
+  | { type: "wallet:removeWatchOnlyAddress"; address: string }
   | { type: "wallet:submit"; recipient: string; amountChipbits: number; feeChipbits: number };
 
 export type BackgroundSuccess<T> = { ok: true; payload: T };
