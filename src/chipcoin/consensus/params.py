@@ -37,6 +37,7 @@ class ConsensusParams:
     max_attestations_per_verifier_per_window: int
     target_block_time_activation_height: int = 0
     legacy_target_block_time_seconds: int | None = None
+    pq_support_activation_height: int | None = None
 
 
 def target_block_time_seconds_for_height(height: int, params: ConsensusParams) -> int:

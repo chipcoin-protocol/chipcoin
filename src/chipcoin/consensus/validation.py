@@ -393,7 +393,7 @@ def _validate_transaction_outputs_for_activation(transaction: Transaction, conte
             info = parse_address(output.recipient)
         except ValueError as exc:
             raise ContextualValidationError("Transaction output recipient is not a valid CHCQ address.") from exc
-        if info.kind == "pq" and not pq_support_is_active(network=context.network, height=context.height):
+        if info.kind == "pq" and not _pq_support_active(context):
             raise ContextualValidationError("CHCQ outputs are not active on this network at this height.")
 
 
@@ -419,7 +419,7 @@ def _validate_standard_input_signature(
         _validate_legacy_input_signature(transaction, input_index, tx_input, previous_output, context)
         return
 
-    if transaction.version >= PQ_TRANSACTION_VERSION and not pq_support_is_active(network=context.network, height=context.height):
+    if transaction.version >= PQ_TRANSACTION_VERSION and not _pq_support_active(context):
         raise ContextualValidationError("Transaction v2 wallet spends are not active on this network at this height.")
 
     if address_info.kind == "legacy":
@@ -428,7 +428,7 @@ def _validate_standard_input_signature(
         _validate_legacy_input_signature(transaction, input_index, tx_input, previous_output, context)
         return
 
-    if not pq_support_is_active(network=context.network, height=context.height):
+    if not _pq_support_active(context):
         raise ContextualValidationError("CHCQ spends are not active on this network at this height.")
     if tx_input.sig_scheme_id != address_info.scheme_id:
         raise ContextualValidationError("Input signature scheme does not match the CHCQ address.")
@@ -453,6 +453,15 @@ def _validate_standard_input_signature(
         raise ContextualValidationError("Input signature scheme backend is unavailable.") from exc
     if not verified:
         raise ContextualValidationError("Input signature is invalid.")
+
+
+def _pq_support_active(context: ValidationContext) -> bool:
+    """Return PQ activation state, preserving compatibility with test monkeypatches."""
+
+    try:
+        return pq_support_is_active(network=context.network, height=context.height, params=context.params)
+    except TypeError:
+        return pq_support_is_active(network=context.network, height=context.height)
 
 
 def _validate_legacy_input_signature(
