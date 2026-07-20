@@ -70,6 +70,12 @@ material. Python verifies the fixture in
 verify that TypeScript serialization remains byte-compatible before browser-side
 ML-DSA signing is enabled.
 
+`apps/browser-wallet/tests/fixtures/mldsa44-browser-vector-1.json` is a second
+test-only fixture for the browser ML-DSA-44 feasibility backend. It stores a
+deterministic test seed/keypair/signature for the same raw Chipcoin v2 signing
+digest and is verified by both TypeScript and Python interop tests. It is not
+wallet storage material and must not be used for funds.
+
 ## Local node regression coverage
 
 `tests/node/test_local_node.py` covers the post-activation node path for:

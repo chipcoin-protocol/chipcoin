@@ -19,6 +19,7 @@ export const DEFAULT_NODE_ENDPOINT = __CHIPCOIN_DEFAULT_NODE_ENDPOINT__;
 export const DEFAULT_EXPLORER_URL = __CHIPCOIN_DEFAULT_EXPLORER_URL__;
 export const DEFAULT_NETWORK: SupportedNetworkId = "testnet";
 export const TESTNET_PQ_ACTIVATION_HEIGHT = 30_000;
+export const ENABLE_EXPERIMENTAL_BROWSER_MLDSA = false;
 export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
   {
     id: "devnet",

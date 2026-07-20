@@ -15,6 +15,9 @@ The wallet keeps a frozen Python-generated PQ v2 serialization fixture under
 `apps/browser-wallet/tests/fixtures/pq-vector-1.json` so browser code can verify
 the unsigned transaction and signing digest before any browser ML-DSA backend is
 enabled.
+An experimental internal ML-DSA-44 feasibility backend exists for tests only;
+it is disabled by default through `ENABLE_EXPERIMENTAL_BROWSER_MLDSA` and is
+not wired into wallet creation, storage, backup, Send, or CHCQ spending.
 
 When CHCQ support is later added, the browser wallet must warn that deterministic
 ML-DSA signing is experimental testnet functionality and is not a substitute for
@@ -40,7 +43,8 @@ It currently supports:
 | --- | --- |
 | Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, receive/address display badges, and CHCQ watch-only balance/history tracking |
 | Scheduled | Testnet consensus activation at height `30000` for CHCQ outputs and v2 wallet spends |
-| Not yet available | Browser-side ML-DSA signing, CHCQ wallet generation, CHCQ spending, and Send to CHCQ recipients |
+| Experimental/test-only | Browser ML-DSA-44 keygen/sign/verify interop with the Python consensus backend |
+| Not yet available | Public browser-side ML-DSA signing, CHCQ wallet generation, CHCQ spending, and Send to CHCQ recipients |
 
 Before testnet activation height `30000`, consensus rejects CHCQ outputs and
 CHCQ spends. After activation, the browser wallet will still keep CHCQ sending
@@ -51,6 +55,9 @@ CHCQ receive/address display in the extension is recognition-only: the browser
 wallet can label and watch post-quantum addresses, but it cannot yet create or
 spend a browser-managed CHCQ wallet. Watch-only CHCQ records store only public
 addresses and optional local labels.
+
+See `docs/browser-mldsa-feasibility.md` for the internal ML-DSA-44 spike,
+including backend choice, CSP status, preliminary timings, and current limits.
 
 ## Prerequisites
 
