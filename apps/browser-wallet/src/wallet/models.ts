@@ -31,6 +31,7 @@ export interface TxInputModel {
   signatureHex: string;
   publicKeyHex: string;
   sequence: number;
+  sigSchemeId?: number;
 }
 
 export interface TxOutputModel {

@@ -62,6 +62,14 @@ raw_tx_len: 3934
 The regression test lives in `tests/wallet/test_wallet_signer.py` as
 `test_transaction_signer_builds_post_activation_pq_vector`.
 
+The browser-wallet parity fixture lives in
+`apps/browser-wallet/tests/fixtures/pq-vector-1.json`. It intentionally stores
+the unsigned v2 transaction bytes and signing payload/digest, not private key
+material. Python verifies the fixture in
+`tests/wallet/test_pq_browser_vector_fixture.py`, and browser-wallet unit tests
+verify that TypeScript serialization remains byte-compatible before browser-side
+ML-DSA signing is enabled.
+
 ## Local node regression coverage
 
 `tests/node/test_local_node.py` covers the post-activation node path for:

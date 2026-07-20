@@ -2,9 +2,11 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 
 import { describe, expect, it } from "vitest";
 
+import pqVector from "../fixtures/pq-vector-1.json";
 import { privateKeyHexToAddress } from "../../src/crypto/addresses";
 import {
   serializeSignedTransactionToRawHex,
+  serializeTransactionHex,
   serializeTransactionForSigning,
   transactionId,
   transactionSignatureDigest,
@@ -179,5 +181,42 @@ describe("transaction parity", () => {
         },
       ],
     })).toThrow("valid post-quantum CHCQ address");
+  });
+
+  it("matches the frozen Python PQ v2 unsigned transaction and signing digest", () => {
+    const transaction: TransactionModel = {
+      version: 2,
+      inputs: [
+        {
+          previousOutput: pqVector.funding_outpoint,
+          signatureHex: "",
+          publicKeyHex: "",
+          sequence: 0xffffffff,
+          sigSchemeId: pqVector.scheme_id,
+        },
+      ],
+      outputs: [
+        { value: pqVector.amount_chipbits, recipient: pqVector.recipient },
+        { value: pqVector.change_chipbits, recipient: pqVector.address },
+      ],
+      locktime: 0,
+      metadata: pqVector.metadata,
+    };
+
+    expect(serializeTransactionHex(transaction)).toBe(pqVector.unsigned_tx_hex);
+    expect(bytesToHex(serializeTransactionForSigning({
+      transaction,
+      inputIndex: 0,
+      previousOutputValue: pqVector.funding_value_chipbits,
+      previousOutputRecipient: pqVector.address,
+      network: pqVector.network,
+    }))).toBe(pqVector.signing_payload_hex);
+    expect(bytesToHex(transactionSignatureDigest({
+      transaction,
+      inputIndex: 0,
+      previousOutputValue: pqVector.funding_value_chipbits,
+      previousOutputRecipient: pqVector.address,
+      network: pqVector.network,
+    }))).toBe(pqVector.signature_digest_hex);
   });
 });

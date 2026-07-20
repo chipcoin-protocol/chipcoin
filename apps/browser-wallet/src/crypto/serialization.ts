@@ -47,9 +47,17 @@ function encodeMetadata(metadata: Record<string, string>): Uint8Array {
 export function serializeTransaction(transaction: TransactionModel): Uint8Array {
   const encoded: Uint8Array[] = [encodeUint32(transaction.version), encodeVarint(transaction.inputs.length)];
   for (const input of transaction.inputs) {
+    const sigSchemeId = input.sigSchemeId ?? 0;
+    if (transaction.version < 2 && sigSchemeId !== 0) {
+      throw new Error("Transaction v1 inputs cannot declare non-legacy signature schemes.");
+    }
+    if (transaction.version >= 2 && (!Number.isInteger(sigSchemeId) || sigSchemeId < 0 || sigSchemeId > 0xff)) {
+      throw new Error("Signature scheme id must fit in one byte.");
+    }
     encoded.push(
       encodeHash(input.previousOutput.txid),
       encodeUint32(input.previousOutput.index),
+      ...(transaction.version >= 2 ? [Uint8Array.from([sigSchemeId])] : []),
       encodeBytes(input.signatureHex ? hexToBytes(input.signatureHex) : new Uint8Array()),
       encodeBytes(input.publicKeyHex ? hexToBytes(input.publicKeyHex) : new Uint8Array()),
       encodeUint32(input.sequence),
@@ -72,8 +80,9 @@ export function serializeTransactionForSigning(args: {
   inputIndex: number;
   previousOutputValue: number;
   previousOutputRecipient: string;
+  network?: string;
 }): Uint8Array {
-  const { transaction, inputIndex, previousOutputValue, previousOutputRecipient } = args;
+  const { transaction, inputIndex, previousOutputValue, previousOutputRecipient, network = "testnet" } = args;
   if (inputIndex < 0 || inputIndex >= transaction.inputs.length) {
     throw new Error("Transaction input index is out of range.");
   }
@@ -84,18 +93,24 @@ export function serializeTransactionForSigning(args: {
       signatureHex: "",
       publicKeyHex: "",
       sequence: input.sequence,
+      sigSchemeId: input.sigSchemeId,
     })),
     outputs: transaction.outputs,
     locktime: transaction.locktime,
     metadata: transaction.metadata,
   };
-  return concatBytes(
+  const encoded = [
     serializeTransaction(stripped),
     encodeUint32(inputIndex),
     encodeUint64(previousOutputValue),
     encodeString(previousOutputRecipient),
-    encodeUint32(1),
-  );
+  ];
+  if (transaction.version >= 2) {
+    encoded.push(encodeString(`chipcoin:tx-signature:v2:${network}`), encodeUint32(2));
+  } else {
+    encoded.push(encodeUint32(1));
+  }
+  return concatBytes(...encoded);
 }
 
 export function transactionSignatureDigest(args: {
@@ -103,6 +118,7 @@ export function transactionSignatureDigest(args: {
   inputIndex: number;
   previousOutputValue: number;
   previousOutputRecipient: string;
+  network?: string;
 }): Uint8Array {
   return doubleSha256(serializeTransactionForSigning(args));
 }

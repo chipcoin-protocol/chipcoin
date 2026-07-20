@@ -11,6 +11,10 @@ and can track CHCQ addresses as watch-only. It blocks CHCQ recipients in the
 Send flow and does not generate CHCQ wallet keys or v2 PQ spends.
 Browser-generated CHCQ signatures must verify against the node consensus backend
 before CHCQ sending is exposed in the extension.
+The wallet keeps a frozen Python-generated PQ v2 serialization fixture under
+`apps/browser-wallet/tests/fixtures/pq-vector-1.json` so browser code can verify
+the unsigned transaction and signing digest before any browser ML-DSA backend is
+enabled.
 
 When CHCQ support is later added, the browser wallet must warn that deterministic
 ML-DSA signing is experimental testnet functionality and is not a substitute for
