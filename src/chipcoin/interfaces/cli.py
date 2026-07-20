@@ -812,7 +812,13 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--peer-retry-backoff-max-seconds", type=float, default=30.0)
     run_parser.add_argument("--max-outbound-sessions", type=int, default=8)
     run_parser.add_argument("--max-inbound-sessions", type=int, default=32)
+    run_parser.add_argument("--max-pending-handshakes", type=int, default=None)
+    run_parser.add_argument("--max-pending-handshakes-per-ip", type=int, default=4)
+    run_parser.add_argument("--max-peer-aliases-per-node-id", type=int, default=4)
     run_parser.add_argument("--inbound-handshake-rate-limit-per-minute", type=int, default=12)
+    run_parser.add_argument("--memory-metrics-interval-seconds", type=float, default=60.0)
+    run_parser.add_argument("--tracemalloc-enabled", type=_parse_bool, default=False)
+    run_parser.add_argument("--tracemalloc-top-limit", type=int, default=5)
     run_parser.add_argument("--min-stable-session-seconds", type=float, default=30.0)
     run_parser.add_argument("--peer-discovery-startup-prefer-persisted", type=_parse_bool, default=True)
     run_parser.add_argument("--headers-sync-enabled", type=_parse_bool, default=True)
@@ -1498,7 +1504,13 @@ async def _run_runtime(service: NodeService, args) -> None:
         peer_retry_backoff_max_seconds=getattr(args, "peer_retry_backoff_max_seconds", 30.0),
         max_outbound_sessions=getattr(args, "max_outbound_sessions", 8),
         max_inbound_sessions=getattr(args, "max_inbound_sessions", 32),
+        max_pending_handshakes=getattr(args, "max_pending_handshakes", None),
+        max_pending_handshakes_per_ip=getattr(args, "max_pending_handshakes_per_ip", 4),
+        max_peer_aliases_per_node_id=getattr(args, "max_peer_aliases_per_node_id", 4),
         inbound_handshake_rate_limit_per_minute=getattr(args, "inbound_handshake_rate_limit_per_minute", 12),
+        memory_metrics_interval_seconds=getattr(args, "memory_metrics_interval_seconds", 60.0),
+        tracemalloc_enabled=getattr(args, "tracemalloc_enabled", False),
+        tracemalloc_top_limit=getattr(args, "tracemalloc_top_limit", 5),
         min_stable_session_seconds=getattr(args, "min_stable_session_seconds", 30.0),
         peer_discovery_startup_prefer_persisted=getattr(args, "peer_discovery_startup_prefer_persisted", True),
         headers_sync_enabled=getattr(args, "headers_sync_enabled", True),

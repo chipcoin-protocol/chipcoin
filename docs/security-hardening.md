@@ -37,6 +37,7 @@ Large runtime paths such as `node/runtime.py`, `node/service.py`, and
 | Non-standard tx relay spam | repeated costly invalid tx validation from one peer | fixed with stronger policy-failure penalties and structured logs | keep tuning thresholds from testnet telemetry |
 | Repeated getdata misses | peer can repeatedly request unavailable inventory | fixed with per-session miss tracking, logs, and penalties | tune thresholds from live sync telemetry |
 | Duplicate getdata entries | peer can force duplicate object service work in one request | fixed with per-request dedupe, light penalty, and logs | keep telemetry for false positives |
+| P2P handshake churn | one host can consume pending sessions/tasks with incomplete handshakes | fixed with pending-handshake caps, task cleanup, alias pruning, and memory metrics | validate limits from public testnet telemetry |
 | P2P payload decoding | malformed short payloads could raise low-level decode errors | fixed with explicit bounds checks | keep malformed-frame tests for every typed payload |
 | P2P collection sizes | valid frames could carry excessive decoded collections | fixed with codec and runtime count caps | review caps if protocol inventory/header needs grow |
 | Runtime log amplification | noisy peers can flood startup/sync logs with repetitive benign events | partially fixed with summarized alias logs and quiet mining-status polling | continue reducing low-signal 200 OK logs without hiding errors |
@@ -63,6 +64,7 @@ Recent hardening commits:
 - `061ac36` and `ded7c35` - quiet successful mining-status polling logs
 - `6abd480` - summarize peer alias cleanup logs
 - `e800c42` - deduplicate duplicate `getdata` inventory requests
+- current - bound P2P pending handshakes and add runtime memory metrics
 
 ## 0a. Post-Quantum Testnet Support
 

@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: ["/usr/local/bin/chipcoin-entrypoint", "node"]
+    mem_limit: ${CHIPCOIN_MEMORY_LIMIT:-2g}
     environment:
       TZ: Europe/Rome
       CHIPCOIN_NETWORK: ${CHIPCOIN_NETWORK}
@@ -49,7 +50,13 @@ services:
       PEER_RETRY_BACKOFF_MAX_SECONDS: ${PEER_RETRY_BACKOFF_MAX_SECONDS:-30}
       MAX_OUTBOUND_SESSIONS: ${MAX_OUTBOUND_SESSIONS:-8}
       MAX_INBOUND_SESSIONS: ${MAX_INBOUND_SESSIONS:-32}
+      MAX_PENDING_HANDSHAKES: ${MAX_PENDING_HANDSHAKES:-32}
+      MAX_PENDING_HANDSHAKES_PER_IP: ${MAX_PENDING_HANDSHAKES_PER_IP:-4}
+      MAX_PEER_ALIASES_PER_NODE_ID: ${MAX_PEER_ALIASES_PER_NODE_ID:-4}
       INBOUND_HANDSHAKE_RATE_LIMIT_PER_MINUTE: ${INBOUND_HANDSHAKE_RATE_LIMIT_PER_MINUTE:-12}
+      MEMORY_METRICS_INTERVAL_SECONDS: ${MEMORY_METRICS_INTERVAL_SECONDS:-60}
+      TRACEMALLOC_ENABLED: ${TRACEMALLOC_ENABLED:-false}
+      TRACEMALLOC_TOP_LIMIT: ${TRACEMALLOC_TOP_LIMIT:-5}
       MIN_STABLE_SESSION_SECONDS: ${MIN_STABLE_SESSION_SECONDS:-30}
       PEER_DISCOVERY_STARTUP_PREFER_PERSISTED: ${PEER_DISCOVERY_STARTUP_PREFER_PERSISTED:-true}
       HEADERS_SYNC_ENABLED: ${HEADERS_SYNC_ENABLED:-true}
@@ -92,6 +99,12 @@ services:
       - type: bind
         source: ${CHIPCOIN_RUNTIME_DIR}
         target: ${CHIPCOIN_RUNTIME_DIR}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import json, os, urllib.request; port=os.environ.get('NODE_HTTP_BIND_PORT','28081'); json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/v1/status', timeout=5))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   miner:

@@ -136,12 +136,7 @@ class PeerProtocol:
             for task in (handshake_wait, closed_wait):
                 if not task.done():
                     task.cancel()
-            for task in (handshake_wait, closed_wait):
-                if task.done() and not task.cancelled():
-                    try:
-                        task.result()
-                    except Exception:
-                        pass
+            await asyncio.gather(handshake_wait, closed_wait, return_exceptions=True)
         if self.state.handshake_complete:
             return
         if not done:
@@ -216,6 +211,8 @@ class PeerProtocol:
                 await self._reader_task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                pass
         if (
             self._handshake_callback_task is not None
             and self._handshake_callback_task is not asyncio.current_task()
@@ -224,6 +221,8 @@ class PeerProtocol:
             try:
                 await self._handshake_callback_task
             except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
         for waiter in self._pong_waiters.values():
             if not waiter.done():

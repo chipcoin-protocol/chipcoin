@@ -33,6 +33,11 @@ Relevant `.env` keys:
 - `MINER_WALLET_FILE`
 - `MINING_NODE_URLS`
 - `MINING_WORKER_COUNT`
+- `CHIPCOIN_MEMORY_LIMIT`
+- `MAX_PENDING_HANDSHAKES`
+- `MAX_PENDING_HANDSHAKES_PER_IP`
+- `MAX_PEER_ALIASES_PER_NODE_ID`
+- `MEMORY_METRICS_INTERVAL_SECONDS`
 
 ## Start
 
@@ -73,6 +78,17 @@ docker compose ps
 docker compose logs -f node
 docker compose logs -f miner
 ```
+
+Memory and restart monitoring:
+
+```bash
+docker stats chipcoin-testnet-node-1
+docker inspect chipcoin-testnet-node-1 --format '{{.RestartCount}}'
+docker compose logs node | grep 'runtime memory metrics'
+```
+
+The node compose service uses `CHIPCOIN_MEMORY_LIMIT:-2g` as a configurable
+guardrail. Validate the value in testnet before tightening it.
 
 ## Notes
 

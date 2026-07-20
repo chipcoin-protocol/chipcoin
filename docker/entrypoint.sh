@@ -1017,7 +1017,13 @@ run_node() {
     --peer-retry-backoff-max-seconds "${PEER_RETRY_BACKOFF_MAX_SECONDS:-30}" \
     --max-outbound-sessions "${MAX_OUTBOUND_SESSIONS:-8}" \
     --max-inbound-sessions "${MAX_INBOUND_SESSIONS:-32}" \
+    --max-pending-handshakes "${MAX_PENDING_HANDSHAKES:-32}" \
+    --max-pending-handshakes-per-ip "${MAX_PENDING_HANDSHAKES_PER_IP:-4}" \
+    --max-peer-aliases-per-node-id "${MAX_PEER_ALIASES_PER_NODE_ID:-4}" \
     --inbound-handshake-rate-limit-per-minute "${INBOUND_HANDSHAKE_RATE_LIMIT_PER_MINUTE:-12}" \
+    --memory-metrics-interval-seconds "${MEMORY_METRICS_INTERVAL_SECONDS:-60}" \
+    --tracemalloc-enabled "${TRACEMALLOC_ENABLED:-false}" \
+    --tracemalloc-top-limit "${TRACEMALLOC_TOP_LIMIT:-5}" \
     --min-stable-session-seconds "${MIN_STABLE_SESSION_SECONDS:-30}" \
     --peer-discovery-startup-prefer-persisted "${PEER_DISCOVERY_STARTUP_PREFER_PERSISTED:-true}" \
     --headers-sync-enabled "${HEADERS_SYNC_ENABLED:-true}" \

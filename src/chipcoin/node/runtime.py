@@ -12,6 +12,7 @@ import os
 import secrets
 import signal
 import socket
+import tracemalloc
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -213,7 +214,13 @@ class NodeRuntime:
         peer_retry_backoff_max_seconds: float = 30.0,
         max_outbound_sessions: int = 8,
         max_inbound_sessions: int = 32,
+        max_pending_handshakes: int | None = None,
+        max_pending_handshakes_per_ip: int = 4,
+        max_peer_aliases_per_node_id: int = 4,
         inbound_handshake_rate_limit_per_minute: int = 12,
+        memory_metrics_interval_seconds: float = 60.0,
+        tracemalloc_enabled: bool = False,
+        tracemalloc_top_limit: int = 5,
         min_stable_session_seconds: float = 30.0,
         peer_discovery_startup_prefer_persisted: bool = True,
         misbehavior_warning_threshold: int = 25,
@@ -264,7 +271,16 @@ class NodeRuntime:
         self.peer_retry_backoff_max_seconds = max(1.0, peer_retry_backoff_max_seconds)
         self.max_outbound_sessions = max(1, max_outbound_sessions)
         self.max_inbound_sessions = max(1, max_inbound_sessions)
+        self.max_pending_handshakes = max(
+            1,
+            self.max_inbound_sessions if max_pending_handshakes is None else max_pending_handshakes,
+        )
+        self.max_pending_handshakes_per_ip = max(1, max_pending_handshakes_per_ip)
+        self.max_peer_aliases_per_node_id = max(1, max_peer_aliases_per_node_id)
         self.inbound_handshake_rate_limit_per_minute = max(1, inbound_handshake_rate_limit_per_minute)
+        self.memory_metrics_interval_seconds = max(0.0, float(memory_metrics_interval_seconds))
+        self.tracemalloc_enabled = tracemalloc_enabled
+        self.tracemalloc_top_limit = max(1, tracemalloc_top_limit)
         self.min_stable_session_seconds = max(1.0, min_stable_session_seconds)
         self.peer_discovery_startup_prefer_persisted = peer_discovery_startup_prefer_persisted
         self.misbehavior_warning_threshold = max(1, misbehavior_warning_threshold)
@@ -294,6 +310,7 @@ class NodeRuntime:
         self._running = False
         self._stop_event = asyncio.Event()
         self._tasks: set[asyncio.Task] = set()
+        self._task_categories: dict[asyncio.Task, str] = {}
         self._sessions: dict[PeerProtocol, SessionHandle] = {}
         self._sessions_by_node_id: dict[str, PeerProtocol] = {}
         self._pending_outbound_peers: set[OutboundPeer] = set()
@@ -316,6 +333,9 @@ class NodeRuntime:
         self._reward_attestation_identities_cache: set[tuple[int, int, str, str]] = set()
         self._inbound_handshake_attempts_by_host: dict[str, list[float]] = {}
         self._peer_resolution_cache: dict[OutboundPeer, tuple[int, set[str]]] = {}
+        self._session_created_count = 0
+        self._session_closed_count = 0
+        self._last_tracemalloc_snapshot: tracemalloc.Snapshot | None = None
 
     @property
     def bound_port(self) -> int:
@@ -366,15 +386,19 @@ class NodeRuntime:
         self._purge_stale_persisted_peers()
         self._trim_peerbook_to_capacity()
         self._purge_persisted_startup_duplicate_aliases()
+        self._prune_peer_aliases_to_capacity()
         self._update_sync_status()
         self._stop_event.clear()
-        self._spawn_task(self._connect_loop(), "connect-loop")
-        self._spawn_task(self._ping_loop(), "ping-loop")
-        self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop")
+        self._maybe_start_tracemalloc()
+        self._spawn_task(self._connect_loop(), "connect-loop", category="connect")
+        self._spawn_task(self._ping_loop(), "ping-loop", category="ping")
+        self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop", category="mempool")
         if self.headers_sync_enabled:
-            self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop")
+            self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop", category="sync")
         if self.reward_automation is not None and (self.reward_automation.auto_renew_enabled or self.reward_automation.auto_attest_enabled):
-            self._spawn_task(self._reward_automation_loop(), "reward-automation-loop")
+            self._spawn_task(self._reward_automation_loop(), "reward-automation-loop", category="reward")
+        if self.memory_metrics_interval_seconds > 0:
+            self._spawn_task(self._memory_metrics_loop(), "memory-metrics-loop", category="metrics")
 
     def _enable_stack_dump_signal(self) -> None:
         """Allow operators to dump Python stacks with SIGUSR1 during live incidents."""
@@ -423,12 +447,9 @@ class NodeRuntime:
         self.logger.info("runtime stopping cancel_tasks count=%s", len(tasks))
         for task in tasks:
             task.cancel()
-        for task in tasks:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        self._task_categories.clear()
         self._sessions.clear()
         self._sessions_by_node_id.clear()
         self._pending_outbound_peers.clear()
@@ -931,10 +952,55 @@ class NodeRuntime:
             if not handle.outbound and not session.state.closed
         )
 
+    def _pending_handshake_count(self) -> int:
+        """Return sessions that have not completed handshake yet."""
+
+        return sum(1 for session in self._sessions if not session.state.closed and not session.state.handshake_complete)
+
+    def _pending_handshake_count_for_host(self, host: str) -> int:
+        """Return pending handshakes currently held for one source host."""
+
+        count = 0
+        for session, handle in self._sessions.items():
+            if session.state.closed or session.state.handshake_complete or handle.outbound:
+                continue
+            endpoint = self._session_endpoint(session, handle)
+            if endpoint is not None and endpoint.host == host:
+                count += 1
+        return count
+
+    def _pending_outbound_handshake_count(self) -> int:
+        """Return outbound sessions that have not completed handshake yet."""
+
+        return sum(
+            1
+            for session, handle in self._sessions.items()
+            if handle.outbound and not session.state.closed and not session.state.handshake_complete
+        )
+
+    def _pending_inbound_handshake_count(self) -> int:
+        """Return inbound sessions that have not completed handshake yet."""
+
+        return sum(
+            1
+            for session, handle in self._sessions.items()
+            if not handle.outbound and not session.state.closed and not session.state.handshake_complete
+        )
+
+    def _inbound_pending_handshake_limited(self, host: str) -> str | None:
+        """Return a rejection reason when pending inbound handshakes exceed policy."""
+
+        if self._pending_handshake_count() >= self.max_pending_handshakes:
+            return "pending_handshake_limit"
+        if self._pending_handshake_count_for_host(host) >= self.max_pending_handshakes_per_ip:
+            return "pending_handshake_ip_limit"
+        return None
+
     def _inbound_rate_limited(self, host: str) -> bool:
         """Return whether one inbound host exceeded the handshake attempt budget."""
 
         now = asyncio.get_running_loop().time()
+        self._prune_inbound_handshake_attempts(now)
         window_start = now - 60.0
         attempts = [
             timestamp
@@ -947,6 +1013,17 @@ class NodeRuntime:
         attempts.append(now)
         self._inbound_handshake_attempts_by_host[host] = attempts
         return False
+
+    def _prune_inbound_handshake_attempts(self, now: float) -> None:
+        """Drop expired inbound handshake rate-limit buckets."""
+
+        window_start = now - 60.0
+        for host, attempts in list(self._inbound_handshake_attempts_by_host.items()):
+            retained = [timestamp for timestamp in attempts if timestamp >= window_start]
+            if retained:
+                self._inbound_handshake_attempts_by_host[host] = retained
+            else:
+                del self._inbound_handshake_attempts_by_host[host]
 
     async def _connect_loop(self) -> None:
         """Keep outbound peer connections alive."""
@@ -1026,24 +1103,26 @@ class NodeRuntime:
     async def _handle_inbound_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Accept and start an inbound peer session."""
 
-        transport = TCPTransport(reader, writer, read_timeout=self.read_timeout, write_timeout=self.write_timeout)
-        endpoint = transport.peer_endpoint()
+        endpoint = self._writer_peer_endpoint(writer)
         if self._active_inbound_session_count() >= self.max_inbound_sessions:
             self.logger.debug("inbound connection rejected peer=%s:%s reason=inbound_session_limit", endpoint.host, endpoint.port)
-            writer.close()
-            await writer.wait_closed()
+            await self._close_rejected_writer(writer)
+            return
+        pending_rejection = self._inbound_pending_handshake_limited(endpoint.host)
+        if pending_rejection is not None:
+            self.logger.debug("inbound connection rejected peer=%s:%s reason=%s", endpoint.host, endpoint.port, pending_rejection)
+            await self._close_rejected_writer(writer)
             return
         if self._inbound_rate_limited(endpoint.host):
             self.logger.debug("inbound connection rejected peer=%s:%s reason=host_rate_limited", endpoint.host, endpoint.port)
-            writer.close()
-            await writer.wait_closed()
+            await self._close_rejected_writer(writer)
             return
         self.logger.debug("inbound connection accepted peer=%s:%s", endpoint.host, endpoint.port)
         if self._is_peer_currently_banned(endpoint.host, endpoint.port):
             self.logger.info("inbound connection rejected peer=%s:%s reason=temporary_ban", endpoint.host, endpoint.port)
-            writer.close()
-            await writer.wait_closed()
+            await self._close_rejected_writer(writer)
             return
+        transport = TCPTransport(reader, writer, read_timeout=self.read_timeout, write_timeout=self.write_timeout)
         session = PeerProtocol(
             transport=transport,
             identity=self._local_identity(),
@@ -1057,7 +1136,8 @@ class NodeRuntime:
             outbound=False,
             opened_at=asyncio.get_running_loop().time(),
         )
-        self._spawn_task(self._run_session(session), "inbound-session")
+        self._session_created_count += 1
+        self._spawn_task(self._run_session(session), "inbound-session", category="session")
 
     async def _connect_outbound(self, peer: OutboundPeer) -> None:
         """Establish an outbound connection to a configured peer."""
@@ -1085,7 +1165,8 @@ class NodeRuntime:
             opened_at=asyncio.get_running_loop().time(),
         )
         self.logger.info("outbound TCP connected peer=%s:%s", peer.host, peer.port)
-        self._spawn_task(self._run_session(session), f"outbound-{peer.host}:{peer.port}")
+        self._session_created_count += 1
+        self._spawn_task(self._run_session(session), f"outbound-{peer.host}:{peer.port}", category="session")
 
     async def _run_session(self, session: PeerProtocol) -> None:
         """Run a peer session until it ends."""
@@ -1093,12 +1174,32 @@ class NodeRuntime:
         try:
             await session.start()
             await session.wait_closed()
+        except asyncio.CancelledError:
+            await session.close(reason="Session task cancelled.")
+            raise
         except Exception as exc:
             self.logger.info("session failed handshake_complete=%s error=%s", session.state.handshake_complete, exc)
             self._apply_session_penalty(session, error=exc, penalty=20 if not session.state.handshake_complete else 10)
             await session.close(reason=str(exc), error=exc)
         finally:
             await self._drop_session(session)
+
+    def _writer_peer_endpoint(self, writer: asyncio.StreamWriter) -> PeerEndpoint:
+        """Return a peer endpoint from an inbound writer before building a session."""
+
+        peer = writer.get_extra_info("peername")
+        if not peer:
+            return PeerEndpoint(host="unknown", port=0)
+        return PeerEndpoint(host=str(peer[0]), port=int(peer[1]))
+
+    async def _close_rejected_writer(self, writer: asyncio.StreamWriter) -> None:
+        """Close a rejected inbound writer without allowing wait_closed to hang."""
+
+        writer.close()
+        try:
+            await asyncio.wait_for(writer.wait_closed(), timeout=max(1.0, self.write_timeout))
+        except (TimeoutError, ConnectionError, OSError):
+            return
 
     async def _on_handshake_complete(self, session: PeerProtocol) -> None:
         """Register a peer after handshake and begin initial sync."""
@@ -2142,6 +2243,8 @@ class NodeRuntime:
         """Remove a session from runtime tracking."""
 
         handle = self._sessions.pop(session, None)
+        if handle is not None:
+            self._session_closed_count += 1
         peer_id = self._sync_peer_id(session)
         released_requests = self.sync_manager.release_peer_requests(peer_id)
         for request in released_requests:
@@ -2207,6 +2310,12 @@ class NodeRuntime:
             return
         if remote is not None and self._sessions_by_node_id.get(remote.node_id) is session:
             del self._sessions_by_node_id[remote.node_id]
+        if remote is not None:
+            self._prune_peer_aliases_for_node_id(
+                remote.node_id,
+                canonical_endpoint=endpoint,
+                prefer_configured=None if handle is None else handle.endpoint,
+            )
         self._update_sync_status()
 
     def _has_active_endpoint(self, peer: OutboundPeer) -> bool:
@@ -2982,6 +3091,8 @@ class NodeRuntime:
             peer
             for peer in self.service.list_peers()
             if peer.node_id == node_id and (peer.host, peer.port) != (preferred_host, preferred_port)
+            and (peer.host, peer.port) not in self._outbound_targets
+            and not self._peer_endpoint_is_connected(node_id, OutboundPeer(peer.host, peer.port))
         ]
         for peer in aliases:
             self._outbound_targets.pop((peer.host, peer.port), None)
@@ -3000,6 +3111,103 @@ class NodeRuntime:
                 preferred_host,
                 preferred_port,
             )
+        self._prune_peer_aliases_for_node_id(
+            node_id,
+            canonical_endpoint=PeerEndpoint(preferred_host, preferred_port),
+            prefer_configured=prefer_configured,
+        )
+
+    def _prune_peer_aliases_to_capacity(self) -> None:
+        """Prune excess peer aliases for all known node ids."""
+
+        node_ids = sorted({peer.node_id for peer in self.service.list_peers() if peer.node_id is not None})
+        for node_id in node_ids:
+            self._prune_peer_aliases_for_node_id(str(node_id), canonical_endpoint=None, prefer_configured=None)
+
+    def _prune_peer_aliases_for_node_id(
+        self,
+        node_id: str,
+        *,
+        canonical_endpoint: PeerEndpoint | None,
+        prefer_configured: OutboundPeer | None,
+    ) -> None:
+        """Keep aliases per node id bounded without removing protected endpoints."""
+
+        peers = [peer for peer in self.service.list_peers() if peer.node_id == node_id]
+        if len(peers) <= self.max_peer_aliases_per_node_id:
+            return
+
+        protected = self._protected_alias_endpoints(node_id, canonical_endpoint=canonical_endpoint, prefer_configured=prefer_configured)
+        removable = [
+            peer
+            for peer in peers
+            if (peer.host, peer.port) not in protected
+        ]
+        overflow = len(peers) - self.max_peer_aliases_per_node_id
+        if overflow <= 0 or not removable:
+            return
+        removed = sorted(removable, key=self._alias_prune_sort_key)[:overflow]
+        for peer in removed:
+            self._outbound_targets.pop((peer.host, peer.port), None)
+            self.service.remove_peer(peer.host, peer.port)
+        if removed:
+            first = removed[0]
+            last = removed[-1]
+            self.logger.info(
+                "pruned peer aliases node_id=%s count=%s first_alias=%s:%s last_alias=%s:%s limit=%s",
+                node_id,
+                len(removed),
+                first.host,
+                first.port,
+                last.host,
+                last.port,
+                self.max_peer_aliases_per_node_id,
+            )
+
+    def _protected_alias_endpoints(
+        self,
+        node_id: str,
+        *,
+        canonical_endpoint: PeerEndpoint | None,
+        prefer_configured: OutboundPeer | None,
+    ) -> set[tuple[str, int]]:
+        """Return peer aliases that must not be removed by pruning."""
+
+        protected: set[tuple[str, int]] = set(self._outbound_targets)
+        if canonical_endpoint is not None:
+            protected.add((canonical_endpoint.host, canonical_endpoint.port))
+        if prefer_configured is not None:
+            protected.add((prefer_configured.host, prefer_configured.port))
+        for session, handle in self._sessions.items():
+            remote = session.state.remote_version
+            if remote is None or remote.node_id != node_id:
+                continue
+            endpoint = self._session_endpoint(session, handle)
+            if endpoint is not None:
+                protected.add((endpoint.host, endpoint.port))
+        return protected
+
+    def _peer_endpoint_is_connected(self, node_id: str, endpoint: OutboundPeer) -> bool:
+        """Return whether one endpoint belongs to a live session for the node id."""
+
+        for session, handle in self._sessions.items():
+            remote = session.state.remote_version
+            if session.state.closed or remote is None or remote.node_id != node_id:
+                continue
+            session_endpoint = self._session_endpoint(session, handle)
+            if session_endpoint is not None and (session_endpoint.host, session_endpoint.port) == (endpoint.host, endpoint.port):
+                return True
+        return False
+
+    def _alias_prune_sort_key(self, peer) -> tuple[int, int, int, int, int, str, int]:
+        """Order peer aliases from safest to remove to most valuable."""
+
+        source_rank = {"discovered": 0, "seed": 1, "manual": 2}.get(peer.source, -1)
+        handshake_rank = 1 if peer.handshake_complete is True else 0
+        success_count = 0 if peer.success_count is None else peer.success_count
+        score = 0 if peer.score is None else peer.score
+        last_success = 0 if peer.last_success is None else peer.last_success
+        return (source_rank, handshake_rank, success_count, score, last_success, peer.host, peer.port)
 
     def _updated_peer_score(self, host: str, port: int, *, delta: int) -> int:
         """Return a bounded peer score delta applied to the current value."""
@@ -3296,12 +3504,173 @@ class NodeRuntime:
             network_magic=get_network_config(self.service.network).magic,
         )
 
-    def _spawn_task(self, coro, name: str) -> asyncio.Task:
+    async def _memory_metrics_loop(self) -> None:
+        """Log periodic runtime memory and lifecycle metrics."""
+
+        while self._running:
+            try:
+                self._log_memory_metrics()
+            except Exception as exc:  # noqa: BLE001 - diagnostics must not stop runtime
+                self.logger.debug("runtime memory metrics failed: %s", exc, exc_info=True)
+            await asyncio.sleep(self.memory_metrics_interval_seconds)
+
+    def _log_memory_metrics(self) -> None:
+        """Emit one structured runtime memory metrics line."""
+
+        metrics = self.runtime_memory_metrics()
+        self.logger.info(
+            "runtime memory metrics rss_mb=%s asyncio_tasks=%s sessions_total=%s sessions_handshaken=%s pending_handshakes=%s inbound_pending=%s outbound_pending=%s tracked_tasks=%s reconnect_tasks=%s peerbook_entries=%s aliases_total=%s queue_sizes=%s inbound_sessions=%s outbound_sessions=%s sessions_created=%s sessions_closed=%s",
+            metrics["rss_mb"],
+            metrics["asyncio_tasks"],
+            metrics["sessions_total"],
+            metrics["sessions_handshaken"],
+            metrics["pending_handshakes"],
+            metrics["inbound_pending"],
+            metrics["outbound_pending"],
+            metrics["tracked_tasks"],
+            metrics["reconnect_tasks"],
+            metrics["peerbook_entries"],
+            metrics["aliases_total"],
+            metrics["queue_sizes"],
+            metrics["inbound_sessions"],
+            metrics["outbound_sessions"],
+            metrics["sessions_created"],
+            metrics["sessions_closed"],
+        )
+        self._log_tracemalloc_growth()
+
+    def runtime_memory_metrics(self) -> dict[str, object]:
+        """Return bounded runtime lifecycle and memory diagnostics."""
+
+        sessions_total = sum(1 for session in self._sessions if not session.state.closed)
+        sessions_handshaken = sum(
+            1
+            for session in self._sessions
+            if not session.state.closed and session.state.handshake_complete
+        )
+        return {
+            "rss_mb": self._current_rss_mb(),
+            "asyncio_tasks": self._asyncio_task_count(),
+            "sessions_total": sessions_total,
+            "sessions_handshaken": sessions_handshaken,
+            "pending_handshakes": self._pending_handshake_count(),
+            "inbound_pending": self._pending_inbound_handshake_count(),
+            "outbound_pending": self._pending_outbound_handshake_count(),
+            "tracked_tasks": len(self._tasks),
+            "tasks_by_category": self._task_counts_by_category(),
+            "reconnect_tasks": self._task_counts_by_category().get("reconnect", 0),
+            "peerbook_entries": len(self.service.list_peers()),
+            "aliases_total": self._peer_alias_count(),
+            "queue_sizes": self._runtime_queue_sizes(),
+            "inbound_sessions": self._active_inbound_session_count(),
+            "outbound_sessions": self._active_outbound_session_count(),
+            "sessions_created": self._session_created_count,
+            "sessions_closed": self._session_closed_count,
+        }
+
+    def _current_rss_mb(self) -> float:
+        """Return current RSS in MiB using Linux procfs when available."""
+
+        statm = Path("/proc/self/statm")
+        try:
+            resident_pages = int(statm.read_text(encoding="utf-8").split()[1])
+            return round((resident_pages * os.sysconf("SC_PAGE_SIZE")) / (1024 * 1024), 2)
+        except (OSError, IndexError, ValueError):
+            try:
+                import resource
+            except ImportError:
+                return 0.0
+
+            usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            if os.uname().sysname == "Darwin":
+                usage = usage / 1024
+            return round(float(usage) / 1024, 2)
+
+    def _asyncio_task_count(self) -> int:
+        """Return all asyncio tasks for the current loop when one is running."""
+
+        try:
+            return len(asyncio.all_tasks())
+        except RuntimeError:
+            return 0
+
+    def _task_counts_by_category(self) -> dict[str, int]:
+        """Return tracked runtime task counts by category."""
+
+        counts: dict[str, int] = {}
+        for task, category in self._task_categories.items():
+            if task.done():
+                continue
+            counts[category] = counts.get(category, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def _peer_alias_count(self) -> int:
+        """Return extra peerbook records sharing a node id."""
+
+        groups: dict[str, int] = {}
+        for peer in self.service.list_peers():
+            if peer.node_id is None:
+                continue
+            groups[peer.node_id] = groups.get(peer.node_id, 0) + 1
+        return sum(max(0, count - 1) for count in groups.values())
+
+    def _runtime_queue_sizes(self) -> dict[str, int]:
+        """Return runtime queue-like pressure counters."""
+
+        return {
+            "pending_outbound_peers": len(self._pending_outbound_peers),
+            "recent_peer_txids": len(self._recent_peer_txids),
+            "relayed_mempool_txids": len(self._relayed_mempool_txids),
+            "peer_resolution_cache": len(self._peer_resolution_cache),
+        }
+
+    def _maybe_start_tracemalloc(self) -> None:
+        """Enable optional allocation diagnostics."""
+
+        if not self.tracemalloc_enabled:
+            return
+        if not tracemalloc.is_tracing():
+            tracemalloc.start(25)
+        self._last_tracemalloc_snapshot = tracemalloc.take_snapshot()
+
+    def _log_tracemalloc_growth(self) -> None:
+        """Log top allocation growth since the previous metrics tick."""
+
+        if not self.tracemalloc_enabled or not tracemalloc.is_tracing():
+            return
+        current = tracemalloc.take_snapshot()
+        previous = self._last_tracemalloc_snapshot
+        self._last_tracemalloc_snapshot = current
+        if previous is None:
+            return
+        for stat in current.compare_to(previous, "lineno")[: self.tracemalloc_top_limit]:
+            frame = stat.traceback[0]
+            self.logger.info(
+                "runtime tracemalloc growth file=%s line=%s size_diff_kb=%.2f count_diff=%s",
+                frame.filename,
+                frame.lineno,
+                stat.size_diff / 1024,
+                stat.count_diff,
+            )
+
+    def _spawn_task(self, coro, name: str, *, category: str = "background") -> asyncio.Task:
         """Create and track a background task."""
 
         task = asyncio.create_task(coro, name=name)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._task_categories[task] = category
+
+        def _cleanup(done_task: asyncio.Task) -> None:
+            self._tasks.discard(done_task)
+            self._task_categories.pop(done_task, None)
+            if done_task.cancelled():
+                return
+            try:
+                done_task.result()
+            except Exception as exc:  # noqa: BLE001 - task boundary logs and consumes exceptions
+                self.logger.warning("runtime task failed name=%s category=%s error=%s", name, category, exc, exc_info=True)
+
+        task.add_done_callback(_cleanup)
         return task
 
     def _session_endpoint(self, session: PeerProtocol, handle: SessionHandle | None = None) -> PeerEndpoint | None:
