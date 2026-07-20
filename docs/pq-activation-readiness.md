@@ -45,6 +45,12 @@ Run the readiness report wrapper:
 bash scripts/pq-activation-readiness.sh
 ```
 
+Run the shorter operational smoke command:
+
+```bash
+python3 -m chipcoin.tools.pq_smoke
+```
+
 Expected report:
 
 ```text
@@ -71,3 +77,8 @@ the node, mempool, mining template, block application, and HTTP API paths.
 The suite uses deterministic wallet seeds and local SQLite node services. It
 does not depend on public testnet height, external peers, wall-clock timing, or
 network access.
+
+For release validation and server checks, use the operational smoke command
+documented in `docs/pq-smoke-test.md`. The smoke command validates the happy-path
+activation lifecycle and API metadata with stable console output; this pytest
+suite remains the detailed regression suite.

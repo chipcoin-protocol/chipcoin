@@ -16,27 +16,18 @@ import pytest
 
 from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.merkle import merkle_root
-from chipcoin.consensus.params import TESTNET_PARAMS
-from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_transaction
 from chipcoin.consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from chipcoin.crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44
 from chipcoin.interfaces.http_api import HttpApiApp
 from chipcoin.node.service import NodeService
+from chipcoin.pq.readiness import call_api_json, make_pq_readiness_params, mine_easy_block, mine_to_height
 from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed
 from tests.helpers import put_wallet_utxo, signed_payment, spend_candidates_for_wallet, wallet_key
 
 
 PQ_READINESS_ACTIVATION_HEIGHT = 20
-PQ_READINESS_PARAMS = replace(
-    TESTNET_PARAMS,
-    coinbase_maturity=0,
-    genesis_bits=0x207FFFFF,
-    difficulty_adjustment_window=1000,
-    target_block_time_activation_height=0,
-    legacy_target_block_time_seconds=None,
-    pq_support_activation_height=PQ_READINESS_ACTIVATION_HEIGHT,
-)
+PQ_READINESS_PARAMS = make_pq_readiness_params(activation_height=PQ_READINESS_ACTIVATION_HEIGHT)
 READINESS_REPORT = (
     ("pre-activation rejection", "PASS"),
     ("post-activation acceptance", "PASS"),
@@ -57,20 +48,6 @@ def _make_service(database_path: Path) -> NodeService:
     )
 
 
-def _mine_block(block: Block) -> Block:
-    for nonce in range(2_000_000):
-        header = replace(block.header, nonce=nonce)
-        if verify_proof_of_work(header):
-            return replace(block, header=header)
-    raise AssertionError("Expected to find a valid nonce for the easy target.")
-
-
-def _mine_to_height(service: NodeService, target_height: int) -> None:
-    miner = wallet_key(2).address
-    while (service.chain_tip().height if service.chain_tip() else -1) < target_height:
-        service.apply_block(_mine_block(service.build_candidate_block(miner).block))
-
-
 def _pq_payment(owner_seed: bytes, outpoint: OutPoint, value: int, recipient: str) -> Transaction:
     owner = wallet_key_from_mldsa44_seed(owner_seed)
     return TransactionSigner(owner).build_signed_transaction(
@@ -84,7 +61,7 @@ def _pq_payment(owner_seed: bytes, outpoint: OutPoint, value: int, recipient: st
 
 
 def _mine_next_with_mempool(service: NodeService) -> Block:
-    block = _mine_block(service.build_candidate_block(wallet_key(2).address).block)
+    block = mine_easy_block(service.build_candidate_block(wallet_key(2).address).block)
     service.apply_block(block)
     return block
 
@@ -120,7 +97,7 @@ def test_pre_activation_rejects_pq_paths_and_keeps_legacy_working() -> None:
         invalid_transactions = (template.block.transactions[0], chc_to_chcq)
         invalid_header = replace(template.block.header, merkle_root=merkle_root([tx.txid() for tx in invalid_transactions]))
         invalid_block = replace(template.block, header=invalid_header, transactions=invalid_transactions)
-        message = _assert_rejected(lambda: service.apply_block(_mine_block(invalid_block)))
+        message = _assert_rejected(lambda: service.apply_block(mine_easy_block(invalid_block)))
         assert "CHCQ outputs are not active" in message
 
         pq_outpoint = OutPoint(txid="11" * 32, index=0)
@@ -156,7 +133,7 @@ def test_pre_activation_rejects_pq_paths_and_keeps_legacy_working() -> None:
 def test_post_activation_full_chcq_lifecycle_and_mixed_compatibility() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "node.sqlite3")
-        _mine_to_height(service, PQ_READINESS_ACTIVATION_HEIGHT - 1)
+        mine_to_height(service, PQ_READINESS_ACTIVATION_HEIGHT - 1, wallet_key(2).address)
 
         legacy_owner = wallet_key(0)
         legacy_recipient = wallet_key(1)
@@ -228,7 +205,7 @@ def test_post_activation_full_chcq_lifecycle_and_mixed_compatibility() -> None:
 def test_malformed_pq_transactions_fail_gracefully() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "node.sqlite3")
-        _mine_to_height(service, PQ_READINESS_ACTIVATION_HEIGHT - 1)
+        mine_to_height(service, PQ_READINESS_ACTIVATION_HEIGHT - 1, wallet_key(2).address)
         owner = wallet_key_from_mldsa44_seed(bytes(range(32)))
         recipient = wallet_key(1).address
 
@@ -280,7 +257,7 @@ def test_malformed_pq_transactions_fail_gracefully() -> None:
 def test_post_activation_api_exposes_pq_scheme_metadata() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "node.sqlite3")
-        _mine_to_height(service, PQ_READINESS_ACTIVATION_HEIGHT - 1)
+        mine_to_height(service, PQ_READINESS_ACTIVATION_HEIGHT - 1, wallet_key(2).address)
         app = HttpApiApp(service)
         owner = wallet_key_from_mldsa44_seed(bytes(range(32)))
         recipient = wallet_key(1)
@@ -328,30 +305,9 @@ def test_readiness_report_output() -> None:
     assert "READY FOR ACTIVATION" in output
 
 
-def _call_wsgi(app: HttpApiApp, *, method: str, path: str, body: object | None = None):
-    import json
-
-    encoded = b"" if body is None else json.dumps(body, sort_keys=True).encode("utf-8")
-    environ = {
-        "REQUEST_METHOD": method,
-        "PATH_INFO": path,
-        "QUERY_STRING": "",
-        "CONTENT_LENGTH": str(len(encoded)),
-        "wsgi.input": io.BytesIO(encoded),
-    }
-    captured: dict[str, object] = {}
-
-    def start_response(status, headers):
-        captured["status"] = status
-        captured["headers"] = dict(headers)
-
-    raw = b"".join(app(environ, start_response))
-    return captured["status"], None if not raw else json.loads(raw.decode("utf-8"))
-
-
 def _get_json(app: HttpApiApp, path: str):
-    return _call_wsgi(app, method="GET", path=path)
+    return call_api_json(app, method="GET", path=path)
 
 
 def _submit_raw(app: HttpApiApp, transaction: Transaction):
-    return _call_wsgi(app, method="POST", path="/v1/tx/submit", body={"raw_hex": serialize_transaction(transaction).hex()})
+    return call_api_json(app, method="POST", path="/v1/tx/submit", body={"raw_hex": serialize_transaction(transaction).hex()})
