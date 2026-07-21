@@ -11,6 +11,7 @@ jobs:
   browser-pq-chromium:
     name: browser-pq-chromium
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: apps/browser-wallet
@@ -32,7 +33,9 @@ jobs:
         run: |
           CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)"
           echo "CHROME_PATH=${CHROME_BIN}" >> "${GITHUB_ENV}"
-          "${CHROME_BIN}" --version
+          CHROME_VERSION="$("${CHROME_BIN}" --version)"
+          echo "${CHROME_VERSION}"
+          echo "::notice title=Chrome version::${CHROME_VERSION}"
 
       - name: Run browser wallet unit tests
         run: npm test

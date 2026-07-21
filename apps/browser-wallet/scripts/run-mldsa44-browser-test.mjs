@@ -15,9 +15,11 @@ await runCommand("npm", ["run", "build:mldsa:browser-test"]);
 try {
   if (browser === "firefox") {
     const result = await runFirefox();
+    emitGitHubNotice(`${browser} ML-DSA result`, formatBrowserResultNotice(result));
     console.log(JSON.stringify({ browser, ...result }, null, 2));
   } else {
     const result = await runChromium();
+    emitGitHubNotice(`${browser} ML-DSA result`, formatBrowserResultNotice(result));
     console.log(JSON.stringify({ browser, ...result }, null, 2));
   }
 } catch (error) {
@@ -377,6 +379,44 @@ function contentType(filePath) {
     default:
       return "application/octet-stream";
   }
+}
+
+function formatBrowserResultNotice(result) {
+  const benchmark = result.benchmark || {};
+  return [
+    `ok=${result.ok}`,
+    `browserProduct=${result.browserProduct || "unknown"}`,
+    `publicKeyMatches=${result.publicKeyMatches}`,
+    `signatureMatches=${result.signatureMatches}`,
+    `signatureVerifies=${result.signatureVerifies}`,
+    `pythonSignatureVerifies=${result.pythonSignatureVerifies}`,
+    `alteredSignatureRejected=${result.alteredSignatureRejected}`,
+    `alteredDigestRejected=${result.alteredDigestRejected}`,
+    `wrongPublicKeyRejected=${result.wrongPublicKeyRejected}`,
+    `invalidDigestRejected=${result.invalidDigestRejected}`,
+    `invalidSignatureRejected=${result.invalidSignatureRejected}`,
+    `keygenMs=${benchmark.keygenMs ?? "unknown"}`,
+    `signDigestMs=${benchmark.signDigestMs ?? "unknown"}`,
+    `verifyDigestMs=${benchmark.verifyDigestMs ?? "unknown"}`,
+    `sign10Ms=${benchmark.sign10Ms ?? "unknown"}`,
+    `verify10Ms=${benchmark.verify10Ms ?? "unknown"}`,
+  ].join(" ");
+}
+
+function emitGitHubNotice(title, message) {
+  if (!process.env.GITHUB_ACTIONS) {
+    return;
+  }
+  console.log(`::notice title=${escapeGitHubCommand(title)}::${escapeGitHubCommand(message)}`);
+}
+
+function escapeGitHubCommand(value) {
+  return String(value)
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A")
+    .replaceAll(":", "%3A")
+    .replaceAll(",", "%2C");
 }
 
 async function runCommand(command, args) {
