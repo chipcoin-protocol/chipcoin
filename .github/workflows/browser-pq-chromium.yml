@@ -1,0 +1,44 @@
+name: Browser PQ Chromium
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  browser-pq-chromium:
+    name: browser-pq-chromium
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/browser-wallet
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/browser-wallet/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Show Chrome version
+        run: google-chrome --version
+
+      - name: Run browser wallet unit tests
+        run: npm test
+
+      - name: Build Chrome and Firefox extensions
+        run: npm run build
+
+      - name: Inspect production bundles
+        run: npm run test:mldsa:bundle
+
+      - name: Run Chromium ML-DSA browser harness
+        run: npm run test:mldsa:browser:chromium

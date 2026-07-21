@@ -118,10 +118,12 @@ under a restrictive page CSP and verifies deterministic key generation,
 rejection, altered digest rejection, wrong-public-key rejection, and lightweight
 browser timings.
 
-`npm run test:mldsa:browser:chromium` is reserved for the matching Chromium
-headless check. This local machine currently does not have a Chromium/Chrome
-binary installed, so the script reports that condition explicitly instead of
-simulating a pass.
+`npm run test:mldsa:browser:chromium` runs the same harness in Chrome or
+Chromium headless through the Chrome DevTools Protocol. The dedicated GitHub
+Actions job `browser-pq-chromium` runs this path on `ubuntu-latest` with
+`npm ci`, unit tests, extension builds, bundle inspection, and the Chromium
+harness. If a local machine does not have a Chromium/Chrome binary installed,
+the script reports that condition explicitly instead of simulating a pass.
 
 ## Preliminary Performance
 
@@ -151,15 +153,23 @@ Firefox `152.0.6` headless, WebDriver BiDi harness, 3 average iterations:
 
 ```text
 init: 0 ms
-deterministic keygen average: 3.000 ms
-signDigest average: 5.667 ms
-verifyDigest average: 3.000 ms
-10 signatures: 52 ms
-10 verifications: 28 ms
+deterministic keygen average: 2.333 ms
+signDigest average: 5.333 ms
+verifyDigest average: 3.333 ms
+10 signatures: 50 ms
+10 verifications: 29 ms
 ```
 
 Browser timing fields are emitted by the browser harness when Firefox or
 Chromium automation is available.
+
+Chromium timing should be recorded from the `browser-pq-chromium` job output or
+from a local machine with Chrome/Chromium installed by running:
+
+```bash
+cd apps/browser-wallet
+npm run test:mldsa:browser:chromium
+```
 
 ## Upgrade Procedure For @noble/post-quantum
 
@@ -168,11 +178,13 @@ Chromium automation is available.
 3. Confirm the lockfile pins the intended version and license metadata.
 4. Run `npm test`.
 5. Run `npm run test:mldsa:bundle`.
-6. Run the Firefox and Chromium browser harnesses where available.
-7. Run Python/browser interop tests from the repository root.
-8. Run Chrome and Firefox extension builds.
-9. Inspect bundle and CSP output.
-10. Reject the upgrade unless vector signatures and lengths remain unchanged or
+6. Run the Firefox browser harness locally where available.
+7. Run the Chromium browser harness locally or through the `browser-pq-chromium`
+   GitHub Actions job.
+8. Run Python/browser interop tests from the repository root.
+9. Run Chrome and Firefox extension builds.
+10. Inspect bundle and CSP output.
+11. Reject the upgrade unless vector signatures and lengths remain unchanged or
     an explicit cryptographic review approves the difference.
 
 The main breaking-change risk is Noble changing or removing the internal raw

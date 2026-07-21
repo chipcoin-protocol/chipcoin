@@ -15,11 +15,8 @@ try {
     const result = await runFirefox();
     console.log(JSON.stringify({ browser, ...result }, null, 2));
   } else {
-    const chromium = findExecutable(["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"]);
-    if (!chromium) {
-      throw new OperationalError("Chromium/Chrome executable not found. Install chromium or google-chrome to run this test.");
-    }
-    throw new OperationalError(`Chromium executable found at ${chromium}, but this lightweight runner currently automates Firefox BiDi only.`);
+    const result = await runChromium();
+    console.log(JSON.stringify({ browser, ...result }, null, 2));
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -70,6 +67,66 @@ async function runFirefox() {
       throw new Error(`browser harness failed: ${JSON.stringify(payload)}`);
     }
     return payload;
+  } finally {
+    proc.kill();
+    await new Promise((resolveProcess) => {
+      proc.once("exit", resolveProcess);
+      setTimeout(resolveProcess, 1500);
+    });
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+async function runChromium() {
+  const chromium = findExecutable(["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"]);
+  if (!chromium) {
+    throw new OperationalError("Chromium/Chrome executable not found. Install chromium or google-chrome to run this test.");
+  }
+  const profile = mkdtempSync(`${tmpdir()}/chipcoin-mldsa-chromium-`);
+  const port = 9233;
+  const proc = spawn(chromium, [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--no-sandbox",
+    `--user-data-dir=${profile}`,
+    `--remote-debugging-port=${port}`,
+    "about:blank",
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  proc.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  try {
+    const wsUrl = await waitForChromiumWebSocket(port, () => stderr);
+    const client = await connectCdp(wsUrl);
+    const version = await client.send("Browser.getVersion");
+    const created = await client.send("Target.createTarget", { url: "about:blank" });
+    const targetId = created.result?.targetId;
+    if (!targetId) {
+      throw new Error(`Chromium CDP did not return a target: ${JSON.stringify(created)}`);
+    }
+    const attached = await client.send("Target.attachToTarget", { targetId, flatten: true });
+    const sessionId = attached.result?.sessionId;
+    if (!sessionId) {
+      throw new Error(`Chromium CDP did not return a session: ${JSON.stringify(attached)}`);
+    }
+    await client.send("Page.enable", {}, sessionId);
+    await client.send("Runtime.enable", {}, sessionId);
+    const url = pathToFileURL(resolve("dist-mldsa-browser-test/tests/browser/mldsa44_browser_harness.html")).href;
+    await client.send("Page.navigate", { url }, sessionId);
+    const payload = await pollCdpHarnessResult(client, sessionId);
+    await client.send("Target.closeTarget", { targetId });
+    await client.close();
+    if (!payload.ok) {
+      throw new Error(`browser harness failed: ${JSON.stringify(payload)}`);
+    }
+    return {
+      browserProduct: version.result?.product,
+      browserUserAgent: version.result?.userAgent,
+      ...payload,
+    };
   } finally {
     proc.kill();
     await new Promise((resolveProcess) => {
@@ -142,6 +199,49 @@ async function connectBidi(wsUrl) {
   };
 }
 
+async function connectCdp(wsUrl) {
+  const socket = new WebSocket(wsUrl);
+  await new Promise((resolveOpen, rejectOpen) => {
+    socket.addEventListener("open", resolveOpen, { once: true });
+    socket.addEventListener("error", () => {
+      rejectOpen(new OperationalError(`could not open Chromium DevTools websocket at ${wsUrl}`));
+    }, { once: true });
+  });
+  let nextId = 0;
+  const pending = new Map();
+  socket.addEventListener("message", (event) => {
+    const message = JSON.parse(event.data);
+    if (message.id && pending.has(message.id)) {
+      pending.get(message.id)(message);
+      pending.delete(message.id);
+    }
+  });
+  return {
+    send(method, params = {}, sessionId = undefined) {
+      const id = ++nextId;
+      const command = sessionId ? { id, method, params, sessionId } : { id, method, params };
+      socket.send(JSON.stringify(command));
+      return new Promise((resolveMessage, rejectMessage) => {
+        const timeout = setTimeout(() => {
+          pending.delete(id);
+          rejectMessage(new Error(`Chromium CDP command timed out: ${method}`));
+        }, 10_000);
+        pending.set(id, (message) => {
+          clearTimeout(timeout);
+          if (message.error) {
+            rejectMessage(new Error(`${method} failed: ${JSON.stringify(message)}`));
+          } else {
+            resolveMessage(message);
+          }
+        });
+      });
+    },
+    close() {
+      socket.close();
+    },
+  };
+}
+
 async function waitForFirefoxWebSocket(stderrProvider) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const match = stderrProvider().match(/WebDriver BiDi listening on (ws:\/\/[^\s]+)/);
@@ -151,6 +251,41 @@ async function waitForFirefoxWebSocket(stderrProvider) {
     await sleep(100);
   }
   throw new Error(`Firefox did not expose WebDriver BiDi endpoint. stderr: ${stderrProvider()}`);
+}
+
+async function waitForChromiumWebSocket(port, stderrProvider) {
+  const endpoint = `http://127.0.0.1:${port}/json/version`;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const response = await fetch(endpoint);
+      if (response.ok) {
+        const payload = await response.json();
+        if (typeof payload.webSocketDebuggerUrl === "string") {
+          return payload.webSocketDebuggerUrl;
+        }
+      }
+    } catch {
+      // Chromium is still starting.
+    }
+    await sleep(100);
+  }
+  throw new Error(`Chromium did not expose DevTools endpoint at ${endpoint}. stderr: ${stderrProvider()}`);
+}
+
+async function pollCdpHarnessResult(client, sessionId) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const response = await client.send("Runtime.evaluate", {
+      expression: "JSON.stringify(window.__CHIPCOIN_MLDSA_BROWSER_RESULT__ ?? null)",
+      awaitPromise: true,
+      returnByValue: true,
+    }, sessionId);
+    const value = response.result?.result?.value;
+    if (typeof value === "string" && value !== "null") {
+      return JSON.parse(value);
+    }
+    await sleep(100);
+  }
+  throw new Error("browser harness did not produce a result before timeout");
 }
 
 function findExecutable(candidates) {
