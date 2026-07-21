@@ -24,6 +24,7 @@ try {
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
+  emitGitHubNotice(`${browser} ML-DSA failure`, `reason=${message}`);
   console.error(`FAIL  ${browser} ML-DSA browser test`);
   console.error(`reason: ${message}`);
   process.exit(error instanceof OperationalError ? 2 : 1);
@@ -99,6 +100,7 @@ async function runChromium() {
     "--no-first-run",
     "--no-default-browser-check",
     "--no-sandbox",
+    "--remote-allow-origins=*",
     `--user-data-dir=${profile}`,
     `--remote-debugging-port=${cdpPort}`,
     "about:blank",
@@ -212,11 +214,17 @@ async function connectBidi(wsUrl) {
 
 async function connectCdp(wsUrl) {
   const socket = new WebSocket(wsUrl);
+  let timeout;
   await new Promise((resolveOpen, rejectOpen) => {
+    timeout = setTimeout(() => {
+      rejectOpen(new OperationalError(`timed out opening Chromium DevTools websocket at ${wsUrl}`));
+    }, 10_000);
     socket.addEventListener("open", resolveOpen, { once: true });
     socket.addEventListener("error", () => {
       rejectOpen(new OperationalError(`could not open Chromium DevTools websocket at ${wsUrl}`));
     }, { once: true });
+  }).finally(() => {
+    clearTimeout(timeout);
   });
   let nextId = 0;
   const pending = new Map();
