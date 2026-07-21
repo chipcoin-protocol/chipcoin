@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createReadStream, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
+import { extname, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
 
 class OperationalError extends Error {}
 
@@ -82,16 +84,21 @@ async function runChromium() {
   if (!chromium) {
     throw new OperationalError("Chromium/Chrome executable not found. Install chromium or google-chrome to run this test.");
   }
+  const version = spawnSync(chromium, ["--version"], { encoding: "utf8" });
+  console.error(`chromium_path=${chromium}`);
+  console.error(`chromium_version=${(version.stdout || version.stderr).trim()}`);
   const profile = mkdtempSync(`${tmpdir()}/chipcoin-mldsa-chromium-`);
-  const port = 9233;
+  const cdpPort = await getFreePort();
+  const staticServer = await startStaticServer(resolve("dist-mldsa-browser-test"));
   const proc = spawn(chromium, [
     "--headless=new",
     "--disable-gpu",
+    "--disable-dev-shm-usage",
     "--no-first-run",
     "--no-default-browser-check",
     "--no-sandbox",
     `--user-data-dir=${profile}`,
-    `--remote-debugging-port=${port}`,
+    `--remote-debugging-port=${cdpPort}`,
     "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
@@ -99,9 +106,9 @@ async function runChromium() {
     stderr += chunk.toString();
   });
   try {
-    const wsUrl = await waitForChromiumWebSocket(port, () => stderr);
+    const wsUrl = await waitForChromiumWebSocket(cdpPort, () => stderr, proc);
     const client = await connectCdp(wsUrl);
-    const version = await client.send("Browser.getVersion");
+    const browserVersion = await client.send("Browser.getVersion");
     const created = await client.send("Target.createTarget", { url: "about:blank" });
     const targetId = created.result?.targetId;
     if (!targetId) {
@@ -114,7 +121,8 @@ async function runChromium() {
     }
     await client.send("Page.enable", {}, sessionId);
     await client.send("Runtime.enable", {}, sessionId);
-    const url = pathToFileURL(resolve("dist-mldsa-browser-test/tests/browser/mldsa44_browser_harness.html")).href;
+    const url = `${staticServer.url}/tests/browser/mldsa44_browser_harness.html`;
+    console.error(`chromium_harness_url=${url}`);
     await client.send("Page.navigate", { url }, sessionId);
     const payload = await pollCdpHarnessResult(client, sessionId);
     await client.send("Target.closeTarget", { targetId });
@@ -123,8 +131,8 @@ async function runChromium() {
       throw new Error(`browser harness failed: ${JSON.stringify(payload)}`);
     }
     return {
-      browserProduct: version.result?.product,
-      browserUserAgent: version.result?.userAgent,
+      browserProduct: browserVersion.result?.product,
+      browserUserAgent: browserVersion.result?.userAgent,
       ...payload,
     };
   } finally {
@@ -133,6 +141,7 @@ async function runChromium() {
       proc.once("exit", resolveProcess);
       setTimeout(resolveProcess, 1500);
     });
+    await staticServer.close();
     rmSync(profile, { recursive: true, force: true });
   }
 }
@@ -253,9 +262,12 @@ async function waitForFirefoxWebSocket(stderrProvider) {
   throw new Error(`Firefox did not expose WebDriver BiDi endpoint. stderr: ${stderrProvider()}`);
 }
 
-async function waitForChromiumWebSocket(port, stderrProvider) {
+async function waitForChromiumWebSocket(port, stderrProvider, proc) {
   const endpoint = `http://127.0.0.1:${port}/json/version`;
   for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (proc.exitCode !== null) {
+      throw new Error(`Chromium exited before DevTools was available. exit=${proc.exitCode} stderr: ${stderrProvider()}`);
+    }
     try {
       const response = await fetch(endpoint);
       if (response.ok) {
@@ -289,6 +301,12 @@ async function pollCdpHarnessResult(client, sessionId) {
 }
 
 function findExecutable(candidates) {
+  if (process.env.CHROME_PATH) {
+    if (existsSync(process.env.CHROME_PATH)) {
+      return process.env.CHROME_PATH;
+    }
+    throw new OperationalError(`CHROME_PATH does not exist: ${process.env.CHROME_PATH}`);
+  }
   for (const candidate of candidates) {
     const result = spawnSync("which", [candidate], { encoding: "utf8" });
     if (result.status === 0 && result.stdout.trim()) {
@@ -296,6 +314,69 @@ function findExecutable(candidates) {
     }
   }
   return null;
+}
+
+async function getFreePort() {
+  const server = createNetServer();
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  await new Promise((resolveClose) => server.close(resolveClose));
+  if (!address || typeof address === "string") {
+    throw new Error("could not allocate a local port");
+  }
+  return address.port;
+}
+
+async function startStaticServer(root) {
+  const port = await getFreePort();
+  const server = createServer((request, response) => {
+    const requestUrl = new URL(request.url || "/", `http://127.0.0.1:${port}`);
+    const requestedPath = normalize(decodeURIComponent(requestUrl.pathname)).replace(/^([/\\])+/, "");
+    const filePath = resolve(root, requestedPath || "tests/browser/mldsa44_browser_harness.html");
+    if (!filePath.startsWith(root + sep) && filePath !== root) {
+      response.writeHead(403);
+      response.end("forbidden");
+      return;
+    }
+    if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+      response.writeHead(404);
+      response.end("not found");
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": contentType(filePath),
+      "cache-control": "no-store",
+    });
+    createReadStream(filePath).pipe(response);
+  });
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(port, "127.0.0.1", resolveListen);
+  });
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close() {
+      return new Promise((resolveClose) => server.close(resolveClose));
+    },
+  };
+}
+
+function contentType(filePath) {
+  switch (extname(filePath)) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 async function runCommand(command, args) {

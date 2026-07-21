@@ -2,7 +2,9 @@ import mldsaVector from "../fixtures/mldsa44-browser-vector-1.json";
 import { bytesToHex, hexToBytes } from "../../src/crypto/keys";
 import {
   benchmarkMlDsa44Backend,
+  CHIPCOIN_V2_DIGEST_BYTES,
   createExperimentalMlDsa44Backend,
+  MLDSA44_SIGNATURE_BYTES,
 } from "../../src/crypto/mldsa44";
 
 declare global {
@@ -32,6 +34,8 @@ async function runHarness() {
   const alteredSignatureRejected = !await backend.verifyDigest(digest, alteredSignature, keyPair.publicKey);
   const alteredDigestRejected = !await backend.verifyDigest(alteredDigest, signature, keyPair.publicKey);
   const wrongPublicKeyRejected = !await backend.verifyDigest(digest, signature, wrongPublicKey);
+  const invalidDigestRejected = await rejects(() => backend.signDigest(new Uint8Array(CHIPCOIN_V2_DIGEST_BYTES - 1), keyPair.privateKey));
+  const invalidSignatureRejected = await rejects(() => backend.verifyDigest(digest, new Uint8Array(MLDSA44_SIGNATURE_BYTES - 1), keyPair.publicKey));
 
   return {
     ok: publicKeyMatches
@@ -40,7 +44,9 @@ async function runHarness() {
       && pythonSignatureVerifies
       && alteredSignatureRejected
       && alteredDigestRejected
-      && wrongPublicKeyRejected,
+      && wrongPublicKeyRejected
+      && invalidDigestRejected
+      && invalidSignatureRejected,
     publicKeyMatches,
     signatureMatches,
     signatureVerifies,
@@ -48,11 +54,22 @@ async function runHarness() {
     alteredSignatureRejected,
     alteredDigestRejected,
     wrongPublicKeyRejected,
+    invalidDigestRejected,
+    invalidSignatureRejected,
     publicKeyLength: keyPair.publicKey.length,
     privateKeyLength: keyPair.privateKey.length,
     signatureLength: signature.length,
     benchmark,
   };
+}
+
+async function rejects(callable: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await callable();
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 runHarness()

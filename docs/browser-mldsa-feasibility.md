@@ -116,7 +116,8 @@ attempts to run it in Firefox headless through WebDriver BiDi. The harness runs
 under a restrictive page CSP and verifies deterministic key generation,
 `signDigest`, `verifyDigest`, the frozen Python signature, altered signature
 rejection, altered digest rejection, wrong-public-key rejection, and lightweight
-browser timings.
+browser timings. It also verifies that structurally malformed digest and
+signature lengths are rejected by the browser adapter.
 
 `npm run test:mldsa:browser:chromium` runs the same harness in Chrome or
 Chromium headless through the Chrome DevTools Protocol. The dedicated GitHub
@@ -124,6 +125,8 @@ Actions job `browser-pq-chromium` runs this path on `ubuntu-latest` with
 `npm ci`, unit tests, extension builds, bundle inspection, and the Chromium
 harness. If a local machine does not have a Chromium/Chrome binary installed,
 the script reports that condition explicitly instead of simulating a pass.
+Chromium is loaded from a local temporary HTTP server instead of `file://` so
+module loading follows browser runtime rules consistently in CI.
 
 ## Preliminary Performance
 
@@ -156,8 +159,8 @@ init: 0 ms
 deterministic keygen average: 2.333 ms
 signDigest average: 5.333 ms
 verifyDigest average: 3.333 ms
-10 signatures: 50 ms
-10 verifications: 29 ms
+10 signatures: 49 ms
+10 verifications: 28 ms
 ```
 
 Browser timing fields are emitted by the browser harness when Firefox or
