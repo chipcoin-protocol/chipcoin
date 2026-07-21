@@ -395,6 +395,7 @@ function formatBrowserResultNotice(result) {
     `ok=${result.ok}`,
     `browserProduct=${result.browserProduct || "unknown"}`,
     `publicKeyMatches=${result.publicKeyMatches}`,
+    `privateKeyMatches=${result.privateKeyMatches}`,
     `signatureMatches=${result.signatureMatches}`,
     `signatureVerifies=${result.signatureVerifies}`,
     `pythonSignatureVerifies=${result.pythonSignatureVerifies}`,

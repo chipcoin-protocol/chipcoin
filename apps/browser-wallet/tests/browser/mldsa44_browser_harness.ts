@@ -28,6 +28,7 @@ async function runHarness() {
   const benchmark = await benchmarkMlDsa44Backend(3);
 
   const publicKeyMatches = bytesToHex(keyPair.publicKey) === mldsaVector.public_key_hex;
+  const privateKeyMatches = bytesToHex(keyPair.privateKey) === mldsaVector.private_key_hex;
   const signatureMatches = bytesToHex(signature) === mldsaVector.signature_hex;
   const signatureVerifies = await backend.verifyDigest(digest, signature, keyPair.publicKey);
   const pythonSignatureVerifies = await backend.verifyDigest(digest, hexToBytes(mldsaVector.signature_hex), keyPair.publicKey);
@@ -39,6 +40,7 @@ async function runHarness() {
 
   return {
     ok: publicKeyMatches
+      && privateKeyMatches
       && signatureMatches
       && signatureVerifies
       && pythonSignatureVerifies
@@ -48,6 +50,7 @@ async function runHarness() {
       && invalidDigestRejected
       && invalidSignatureRejected,
     publicKeyMatches,
+    privateKeyMatches,
     signatureMatches,
     signatureVerifies,
     pythonSignatureVerifies,
