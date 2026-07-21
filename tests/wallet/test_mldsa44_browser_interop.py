@@ -24,6 +24,7 @@ def test_browser_mldsa44_fixture_matches_python_backend() -> None:
     signature = sign_mldsa44(seed, message)
 
     assert fixture["warning"].startswith("Test-only")
+    assert fixture["test_only"] is True
     assert fixture["scheme_id"] == SIG_SCHEME_ML_DSA_44
     assert fixture["scheme_name"] == "mldsa44"
     assert fixture["address"] == wallet_key_from_mldsa44_seed(seed).address
@@ -39,7 +40,7 @@ def test_browser_mldsa44_fixture_matches_python_backend() -> None:
 
 def test_browser_mldsa44_signature_verifies_with_python_backend() -> None:
     result = subprocess.run(
-        ["node", "scripts/mldsa44-browser-sign-vector.mjs", "tests/fixtures/mldsa44-browser-vector-1.json"],
+        ["node_modules/.bin/vite-node", "scripts/mldsa44-browser-sign-vector.ts", "tests/fixtures/mldsa44-browser-vector-1.json"],
         cwd=Path("apps/browser-wallet"),
         check=True,
         capture_output=True,

@@ -15,9 +15,11 @@ The wallet keeps a frozen Python-generated PQ v2 serialization fixture under
 `apps/browser-wallet/tests/fixtures/pq-vector-1.json` so browser code can verify
 the unsigned transaction and signing digest before any browser ML-DSA backend is
 enabled.
-An experimental internal ML-DSA-44 feasibility backend exists for tests only;
-it is disabled by default through `ENABLE_EXPERIMENTAL_BROWSER_MLDSA` and is
-not wired into wallet creation, storage, backup, Send, or CHCQ spending.
+An experimental internal ML-DSA-44 feasibility backend exists for tests only.
+It signs and verifies raw Chipcoin v2 transaction digests through an adapter
+named `signDigest` / `verifyDigest`; it is disabled by default through
+`ENABLE_EXPERIMENTAL_BROWSER_MLDSA` and is not wired into wallet creation,
+storage, backup, Send, or CHCQ spending.
 
 When CHCQ support is later added, the browser wallet must warn that deterministic
 ML-DSA signing is experimental testnet functionality and is not a substitute for

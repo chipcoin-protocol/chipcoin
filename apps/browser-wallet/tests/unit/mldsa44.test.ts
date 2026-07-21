@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import mldsaVector from "../fixtures/mldsa44-browser-vector-1.json";
 import { parseAddress } from "../../src/crypto/addresses";
@@ -9,6 +9,17 @@ import {
 import {
   benchmarkMlDsa44Backend,
   createExperimentalMlDsa44Backend,
+  MlDsaBackendUnavailableError,
+  MlDsaInvalidDigestError,
+  MlDsaInvalidPrivateKeyError,
+  MlDsaInvalidPublicKeyError,
+  MlDsaInvalidSignatureError,
+  MlDsaInvalidSeedError,
+  MlDsaUnsupportedVersionError,
+  MLDSA44_PRIVATE_KEY_BYTES,
+  MLDSA44_PUBLIC_KEY_BYTES,
+  MLDSA44_SEED_BYTES,
+  MLDSA44_SIGNATURE_BYTES,
   ML_DSA_44_PRIVATE_KEY_SIZE,
   ML_DSA_44_PUBLIC_KEY_SIZE,
   ML_DSA_44_SCHEME_ID,
@@ -16,6 +27,8 @@ import {
   ML_DSA_44_SEED_SIZE,
   ML_DSA_44_SIGNATURE_SIZE,
   MlDsa44BackendError,
+  NOBLE_POST_QUANTUM_IMPORT_PATH,
+  NOBLE_POST_QUANTUM_VERSION,
 } from "../../src/crypto/mldsa44";
 
 function expectBackendError(code: string, callable: () => Promise<unknown>) {
@@ -62,10 +75,10 @@ describe("experimental ML-DSA-44 browser backend", () => {
     await backend.initialize();
     const keyPair = await backend.generateKeyPair(hexToBytes(mldsaVector.seed_hex));
     const message = hexToBytes(mldsaVector.message_hex);
-    const signature = await backend.sign(message, keyPair.privateKey);
+    const signature = await backend.signDigest(message, keyPair.privateKey);
 
     expect(bytesToHex(signature)).toBe(mldsaVector.signature_hex);
-    expect(await backend.verify(message, signature, keyPair.publicKey)).toBe(true);
+    expect(await backend.verifyDigest(message, signature, keyPair.publicKey)).toBe(true);
   });
 
   it("verifies Python signatures and rejects altered data", async () => {
@@ -75,18 +88,18 @@ describe("experimental ML-DSA-44 browser backend", () => {
     const signature = hexToBytes(mldsaVector.signature_hex);
     const publicKey = hexToBytes(mldsaVector.public_key_hex);
 
-    expect(await backend.verify(message, signature, publicKey)).toBe(true);
+    expect(await backend.verifyDigest(message, signature, publicKey)).toBe(true);
 
     const alteredSignature = new Uint8Array(signature);
     alteredSignature[0] ^= 0x01;
-    expect(await backend.verify(message, alteredSignature, publicKey)).toBe(false);
+    expect(await backend.verifyDigest(message, alteredSignature, publicKey)).toBe(false);
 
     const alteredMessage = new Uint8Array(message);
     alteredMessage[0] ^= 0x01;
-    expect(await backend.verify(alteredMessage, signature, publicKey)).toBe(false);
+    expect(await backend.verifyDigest(alteredMessage, signature, publicKey)).toBe(false);
 
     const wrongPublicKey = (await backend.generateKeyPair(new Uint8Array(ML_DSA_44_SEED_SIZE).fill(9))).publicKey;
-    expect(await backend.verify(message, signature, wrongPublicKey)).toBe(false);
+    expect(await backend.verifyDigest(message, signature, wrongPublicKey)).toBe(false);
   });
 
   it("throws typed errors for structurally invalid inputs", async () => {
@@ -97,23 +110,113 @@ describe("experimental ML-DSA-44 browser backend", () => {
     const signature = hexToBytes(mldsaVector.signature_hex);
 
     await expectBackendError("invalid_seed", () => backend.generateKeyPair(new Uint8Array(31)));
-    await expectBackendError("invalid_message", () => backend.sign(new Uint8Array(31), keyPair.privateKey));
-    await expectBackendError("invalid_private_key", () => backend.sign(message, new Uint8Array(ML_DSA_44_PRIVATE_KEY_SIZE - 1)));
-    await expectBackendError("invalid_signature", () => backend.verify(message, signature.slice(1), keyPair.publicKey));
-    await expectBackendError("invalid_public_key", () => backend.verify(message, signature, keyPair.publicKey.slice(1)));
+    await expectBackendError("invalid_seed", () => backend.generateKeyPair(new Uint8Array(0)));
+    await expectBackendError("invalid_digest", () => backend.signDigest(new Uint8Array(31), keyPair.privateKey));
+    await expectBackendError("invalid_digest", () => backend.signDigest(new Uint8Array(33), keyPair.privateKey));
+    await expectBackendError("invalid_digest", () => backend.signDigest(new Uint8Array(0), keyPair.privateKey));
+    await expectBackendError("invalid_private_key", () => backend.signDigest(message, new Uint8Array(ML_DSA_44_PRIVATE_KEY_SIZE - 1)));
+    await expectBackendError("invalid_private_key", () => backend.signDigest(message, new Uint8Array(0)));
+    await expectBackendError("invalid_signature", () => backend.verifyDigest(message, signature.slice(1), keyPair.publicKey));
+    await expectBackendError("invalid_signature", () => backend.verifyDigest(message, new Uint8Array(0), keyPair.publicKey));
+    await expectBackendError("invalid_public_key", () => backend.verifyDigest(message, signature, keyPair.publicKey.slice(1)));
+    await expectBackendError("invalid_public_key", () => backend.verifyDigest(message, signature, new Uint8Array(0)));
 
-    await expectBackendError("invalid_message", async () => {
+    await expectBackendError("invalid_digest", async () => {
       const invalidMessage = "not bytes" as unknown as Uint8Array;
-      await backend.sign(invalidMessage, keyPair.privateKey);
+      await backend.signDigest(invalidMessage, keyPair.privateKey);
     });
+  });
+
+  it("throws distinct errors for unavailable or incompatible Noble APIs", async () => {
+    const absent = createExperimentalMlDsa44Backend({ enabled: true, implementation: null });
+    await expect(absent.initialize()).rejects.toBeInstanceOf(MlDsaBackendUnavailableError);
+
+    const noInternal = createExperimentalMlDsa44Backend({
+      enabled: true,
+      implementation: {
+        lengths: {
+          seed: MLDSA44_SEED_BYTES,
+          publicKey: MLDSA44_PUBLIC_KEY_BYTES,
+          secretKey: MLDSA44_PRIVATE_KEY_BYTES,
+          signature: MLDSA44_SIGNATURE_BYTES,
+          signRand: MLDSA44_SEED_BYTES,
+        },
+        keygen: () => ({
+          publicKey: new Uint8Array(MLDSA44_PUBLIC_KEY_BYTES),
+          secretKey: new Uint8Array(MLDSA44_PRIVATE_KEY_BYTES),
+        }),
+      },
+    });
+    await expect(noInternal.initialize()).rejects.toBeInstanceOf(MlDsaUnsupportedVersionError);
+
+    const wrongLengths = createExperimentalMlDsa44Backend({
+      enabled: true,
+      implementation: {
+        lengths: {
+          seed: MLDSA44_SEED_BYTES,
+          publicKey: MLDSA44_PUBLIC_KEY_BYTES - 1,
+          secretKey: MLDSA44_PRIVATE_KEY_BYTES,
+          signature: MLDSA44_SIGNATURE_BYTES,
+          signRand: MLDSA44_SEED_BYTES,
+        },
+        keygen: () => ({
+          publicKey: new Uint8Array(MLDSA44_PUBLIC_KEY_BYTES),
+          secretKey: new Uint8Array(MLDSA44_PRIVATE_KEY_BYTES),
+        }),
+        internal: {
+          sign: () => new Uint8Array(MLDSA44_SIGNATURE_BYTES),
+          verify: () => true,
+        },
+      },
+    });
+    await expect(wrongLengths.initialize()).rejects.toBeInstanceOf(MlDsaUnsupportedVersionError);
+  });
+
+  it("rejects signatures bound to another digest or keypair", async () => {
+    const backend = createExperimentalMlDsa44Backend({ enabled: true });
+    await backend.initialize();
+    const keyPair = await backend.generateKeyPair(hexToBytes(mldsaVector.seed_hex));
+    const otherKeyPair = await backend.generateKeyPair(new Uint8Array(MLDSA44_SEED_BYTES).fill(7));
+    const digest = hexToBytes(mldsaVector.message_hex);
+    const signature = await backend.signDigest(digest, otherKeyPair.privateKey);
+
+    expect(await backend.verifyDigest(digest, signature, keyPair.publicKey)).toBe(false);
+    const mutatedDigest = new Uint8Array(digest);
+    mutatedDigest[31] ^= 0x01;
+    expect(await backend.verifyDigest(mutatedDigest, signature, otherKeyPair.publicKey)).toBe(false);
+  });
+
+  it("supports repeated calls and does not log sensitive material", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const backend = createExperimentalMlDsa44Backend({ enabled: true });
+      await backend.initialize();
+      const keyPair = await backend.generateKeyPair(hexToBytes(mldsaVector.seed_hex));
+      const digest = hexToBytes(mldsaVector.message_hex);
+      for (let index = 0; index < 5; index += 1) {
+        const signature = await backend.signDigest(digest, keyPair.privateKey);
+        expect(await backend.verifyDigest(digest, signature, keyPair.publicKey)).toBe(true);
+      }
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it("reports preliminary benchmark timings without rigid thresholds", async () => {
     const result = await benchmarkMlDsa44Backend(1);
     expect(result.initMs).toBeGreaterThanOrEqual(0);
     expect(result.keygenMs).toBeGreaterThanOrEqual(0);
-    expect(result.signMs).toBeGreaterThanOrEqual(0);
-    expect(result.verifyMs).toBeGreaterThanOrEqual(0);
+    expect(result.signDigestMs).toBeGreaterThanOrEqual(0);
+    expect(result.verifyDigestMs).toBeGreaterThanOrEqual(0);
+    expect(result.sign10Ms).toBeGreaterThanOrEqual(0);
+    expect(result.verify10Ms).toBeGreaterThanOrEqual(0);
   });
 
   it("uses the expected fixed lengths", () => {
@@ -121,6 +224,13 @@ describe("experimental ML-DSA-44 browser backend", () => {
     expect(ML_DSA_44_PUBLIC_KEY_SIZE).toBe(1312);
     expect(ML_DSA_44_PRIVATE_KEY_SIZE).toBe(2560);
     expect(ML_DSA_44_SIGNATURE_SIZE).toBe(2420);
-    expect(new MlDsa44BackendError("unsupported_scheme", "unsupported").code).toBe("unsupported_scheme");
+    expect(NOBLE_POST_QUANTUM_VERSION).toBe("0.6.1");
+    expect(NOBLE_POST_QUANTUM_IMPORT_PATH).toBe("@noble/post-quantum/ml-dsa.js");
+    expect(new MlDsaInvalidDigestError().code).toBe("invalid_digest");
+    expect(new MlDsaInvalidPrivateKeyError().code).toBe("invalid_private_key");
+    expect(new MlDsaInvalidPublicKeyError().code).toBe("invalid_public_key");
+    expect(new MlDsaInvalidSignatureError().code).toBe("invalid_signature");
+    expect(new MlDsaInvalidSeedError().code).toBe("invalid_seed");
+    expect(new MlDsa44BackendError("unsupported_version", "unsupported").code).toBe("unsupported_version");
   });
 });

@@ -27,6 +27,7 @@ apps/browser-wallet/node_modules/
 apps/browser-wallet/dist/
 apps/browser-wallet/dist-chrome/
 apps/browser-wallet/dist-firefox/
+apps/browser-wallet/dist-mldsa-browser-test/
 apps/browser-wallet/.vite/
 build/browser-wallet/
 

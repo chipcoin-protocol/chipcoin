@@ -73,8 +73,14 @@ ML-DSA signing is enabled.
 `apps/browser-wallet/tests/fixtures/mldsa44-browser-vector-1.json` is a second
 test-only fixture for the browser ML-DSA-44 feasibility backend. It stores a
 deterministic test seed/keypair/signature for the same raw Chipcoin v2 signing
-digest and is verified by both TypeScript and Python interop tests. It is not
-wallet storage material and must not be used for funds.
+digest and is verified by both TypeScript and Python interop tests. The fixture
+is marked `test_only: true`; it is not wallet storage material and must not be
+used for funds.
+
+The browser ML-DSA adapter signs the raw 32-byte digest after the Chipcoin v2
+domain-separated signing payload has been hashed. It does not use Noble's public
+application-message wrapper, because that wrapper does not produce bytes
+compatible with the Python `mldsa-native` node backend.
 
 ## Local node regression coverage
 
