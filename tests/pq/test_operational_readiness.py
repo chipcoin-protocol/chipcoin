@@ -15,6 +15,36 @@ def test_operational_readiness_ready(monkeypatch) -> None:
     assert result.exit_code == 0
     assert result.payload["activation"]["blocks_remaining"] == 18_500
     assert result.payload["pq_activity"]["last_100_blocks"]["expected_zero_before_activation"] is True
+    assert result.payload["network_readiness"]["height_spread_source"] == "/v1/peers/public"
+
+
+def test_height_spread_falls_back_to_status_sync_when_public_peers_unavailable(monkeypatch) -> None:
+    def fake_collect_api(*, config, activation_height):
+        chain = readiness._empty_chain(config=config)
+        chain.update(
+            {
+                "api_status": "OK",
+                "api_latency_ms": 30,
+                "network": "testnet",
+                "height": 11_500,
+                "synced": True,
+                "sync_phase": "synced",
+                "best_block_hash": "00" * 32,
+                "peer_count": 9,
+                "operational_peer_count": 7,
+                "height_spread": 1,
+            }
+        )
+        return {"status": "OK", "available": True, "latency_ms": 30}, chain, [], None
+
+    monkeypatch.setattr(readiness, "_collect_api", fake_collect_api)
+    monkeypatch.setattr(readiness, "_service_checks", lambda *, config: _ok_services())
+
+    result = readiness.collect_operational_readiness(config=readiness.OperationalReadinessConfig(no_network=False), repo_root=Path.cwd())
+
+    assert result.payload["network_readiness"]["height_spread"] == 1
+    assert result.payload["network_readiness"]["height_spread_source"] == "/v1/status sync.local_height/remote_height"
+    assert result.status == "READY"
 
 
 def test_operational_readiness_degraded_for_major_warning(monkeypatch) -> None:
@@ -103,6 +133,10 @@ def test_config_precedence(monkeypatch, tmp_path: Path) -> None:
     assert config.api_url == "https://cli.example"
     assert config.timeout_seconds == 9
     assert config.output_dir == tmp_path / "out"
+
+
+def test_default_explorer_url_is_public_live_testnet() -> None:
+    assert readiness.OperationalReadinessConfig().explorer_url == "https://chipcoinprotocol.com/live-testnet"
 
 
 def test_cli_compact_render(monkeypatch) -> None:

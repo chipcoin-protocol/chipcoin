@@ -60,8 +60,14 @@ Static PQ readiness data comes from the repository and includes:
 - availability of smoke, benchmark, audit and dress rehearsal tooling.
 
 External service checks are read-only HTTP GET requests for the website,
-explorer, faucet, snapshot endpoint, browser wallet page and documentation page.
+explorer/live-testnet page, faucet, snapshot endpoint, browser wallet page and
+documentation page.
 They are skipped when `--no-network` is set.
+
+The default explorer service URL is
+`https://chipcoinprotocol.com/live-testnet`. The dashboard uses GET and follows
+normal redirects. It accepts ordinary HTML `200` responses for service
+reachability checks and does not require the service endpoint to return JSON.
 
 ## Status Scoring
 
@@ -99,6 +105,13 @@ Major signals include:
 
 Peer version distribution is reported as `UNKNOWN` unless the API exposes the
 data. The dashboard does not invent upgrade percentages.
+
+Height spread is calculated from `/v1/peers/public` when public peer heights are
+available. If that endpoint is not public, the dashboard falls back to
+`/v1/status` `sync.local_height` and `sync.remote_height`. A one-block
+instantaneous spread is treated as acceptable by the default threshold; a real
+split should be confirmed through persistent spread over repeated runs and peer
+diagnostics, not a single sample.
 
 ## Thresholds
 

@@ -65,7 +65,7 @@ class OperationalReadinessConfig:
     output_dir: Path | None = None
     minimum_compatible_version: str | None = None
     website_url: str | None = "https://chipcoinprotocol.com/"
-    explorer_url: str | None = "https://chipcoinprotocol.com/explorer"
+    explorer_url: str | None = "https://chipcoinprotocol.com/live-testnet"
     faucet_url: str | None = "https://chipcoinprotocol.com/faucet"
     snapshot_url: str | None = "https://chipcoinprotocol.com/downloads/"
     browser_wallet_url: str | None = "https://chipcoinprotocol.com/browser-wallet"
@@ -481,6 +481,9 @@ def _collect_api(*, config: OperationalReadinessConfig, activation_height: int):
                 "network_identifier": status.get("network_magic_hex"),
             }
         )
+        sync = status.get("sync")
+        if isinstance(sync, dict) and isinstance(sync.get("local_height"), int) and isinstance(sync.get("remote_height"), int):
+            chain["height_spread"] = abs(int(sync["remote_height"]) - int(sync["local_height"]))
         height = status.get("height")
         if isinstance(height, int):
             block_payload, _, _ = _fetch_json(
@@ -538,6 +541,10 @@ def _network_readiness(*, chain: dict[str, Any], peers_public: dict[str, Any] | 
             if isinstance(peer, dict) and isinstance(peer.get("last_known_height"), int):
                 heights.append(peer["last_known_height"])
     spread = None if not heights else max(heights) - min(heights)
+    spread_source = "/v1/peers/public"
+    if spread is None and isinstance(chain.get("height_spread"), int):
+        spread = int(chain["height_spread"])
+        spread_source = "/v1/status sync.local_height/remote_height"
     return {
         "peer_total": chain.get("peer_count"),
         "peer_operational": chain.get("operational_peer_count"),
@@ -551,6 +558,7 @@ def _network_readiness(*, chain: dict[str, Any], peers_public: dict[str, Any] | 
         "miner_unique_recent": None,
         "top_miner_share_percent": None,
         "height_spread": spread,
+        "height_spread_source": spread_source if spread is not None else None,
     }
 
 
@@ -826,15 +834,27 @@ def _fetch_json(base_url: str | None, path: str, timeout: float) -> tuple[Any | 
 
 def _check_url(url: str | None, timeout: float) -> dict[str, Any]:
     if not url:
-        return {"status": "UNKNOWN", "reachable": None, "http_status": None, "latency_ms": None, "error": "not configured"}
+        return {"status": "UNKNOWN", "reachable": None, "http_status": None, "latency_ms": None, "error": "not configured", "error_type": "not_configured"}
     started = time.perf_counter()
     try:
         with urlopen(Request(url, method="GET", headers={"User-Agent": "chipcoin-pq-readiness/1"}), timeout=timeout) as response:
-            return {"status": "OK", "reachable": True, "http_status": response.status, "latency_ms": round((time.perf_counter() - started) * 1000, 2), "error": None}
+            return {"status": "OK", "reachable": True, "http_status": response.status, "latency_ms": round((time.perf_counter() - started) * 1000, 2), "error": None, "error_type": None}
     except HTTPError as exc:
-        return {"status": "FAIL", "reachable": False, "http_status": exc.code, "latency_ms": None, "error": str(exc)}
-    except (URLError, TimeoutError, OSError) as exc:
-        return {"status": "FAIL", "reachable": False, "http_status": None, "latency_ms": None, "error": str(exc)}
+        return {"status": "FAIL", "reachable": False, "http_status": exc.code, "latency_ms": round((time.perf_counter() - started) * 1000, 2), "error": str(exc), "error_type": "http_status"}
+    except TimeoutError as exc:
+        return {"status": "FAIL", "reachable": False, "http_status": None, "latency_ms": round((time.perf_counter() - started) * 1000, 2), "error": str(exc), "error_type": "timeout"}
+    except URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        text = str(reason)
+        if "Name or service not known" in text or "Temporary failure in name resolution" in text:
+            error_type = "dns"
+        elif "SSL" in text or "TLS" in text or "CERTIFICATE" in text.upper():
+            error_type = "tls"
+        else:
+            error_type = "network"
+        return {"status": "FAIL", "reachable": False, "http_status": None, "latency_ms": round((time.perf_counter() - started) * 1000, 2), "error": str(exc), "error_type": error_type}
+    except OSError as exc:
+        return {"status": "FAIL", "reachable": False, "http_status": None, "latency_ms": round((time.perf_counter() - started) * 1000, 2), "error": str(exc), "error_type": "os"}
 
 
 def _empty_chain(*, config: OperationalReadinessConfig) -> dict[str, Any]:
@@ -853,6 +873,7 @@ def _empty_chain(*, config: OperationalReadinessConfig) -> dict[str, Any]:
         "handshaken_peer_count": None,
         "node_version": None,
         "network_identifier": None,
+        "height_spread": None,
     }
 
 
