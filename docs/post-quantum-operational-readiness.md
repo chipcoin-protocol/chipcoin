@@ -1,12 +1,20 @@
 # Post-Quantum Operational Readiness Dashboard
 
 The operational readiness dashboard is a read-only aggregator for the scheduled
-testnet CHCQ activation at height `30000`. It answers one operational question:
+testnet CHCQ activation at height `20000`. It answers one operational question:
 
 `Is Chipcoin operationally ready for Post-Quantum activation?`
 
 It does not mine, submit transactions, mutate node state, change consensus
 parameters, enable browser PQ signing, or modify the explorer/API.
+
+## Testnet Activation Rescheduled
+
+Testnet activation was rescheduled from height `30000` to height `20000` after
+the implementation, audit, smoke, browser parity, dress rehearsal and
+operational readiness work completed. The dashboard reads the active value from
+the local PQ audit/source-of-truth path. A remote deployment that still reports
+old operational data should be treated as deployment pending, not hidden.
 
 ## Commands
 

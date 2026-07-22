@@ -145,8 +145,14 @@ Current constants:
 ```text
 mainnet: 0
 devnet:  30000
-testnet: 30000
+testnet: 20000
 ```
+
+Testnet activation was rescheduled from height `30000` to `20000` after the PQ
+readiness, smoke, browser parity, dress rehearsal, operational readiness and
+audit work completed. This changes only the testnet consensus activation
+height; it does not change CHCQ address encoding, scheme ids, signatures,
+transaction serialization, PoW or rewards.
 
 Before activation:
 

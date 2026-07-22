@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from chipcoin.consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 from chipcoin.interfaces import cli as cli_module
 from chipcoin.pq import operational_readiness as readiness
 from chipcoin.tools import pq_operational_readiness
@@ -14,7 +15,7 @@ def test_pq_operational_readiness_cli_json_no_network(capsys) -> None:
     assert code == 3
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "UNKNOWN"
-    assert payload["activation"]["activation_height"] == 30_000
+    assert payload["activation"]["activation_height"] == PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 
 
 def test_chipcoin_cli_pq_operational_readiness_compact(monkeypatch, capsys) -> None:
@@ -27,8 +28,8 @@ def test_chipcoin_cli_pq_operational_readiness_compact(monkeypatch, capsys) -> N
                     "generated_at": "2026-07-22T09:00:00Z",
                     "commit": "test",
                     "network": "testnet",
-                "activation": {"activation_height": 30_000, "blocks_remaining": 1, "eta_label": "soon"},
-                "chain": {"height": 29_999, "operational_peer_count": 7},
+                "activation": {"activation_height": PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT, "blocks_remaining": 1, "eta_label": "soon"},
+                "chain": {"height": PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT - 1, "operational_peer_count": 7},
                 "network_readiness": {"height_spread": 0},
                 "operational_tests": {
                     "readiness_suite": {"status": "PASS"},

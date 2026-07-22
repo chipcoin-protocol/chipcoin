@@ -66,5 +66,5 @@ def test_pq_smoke_json_failure_does_not_report_ready(capsys) -> None:
     assert payload["failed_stage"] == "configuration"
 
 
-def test_production_testnet_activation_height_remains_30000() -> None:
-    assert pq_support_activation_height("testnet") == TESTNET_PQ_ACTIVATION_HEIGHT == 30_000
+def test_production_testnet_activation_height_is_scheduled_height() -> None:
+    assert pq_support_activation_height("testnet") == TESTNET_PQ_ACTIVATION_HEIGHT == 20_000

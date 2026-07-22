@@ -44,14 +44,25 @@ It currently supports:
 | Status | Browser wallet behavior |
 | --- | --- |
 | Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, receive/address display badges, and CHCQ watch-only balance/history tracking |
-| Scheduled | Testnet consensus activation at height `30000` for CHCQ outputs and v2 wallet spends |
+| Scheduled | Testnet consensus activation at height `20000` for CHCQ outputs and v2 wallet spends |
 | Experimental/test-only | Browser ML-DSA-44 keygen/sign/verify interop with the Python consensus backend |
 | Not yet available | Public browser-side ML-DSA signing, CHCQ wallet generation, CHCQ spending, and Send to CHCQ recipients |
 
-Before testnet activation height `30000`, consensus rejects CHCQ outputs and
+Before testnet activation height `20000`, consensus rejects CHCQ outputs and
 CHCQ spends. After activation, the browser wallet will still keep CHCQ sending
 disabled until the full ML-DSA browser signing path is implemented, tested
 against frozen vectors, and verified by the node consensus backend.
+
+## Testnet Activation Rescheduled
+
+The public testnet CHCQ/v2 wallet-spend activation height was rescheduled from
+`30000` to `20000` after the PQ implementation, hardening, browser parity,
+Chromium/Firefox verification, smoke command, dress rehearsal, operational
+readiness dashboard, and audit were completed. This is a mandatory testnet
+consensus upgrade for validating nodes before height `20000`. It does not
+change keys, addresses, transaction bytes, signature scheme identifiers, or the
+browser wallet feature flag. Browser-side CHCQ generation, signing, storage and
+send remain disabled.
 
 CHCQ receive/address display in the extension is recognition-only: the browser
 wallet can label and watch post-quantum addresses, but it cannot yet create or

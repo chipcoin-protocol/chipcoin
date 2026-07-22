@@ -77,7 +77,7 @@ No public testnet node, peer, DNS name, or external API is used.
 
 ## What It Validates
 
-- production testnet CHCQ activation remains height `30000`;
+- production testnet CHCQ activation is height `20000`;
 - local test-only PQ activation can be set to a low height;
 - CHCQ address generation and parsing resolve to ML-DSA-44;
 - CHC to CHCQ is rejected before activation;
@@ -95,7 +95,7 @@ No public testnet node, peer, DNS name, or external API is used.
 - public-testnet networking;
 - global chain-wide PQ statistics;
 - production-load DoS resistance;
-- the real height-30000 activation event itself.
+- the real height-20000 activation event itself.
 
 ## Relationship To The Pytest Suite
 

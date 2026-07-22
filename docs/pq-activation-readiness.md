@@ -3,7 +3,16 @@
 The readiness suite validates the CHCQ activation lifecycle without changing
 production consensus constants or lowering the public testnet activation height.
 
-Production testnet CHCQ activation remains scheduled for height `30000`.
+Production testnet CHCQ activation is scheduled for height `20000`.
+
+## Testnet Activation Rescheduled
+
+The public testnet activation height was rescheduled from `30000` to `20000`
+after implementation, audit, smoke testing, browser parity, dress rehearsal and
+operational readiness were completed. This is a mandatory testnet consensus
+upgrade for validating nodes before height `20000`. The readiness suite still
+uses an isolated low activation height and does not alter public testnet
+consensus parameters.
 
 ## Test Activation Height
 

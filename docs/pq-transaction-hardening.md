@@ -127,5 +127,5 @@ boundary behavior, API metadata and full CHCQ lifecycle.
 ## Non-Goals
 
 This hardening does not validate browser signing, public-testnet networking,
-global PQ statistics, production-load DoS resistance, or the real height-30000
+global PQ statistics, production-load DoS resistance, or the real height-20000
 activation event.

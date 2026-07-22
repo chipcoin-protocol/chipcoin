@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from chipcoin.consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 from chipcoin.interfaces import cli as cli_module
 from chipcoin.tools import pq_dress_rehearsal
 
@@ -32,7 +33,7 @@ def test_pq_dress_rehearsal_command_writes_reports(tmp_path: Path) -> None:
     assert payload["verify_count"] >= 1
     assert payload["verify_failures"] >= 1
     assert payload["smoke"]["ready"] is True
-    assert payload["audit"]["activation"]["testnet"] == 30_000
+    assert payload["audit"]["activation"]["testnet"] == PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
     assert markdown_path.read_text(encoding="utf-8").startswith("# Post-Quantum Testnet Dress Rehearsal Report")
 
 

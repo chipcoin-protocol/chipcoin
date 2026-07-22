@@ -6,7 +6,7 @@ This document describes the Post-Quantum (PQ) implementation that exists in this
 repository today. It is an internal engineering specification, not a new
 protocol proposal. It documents code paths, activation rules, node-local policy,
 operational tooling, tests and residual risks for the scheduled testnet
-activation at height `30000`.
+activation at height `20000`.
 
 This audit does not change consensus rules, transaction serialization, the
 activation height, public API shape, explorer behavior, browser-wallet send
@@ -18,7 +18,8 @@ behavior, or the ML-DSA implementation.
   vendored native backend in `src/chipcoin/crypto/pq/mldsa.py`.
 - CHCQ addresses are recognized by core, API, explorer and browser wallet.
 - Transaction v2 carries `sig_scheme_id` per input.
-- Testnet and devnet CHCQ/v2 wallet-spend activation remains height `30000`.
+- Testnet CHCQ/v2 wallet-spend activation is scheduled at height `20000`.
+- Devnet CHCQ/v2 wallet-spend activation remains height `30000`.
 - Browser ML-DSA exists only behind disabled test/debug internals; send/spend
   CHCQ remains disabled in browser UI.
 - Operational readiness is covered by pytest, `pq-smoke`, `pq-benchmark`, and
@@ -70,7 +71,7 @@ preserving block consensus compatibility.
 
 | Rule | Code | Notes |
 | --- | --- | --- |
-| Activation height | `src/chipcoin/consensus/pq_activation.py` | testnet/devnet `30000`; test overrides only via `ConsensusParams.pq_support_activation_height` |
+| Activation height | `src/chipcoin/consensus/pq_activation.py` | testnet `20000`, devnet `30000`; test overrides only via `ConsensusParams.pq_support_activation_height` |
 | Transaction v1 scheme gating | `validate_transaction_stateless()` and `serialize_transaction()` | v1 inputs cannot declare non-legacy schemes |
 | Transaction v2 scheme byte | `serialize_transaction()` | `sig_scheme_id` encoded as one byte for version >= 2 |
 | Known scheme IDs | `src/chipcoin/crypto/pq/schemes.py` | unknown scheme rejected for version >= 2 |
@@ -118,7 +119,7 @@ causing consensus divergence.
 | ML-DSA public key | `1312` bytes | `crypto/pq/mldsa.py` | `crypto/mldsa44.ts` | interop tests |
 | ML-DSA private key | `2560` bytes | backend assertion/audit report | `crypto/mldsa44.ts` | audit report, interop tests |
 | ML-DSA signature | `2420` bytes | `crypto/pq/mldsa.py` | `crypto/mldsa44.ts` | interop tests |
-| Testnet activation | `30000` | `consensus/pq_activation.py` | `shared/constants.ts`, fixtures/docs | smoke/audit tests |
+| Testnet activation | `20000` | `consensus/pq_activation.py` | `shared/constants.ts`, fixtures/docs | smoke/audit tests |
 | Domain separator | `chipcoin:tx-signature:v2:<network>` | `consensus/serialization.py` | transaction parity fixture | serialization parity |
 | Noble version | `0.6.1` | browser package metadata/docs | `crypto/mldsa44.ts` | browser tests |
 
@@ -171,10 +172,21 @@ the activation readiness suite.
 ## Activation Rules
 
 Production/testnet activation height is read from
-`pq_support_activation_height("testnet")` and remains `30000`. Test-only low
+`pq_support_activation_height("testnet")` and is scheduled at `20000`. Test-only low
 heights are created by `make_pq_readiness_params()` in `src/chipcoin/pq/readiness.py`.
 The override is scoped to local `ConsensusParams` instances used by tests and
 smoke runs.
+
+### Testnet Activation Rescheduled
+
+The public testnet activation height was rescheduled from `30000` to `20000`
+after completion of implementation, audit, smoke testing, browser parity,
+Chromium/Firefox runtime checks, dress rehearsal and operational readiness
+work. This is a mandatory testnet consensus upgrade for validating nodes before
+height `20000`. It does not change wire format, transaction version, sighash,
+domain separators, scheme ids, CHCQ address encoding, ML-DSA key/signature
+sizes, PoW or rewards. Nodes that retain the old `30000` schedule can diverge
+at the first block containing PQ activity below height `30000`.
 
 Before activation:
 
@@ -281,4 +293,4 @@ general claim that ML-DSA is universally faster than ECDSA.
 ## Activation Checklist
 
 Use `docs/post-quantum-activation-checklist.md` as the operational checklist for
-the height-30000 rollout.
+the height-20000 rollout.

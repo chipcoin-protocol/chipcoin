@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Callable
 
 from ..consensus.models import Block, OutPoint, Transaction
+from ..consensus.pq_activation import pq_support_activation_height
 from ..consensus.serialization import deserialize_transaction, serialize_transaction
 from ..consensus.validation import ValidationError
 from ..crypto.addresses import parse_address
@@ -387,7 +388,10 @@ def run_dress_rehearsal(
             _assert(status.startswith("200"), "status API failed")
             _assert(body["height"] == node.chain_tip().height, "status height mismatch")
             audit_payload = build_pq_audit_report(repo_root=Path.cwd())
-            _assert(audit_payload["activation"]["testnet"] == 30_000, "audit activation height mismatch")
+            _assert(
+                audit_payload["activation"]["testnet"] == pq_support_activation_height("testnet"),
+                "audit activation height mismatch",
+            )
             return {"height": body["height"], "audit_activation": audit_payload["activation"]["testnet"]}
 
         stage("API and audit metadata", api_phase)

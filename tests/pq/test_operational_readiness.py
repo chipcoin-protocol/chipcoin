@@ -13,7 +13,7 @@ def test_operational_readiness_ready(monkeypatch) -> None:
 
     assert result.status == "READY"
     assert result.exit_code == 0
-    assert result.payload["activation"]["blocks_remaining"] == 18_500
+    assert result.payload["activation"]["blocks_remaining"] == 8_500
     assert result.payload["pq_activity"]["last_100_blocks"]["expected_zero_before_activation"] is True
     assert result.payload["network_readiness"]["height_spread_source"] == "/v1/peers/public"
 
@@ -146,7 +146,7 @@ def test_cli_compact_render(monkeypatch) -> None:
     compact = readiness.render_cli(result, compact=True)
 
     assert compact.startswith("status=READY")
-    assert "activation_height=30000" in compact
+    assert "activation_height=20000" in compact
 
 
 def _fake_live(monkeypatch, *, height: int = 11_500, operational_peers: int = 7) -> None:

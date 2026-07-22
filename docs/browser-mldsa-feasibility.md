@@ -202,4 +202,4 @@ digest API. Tests intentionally fail if `ml_dsa44.internal.sign`,
 - public-testnet networking;
 - global chain-wide PQ statistics;
 - production-load DoS resistance;
-- the real height-30000 activation event itself.
+- the real height-20000 activation event itself.

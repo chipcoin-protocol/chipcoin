@@ -13,9 +13,20 @@ Current scheduled heights:
 
 ```text
 devnet:  30000
-testnet: 30000
+testnet: 20000
 mainnet: 0 for future genesis support
 ```
+
+## Testnet Activation Rescheduled
+
+The public testnet activation height was rescheduled from `30000` to `20000`
+after the PQ implementation, audit, smoke command, browser parity, dress
+rehearsal and operational readiness dashboard were completed. This is a
+mandatory testnet consensus upgrade for validating nodes before height `20000`.
+It does not change CHCQ addresses, transaction serialization, sighash v2,
+scheme ids, ML-DSA keys/signatures, PoW or rewards. Nodes that keep the old
+`30000` schedule can diverge at the first block containing PQ activity below
+height `30000`.
 
 Before activation, nodes reject CHCQ outputs, CHCQ spends, and v2 wallet spends.
 After activation, CHC and CHCQ can coexist.
@@ -38,7 +49,7 @@ This vector exercises one post-activation testnet CHCQ spend built by
 
 ```text
 network: testnet
-activation_height: 30000
+activation_height: 20000
 seed_hex: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 scheme_id: 10
 scheme_name: mldsa44

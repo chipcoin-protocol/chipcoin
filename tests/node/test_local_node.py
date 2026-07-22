@@ -8,8 +8,9 @@ import logging
 
 from chipcoin.consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND, parse_reward_attestation_bundle_metadata
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
-from chipcoin.consensus.models import Block, OutPoint, Transaction, TxInput, TxOutput
+from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.pow import verify_proof_of_work
+from chipcoin.consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 from chipcoin.consensus.serialization import serialize_transaction
 from chipcoin.consensus.validation import (
     ContextualValidationError,
@@ -3704,6 +3705,46 @@ def test_mempool_rejects_chcq_output_before_activation() -> None:
             assert "CHCQ outputs are not active" in str(exc)
             return
         raise AssertionError("Expected pre-activation CHCQ output to be rejected by mempool validation.")
+
+
+def test_mempool_uses_next_height_and_candidate_at_pq_activation_boundary() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="testnet")
+        synthetic_tip = BlockHeader(
+            version=1,
+            previous_block_hash="00" * 32,
+            merkle_root="00" * 32,
+            timestamp=1_700_000_000,
+            bits=service.params.genesis_bits,
+            nonce=0,
+        )
+        service.headers.put(
+            synthetic_tip,
+            height=PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT - 1,
+            cumulative_work=1,
+            is_main_chain=True,
+        )
+        service.headers.set_tip(synthetic_tip.block_hash(), PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT - 1)
+
+        owner = wallet_key(0)
+        funding_outpoint = OutPoint(txid="9c" * 32, index=0)
+        put_wallet_utxo(service, funding_outpoint, value=100, owner=owner)
+        pq_recipient = public_key_to_pq_address(b"\x78" * 1312, scheme_id=SIG_SCHEME_ML_DSA_44)
+        tx = signed_payment(
+            funding_outpoint,
+            value=100,
+            sender=owner,
+            recipient=pq_recipient,
+            amount=90,
+            fee=10,
+        )
+
+        accepted = service.receive_transaction(tx)
+        template = service.build_candidate_block(wallet_key(2).address)
+
+        assert accepted.transaction.txid() == tx.txid()
+        assert template.height == PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
+        assert any(candidate.txid() == tx.txid() for candidate in template.block.transactions)
 
 
 def test_mempool_accepts_and_mines_chcq_spend_after_activation(monkeypatch) -> None:

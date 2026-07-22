@@ -13,7 +13,7 @@ CHCQ status:
 | Status | Browser wallet behavior |
 | --- | --- |
 | Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, receive/address display badges, and CHCQ watch-only balance/history tracking |
-| Scheduled | Testnet consensus activation at height `30000` for CHCQ outputs and v2 wallet spends |
+| Scheduled | Testnet consensus activation at height `20000` for CHCQ outputs and v2 wallet spends |
 | Not yet available | Browser-side ML-DSA signing, CHCQ wallet generation, CHCQ spending, and Send to CHCQ recipients |
 
 Before activation, testnet consensus rejects CHCQ outputs and CHCQ spends. After
@@ -21,6 +21,17 @@ activation, the browser wallet will still block CHCQ sending until the full
 ML-DSA browser signing path is implemented and verified against the node
 consensus backend. Watch-only CHCQ tracking stores only public addresses and
 optional local labels; it does not make CHCQ funds browser-spendable.
+
+## Testnet Activation Rescheduled
+
+Testnet CHCQ/v2 wallet-spend activation was rescheduled from height `30000` to
+height `20000` after completion of the activation readiness suite, smoke
+command, browser parity/interoperability work, dress rehearsal, operational
+readiness dashboard, and PQ audit. This is a mandatory testnet consensus
+upgrade for validating nodes before height `20000`. It does not change CHCQ
+addresses, keys, signatures, transaction serialization, or browser wallet
+send/signing behavior. Nodes that keep the old `30000` schedule can diverge at
+the first block containing PQ activity below height `30000`.
 
 Build commands:
 - `npm run build:chrome`

@@ -1,6 +1,7 @@
 import hashlib
 
 from chipcoin.consensus.models import OutPoint, TxOutput
+from chipcoin.consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 from chipcoin.consensus.serialization import serialize_transaction
 from chipcoin.consensus.validation import ValidationContext, validate_transaction
 from chipcoin.consensus.params import MAINNET_PARAMS
@@ -77,7 +78,7 @@ def test_transaction_signer_builds_post_activation_pq_vector() -> None:
         network="testnet",
     )
     context = ValidationContext(
-        height=30_000,
+        height=PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT,
         median_time_past=0,
         params=MAINNET_PARAMS,
         utxo_view=InMemoryUtxoView.from_entries(
@@ -86,7 +87,7 @@ def test_transaction_signer_builds_post_activation_pq_vector() -> None:
                     outpoint,
                     UtxoEntry(
                         output=TxOutput(value=1_234_567_890, recipient=owner.address),
-                        height=29_999,
+                        height=PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT - 1,
                         is_coinbase=False,
                     ),
                 )

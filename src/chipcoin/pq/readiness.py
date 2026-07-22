@@ -14,7 +14,7 @@ import shutil
 from ..consensus.models import Block, OutPoint, Transaction
 from ..consensus.params import TESTNET_PARAMS
 from ..consensus.pow import verify_proof_of_work
-from ..consensus.pq_activation import pq_support_activation_height, pq_support_is_active
+from ..consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT, pq_support_activation_height, pq_support_is_active
 from ..consensus.validation import ValidationError
 from ..crypto.addresses import is_valid_address, parse_address
 from ..crypto.pq import SIG_SCHEME_ML_DSA_44
@@ -24,7 +24,7 @@ from ..wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed, wal
 
 
 DEFAULT_PQ_SMOKE_ACTIVATION_HEIGHT = 20
-TESTNET_PQ_ACTIVATION_HEIGHT = 30_000
+TESTNET_PQ_ACTIVATION_HEIGHT = PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 PQ_SMOKE_NETWORK = "testnet"
 PQ_SMOKE_SCHEME_NAME = "ML-DSA-44"
 

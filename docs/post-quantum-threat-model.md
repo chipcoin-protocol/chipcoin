@@ -28,7 +28,7 @@ and ML-DSA-44. It is not a mathematical cryptanalysis of ML-DSA.
 
 - ML-DSA-44 implementation behaves according to its upstream specification.
 - Node operators deploy a build that includes the pinned native backend.
-- Public testnet peers upgrade before height `30000`.
+- Public testnet peers upgrade before height `20000`.
 - Local policy limits are not relied on for block consensus.
 - Browser PQ signing remains disabled until a separate storage and UX design is
   implemented.

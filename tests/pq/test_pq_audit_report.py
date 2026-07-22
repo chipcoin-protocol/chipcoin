@@ -15,7 +15,7 @@ def test_pq_audit_report_uses_runtime_constants() -> None:
     report = build_report()
 
     assert report["scheme"]["mldsa44_scheme_id"] == SIG_SCHEME_ML_DSA_44
-    assert report["activation"]["testnet"] == PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT == 30_000
+    assert report["activation"]["testnet"] == PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT == 20_000
     assert report["address"]["pq_prefix"] == PQ_ADDRESS_PREFIX
     assert report["address"]["pq_version"] == PQ_ADDRESS_VERSION
     assert report["transaction"]["pq_transaction_version"] == PQ_TRANSACTION_VERSION
@@ -33,4 +33,4 @@ def test_pq_audit_report_cli_json(capsys) -> None:
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["scheme"]["mldsa44_scheme_id"] == SIG_SCHEME_ML_DSA_44
-    assert payload["activation"]["testnet"] == 30_000
+    assert payload["activation"]["testnet"] == PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT

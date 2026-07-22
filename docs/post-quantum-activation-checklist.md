@@ -1,13 +1,23 @@
 # Chipcoin Post-Quantum Activation Checklist
 
-This checklist is for the scheduled testnet CHCQ activation at height `30000`.
+This checklist is for the scheduled testnet CHCQ activation at height `20000`.
 Every item should be checked with exact command output, date and operator.
+
+## Testnet Activation Rescheduled
+
+Testnet activation was rescheduled from height `30000` to height `20000` after
+completion of implementation, audit, smoke testing, browser parity, dress
+rehearsal and operational readiness work. This is a mandatory testnet consensus
+upgrade before height `20000`; old nodes that retain the `30000` schedule can
+diverge at the first block containing PQ activity below height `30000`. No
+keys, CHCQ addresses, transaction serialization, sighash, scheme ids, PoW,
+rewards, or wallet file formats changed.
 
 ## Before Activation
 
 - [ ] Confirm code version includes `549b69b Add PQ transaction validation hardening`
       or a later commit containing the same PQ hardening.
-- [ ] Confirm `pq_support_activation_height("testnet") == 30000`.
+- [ ] Confirm `pq_support_activation_height("testnet") == 20000`.
 - [ ] Run full Python test suite: `.venv/bin/python -m pytest -q`.
 - [ ] Run PQ suite: `.venv/bin/python -m pytest tests/pq -q`.
 - [ ] Run readiness suite: `.venv/bin/python -m pytest tests/pq/test_activation_readiness.py -q`.
@@ -34,7 +44,7 @@ Every item should be checked with exact command output, date and operator.
 - [ ] Confirm rollback plan and known-good pre-PQ image/tag are documented.
 - [ ] Publish community notice explaining CHCQ status and browser limitations.
 
-## Near Height 30000
+## Near Height 20000
 
 - [ ] Record current height and blocks remaining.
 - [ ] Run `chipcoin pq-operational-readiness --compact` at least every monitoring
@@ -53,9 +63,9 @@ Every item should be checked with exact command output, date and operator.
 
 ## After Activation
 
-- [ ] Confirm activation state is active at height >= `30000`.
+- [ ] Confirm activation state is active at height >= `20000`.
 - [ ] Confirm operational readiness dashboard no longer reports activation as
-      scheduled once the chain is beyond height `30000`.
+      scheduled once the chain is beyond height `20000`.
 - [ ] Submit or observe first CHC -> CHCQ transaction.
 - [ ] Confirm first CHCQ UTXO exists with correct amount and metadata.
 - [ ] Submit or observe first CHCQ -> CHC spend.
