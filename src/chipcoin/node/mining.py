@@ -22,6 +22,7 @@ from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
 from ..consensus.utxo import InMemoryUtxoView
 from ..consensus.validation import ValidationContext, ValidationError, validate_transaction
+from ..pq.policy import DEFAULT_PQ_POLICY_LIMITS, pq_signature_cost
 from ..storage.mempool import MempoolEntry
 
 
@@ -193,6 +194,7 @@ class MiningCoordinator:
         included_txids: set[str] = set()
         included_entries: list[MempoolEntry] = []
         current_weight_units = 0
+        current_pq_signature_cost = 0
         included_attestation_bundle_count = 0
         included_attestation_identities: set[tuple[int, int, str, str]] = set()
         included_verifier_window_counts: dict[tuple[int, str], int] = {}
@@ -241,6 +243,12 @@ class MiningCoordinator:
                         continue
                 if current_weight_units + selection.weight_units > max_transaction_weight_units:
                     continue
+                selection_pq_signature_cost = pq_signature_cost(selection.transaction, DEFAULT_PQ_POLICY_LIMITS)
+                if (
+                    current_pq_signature_cost + selection_pq_signature_cost
+                    > DEFAULT_PQ_POLICY_LIMITS.max_pq_signature_cost_per_block
+                ):
+                    continue
                 if is_special_node_transaction(selection.transaction):
                     try:
                         validate_transaction(selection.transaction, special_node_context)
@@ -254,6 +262,7 @@ class MiningCoordinator:
                 included_entries.append(selection.entry)
                 included_txids.add(selection.transaction.txid())
                 current_weight_units += selection.weight_units
+                current_pq_signature_cost += selection_pq_signature_cost
                 if selection.transaction.metadata.get("kind") == REWARD_ATTESTATION_BUNDLE_KIND:
                     for identity in bundle_identities:
                         included_attestation_identities.add(identity)

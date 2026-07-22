@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Iterable
 
 from ..consensus.models import Transaction
@@ -17,8 +18,20 @@ from ..consensus.nodes import is_register_reward_node_transaction, is_renew_rewa
 from ..consensus.utxo import OverlayUtxoView, UtxoView
 from ..consensus.validation import ValidationError, is_coinbase_transaction, validate_transaction
 from ..crypto.addresses import is_valid_address
+from ..pq.policy import (
+    DEFAULT_PQ_POLICY_LIMITS,
+    PQPolicyError,
+    PQPolicyLimits,
+    enforce_pq_mempool_precheck,
+    is_pq_transaction,
+    pq_signature_cost,
+    pq_sigop_count,
+)
 from ..storage.chainstate import ChainStateRepository
 from ..storage.mempool import MempoolEntry, MempoolRepository
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,6 +56,39 @@ class MempoolPolicy:
     max_renew_reward_node_transactions: int = 16
     max_reward_attestation_bundle_transactions: int = 128
     transaction_ttl_seconds: int = 72 * 60 * 60
+    pq_limits: PQPolicyLimits = DEFAULT_PQ_POLICY_LIMITS
+
+
+@dataclass
+class PQMempoolMetrics:
+    """Cumulative node-local PQ transaction counters."""
+
+    pq_verify_count: int = 0
+    pq_verify_failures: int = 0
+    pq_verify_duration_seconds_total: float = 0.0
+    pq_verify_duration_seconds_max: float = 0.0
+    pq_tx_accepted: int = 0
+    pq_tx_rejected: int = 0
+    pq_malformed: int = 0
+    pq_relay: int = 0
+    pq_mined: int = 0
+    pq_orphan: int = 0
+
+    def as_dict(self) -> dict[str, object]:
+        average = 0.0 if self.pq_verify_count == 0 else self.pq_verify_duration_seconds_total / self.pq_verify_count
+        return {
+            "pq_verify_count": self.pq_verify_count,
+            "pq_verify_failures": self.pq_verify_failures,
+            "pq_verify_duration_seconds_total": round(self.pq_verify_duration_seconds_total, 6),
+            "pq_verify_duration_seconds_avg": round(average, 6),
+            "pq_verify_duration_seconds_max": round(self.pq_verify_duration_seconds_max, 6),
+            "pq_tx_accepted": self.pq_tx_accepted,
+            "pq_tx_rejected": self.pq_tx_rejected,
+            "pq_malformed": self.pq_malformed,
+            "pq_relay": self.pq_relay,
+            "pq_mined": self.pq_mined,
+            "pq_orphan": self.pq_orphan,
+        }
 
 
 class MempoolManager:
@@ -64,42 +110,51 @@ class MempoolManager:
         self.time_provider = time_provider
         self.known_chain_transaction_lookup = known_chain_transaction_lookup
         self.policy = policy or MempoolPolicy()
+        self.pq_metrics = PQMempoolMetrics()
 
     def accept(self, transaction: Transaction, *, added_at: int | None = None) -> AcceptedTransaction:
         """Validate and add a transaction to the mempool."""
 
+        pq_candidate = is_pq_transaction(transaction)
         if is_coinbase_transaction(transaction):
             raise ValidationError("Coinbase transactions are not valid mempool entries.")
-        self.preflight(transaction)
-        txid = transaction.txid()
-        if self.repository.get(txid) is not None:
-            raise ValidationError("Transaction is already present in the mempool.")
-        if self._is_known_on_chain(txid):
-            raise ValidationError("Transaction is already confirmed in the active chain.")
+        try:
+            self.preflight(transaction)
+            txid = transaction.txid()
+            if self.repository.get(txid) is not None:
+                raise ValidationError("Transaction is already present in the mempool.")
+            if self._is_known_on_chain(txid):
+                raise ValidationError("Transaction is already confirmed in the active chain.")
 
-        replacement_txids = self._reward_attestation_bundle_replacement_txids(transaction)
-        replacement_txid_set = set(replacement_txids)
-        effective_entries = [
-            entry
-            for entry in self.repository.list_all()
-            if entry.transaction.txid() not in replacement_txid_set
-        ]
+            replacement_txids = self._reward_attestation_bundle_replacement_txids(transaction)
+            replacement_txid_set = set(replacement_txids)
+            effective_entries = [
+                entry
+                for entry in self.repository.list_all()
+                if entry.transaction.txid() not in replacement_txid_set
+            ]
 
-        self._enforce_special_node_mempool_policy(transaction, entries=effective_entries)
-        self._enforce_reward_attestation_bundle_mempool_policy(transaction, entries=effective_entries)
-        self._ensure_no_mempool_double_spend(transaction, entries=effective_entries)
+            self._enforce_special_node_mempool_policy(transaction, entries=effective_entries)
+            self._enforce_reward_attestation_bundle_mempool_policy(transaction, entries=effective_entries)
+            self._ensure_no_mempool_double_spend(transaction, entries=effective_entries)
 
-        snapshot = self._snapshot_with_mempool_applied()
-        context = self.validation_context_factory(snapshot)
-        fee_chipbits = validate_transaction(transaction, context)
-        self._enforce_policy(transaction, fee_chipbits)
-        accepted_at = self.time_provider() if added_at is None else added_at
-        for replaced_txid in replacement_txids:
-            self.repository.remove(replaced_txid)
-        self.repository.add(transaction, fee=fee_chipbits, added_at=accepted_at)
-        self._prune_expired(now=self.time_provider())
-        self._evict_if_needed()
-        return AcceptedTransaction(transaction=transaction, fee=fee_chipbits)
+            snapshot = self._snapshot_with_mempool_applied()
+            context = self.validation_context_factory(snapshot)
+            fee_chipbits = validate_transaction(transaction, context)
+            self._enforce_policy(transaction, fee_chipbits)
+            accepted_at = self.time_provider() if added_at is None else added_at
+            for replaced_txid in replacement_txids:
+                self.repository.remove(replaced_txid)
+            self.repository.add(transaction, fee=fee_chipbits, added_at=accepted_at)
+            self._prune_expired(now=self.time_provider())
+            self._evict_if_needed()
+            if pq_candidate:
+                self.pq_metrics.pq_tx_accepted += 1
+            return AcceptedTransaction(transaction=transaction, fee=fee_chipbits)
+        except ValidationError:
+            if pq_candidate:
+                self.pq_metrics.pq_tx_rejected += 1
+            raise
 
     def list_transactions(self) -> list[MempoolEntry]:
         """Return current mempool entries in processing order."""
@@ -203,11 +258,60 @@ class MempoolManager:
         if len(transaction.outputs) > self.policy.max_transaction_outputs:
             raise ValidationError("Transaction exceeds mempool output-count policy.")
 
+        try:
+            enforce_pq_mempool_precheck(transaction, limits=self.policy.pq_limits)
+        except PQPolicyError as exc:
+            self.pq_metrics.pq_malformed += 1
+            LOGGER.info(
+                "pq tx rejected stage=preflight reason=%s txid=%s version=%s inputs=%s outputs=%s pq_sigops=%s pq_cost=%s",
+                exc,
+                _txid_or_unknown(transaction),
+                transaction.version,
+                len(transaction.inputs),
+                len(transaction.outputs),
+                pq_sigop_count(transaction),
+                pq_signature_cost(transaction, self.policy.pq_limits),
+            )
+            raise ValidationError(str(exc)) from exc
+
         for output in transaction.outputs:
             if int(output.value) <= 0:
                 raise ValidationError("Transaction outputs must be positive for mempool policy.")
             if not is_valid_address(output.recipient):
                 raise ValidationError("Transaction output recipient is not a valid CHC address.")
+
+    def record_pq_verify(self, *, duration_seconds: float, verified: bool) -> None:
+        """Record one ML-DSA verification attempt after cheap checks have passed."""
+
+        self.pq_metrics.pq_verify_count += 1
+        if not verified:
+            self.pq_metrics.pq_verify_failures += 1
+        self.pq_metrics.pq_verify_duration_seconds_total += duration_seconds
+        self.pq_metrics.pq_verify_duration_seconds_max = max(
+            self.pq_metrics.pq_verify_duration_seconds_max,
+            duration_seconds,
+        )
+
+    def record_pq_relay(self, transaction: Transaction) -> None:
+        """Record one peer-relayed PQ transaction accepted by this node."""
+
+        if is_pq_transaction(transaction):
+            self.pq_metrics.pq_relay += 1
+
+    def record_pq_mined(self, transactions: Iterable[Transaction]) -> None:
+        """Record PQ transactions confirmed in blocks accepted by this node."""
+
+        self.pq_metrics.pq_mined += sum(1 for transaction in transactions if is_pq_transaction(transaction))
+
+    def record_pq_orphan(self, transactions: Iterable[Transaction]) -> None:
+        """Record PQ transactions returned from disconnected branches during reorg."""
+
+        self.pq_metrics.pq_orphan += sum(1 for transaction in transactions if is_pq_transaction(transaction))
+
+    def pq_metrics_snapshot(self) -> dict[str, object]:
+        """Return current cumulative PQ mempool and verifier counters."""
+
+        return self.pq_metrics.as_dict()
 
     def _enforce_special_node_mempool_policy(self, transaction: Transaction, *, entries: list[MempoolEntry] | None = None) -> None:
         """Limit zero-IO node-registry control traffic before it can poison templates."""
@@ -403,3 +507,10 @@ def _is_zero_fee_native_reward_transaction(transaction: Transaction) -> bool:
     """Return whether a transaction is a native zero-IO reward control payload."""
 
     return transaction.metadata.get("kind") in {REWARD_ATTESTATION_BUNDLE_KIND, REWARD_SETTLE_EPOCH_KIND}
+
+
+def _txid_or_unknown(transaction: Transaction) -> str:
+    try:
+        return transaction.txid()
+    except Exception:  # noqa: BLE001 - logging must not hide original policy failure
+        return "-"

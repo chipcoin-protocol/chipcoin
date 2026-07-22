@@ -80,6 +80,7 @@ from ..storage.peers import SQLitePeerRepository
 from ..utils.time import unix_time
 from ..crypto.addresses import parse_address
 from ..crypto.pq import get_signature_scheme, is_known_signature_scheme
+from ..pq.policy import is_pq_transaction
 from .mempool import AcceptedTransaction, MempoolManager, MempoolPolicy
 from .messages import GetBlocksMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector
 from .mining import BlockTemplate, MiningCoordinator, build_coinbase_transaction, transaction_weight_units
@@ -541,8 +542,13 @@ class NodeService:
     def receive_transaction(self, transaction: Transaction) -> AcceptedTransaction:
         """Validate and stage a transaction into the local mempool."""
 
-        self.mempool.preflight(transaction)
-        self._validate_special_node_mempool_sequence(candidate_transaction=transaction)
+        try:
+            self.mempool.preflight(transaction)
+            self._validate_special_node_mempool_sequence(candidate_transaction=transaction)
+        except ValidationError:
+            if is_pq_transaction(transaction):
+                self.mempool.pq_metrics.pq_tx_rejected += 1
+            raise
         accepted = self.mempool.accept(transaction)
         self.invalidate_mining_templates()
         return accepted
@@ -854,6 +860,7 @@ class NodeService:
             expected_bits=self._expected_bits_for_height(height),
         )
         total_fees = validate_block(block, context)
+        self.mempool.record_pq_mined(block.transactions[1:])
 
         if self.connection is None:
             self.headers.put(
@@ -1123,6 +1130,7 @@ class NodeService:
             applied_blocks += 1
 
         disconnected_transactions = self._disconnected_branch_transactions(previous_tip, tip_hash)
+        self.mempool.record_pq_orphan(disconnected_transactions)
         if self.connection is None:
             self.chainstate.replace_all(utxo_view.list_entries())
             self.node_registry.replace_all(node_registry_view.list_records())
@@ -4064,6 +4072,7 @@ class NodeService:
                 if reward_fee_registry_count is None
                 else reward_fee_registry_count
             ),
+            pq_verify_observer=self.mempool.record_pq_verify,
         )
 
     def _validate_special_node_mempool_sequence(self, *, candidate_transaction: Transaction) -> None:

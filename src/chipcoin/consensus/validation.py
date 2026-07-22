@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from string import hexdigits
+from typing import Callable
 
 from ..crypto.addresses import parse_address, pq_public_key_commitment, public_key_to_address
 from ..crypto.addresses import PQ_ADDRESS_PREFIX
@@ -98,6 +100,7 @@ class ValidationContext:
     expected_bits: int | None = None
     enforce_coinbase_maturity: bool = True
     reward_fee_registry_count: int | None = None
+    pq_verify_observer: Callable[..., None] | None = None
 
 
 def is_coinbase_transaction(transaction: Transaction) -> bool:
@@ -447,12 +450,22 @@ def _validate_standard_input_signature(
     if pq_public_key_commitment(tx_input.public_key) != address_info.hash_or_commitment:
         raise ContextualValidationError("Input public key does not match the CHCQ commitment.")
     digest = transaction_signature_digest(transaction, input_index, previous_output=previous_output, network=context.network)
+    started_at = time.perf_counter()
+    verified = False
     try:
         verified = scheme.verify(tx_input.public_key, digest, tx_input.signature)
     except MLDsaBackendUnavailable as exc:
+        _record_pq_verify(context, started_at=started_at, verified=False)
         raise ContextualValidationError("Input signature scheme backend is unavailable.") from exc
+    _record_pq_verify(context, started_at=started_at, verified=verified)
     if not verified:
         raise ContextualValidationError("Input signature is invalid.")
+
+
+def _record_pq_verify(context: ValidationContext, *, started_at: float, verified: bool) -> None:
+    if context.pq_verify_observer is None:
+        return
+    context.pq_verify_observer(duration_seconds=time.perf_counter() - started_at, verified=verified)
 
 
 def _pq_support_active(context: ValidationContext) -> bool:

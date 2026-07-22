@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
             configure_logging(args.log_level)
         data_path = resolve_data_path(args.data, args.network)
-        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke"} else NodeService.open_sqlite(data_path, network=args.network)
+        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark"} else NodeService.open_sqlite(data_path, network=args.network)
 
         if service is not None and getattr(args, "snapshot_file", None) and args.command in {"run", "start"}:
             if getattr(args, "snapshot_reset", False) or service.chain_tip() is None:
@@ -120,6 +120,16 @@ def main(argv: list[str] | None = None) -> int:
             if args.verbose:
                 pq_args.append("--verbose")
             return pq_smoke_main(pq_args)
+
+        if args.command == "pq-benchmark":
+            from ..tools.pq_benchmark import main as pq_benchmark_main
+
+            pq_args = []
+            if args.json:
+                pq_args.append("--json")
+            if args.quick:
+                pq_args.append("--quick")
+            return pq_benchmark_main(pq_args)
 
         if args.command == "status":
             assert service is not None
@@ -860,6 +870,9 @@ def _build_parser() -> argparse.ArgumentParser:
     pq_smoke_parser.add_argument("--keep-state", action="store_true")
     pq_smoke_parser.add_argument("--json", action="store_true")
     pq_smoke_parser.add_argument("--verbose", action="store_true")
+    pq_benchmark_parser = subparsers.add_parser("pq-benchmark")
+    pq_benchmark_parser.add_argument("--json", action="store_true")
+    pq_benchmark_parser.add_argument("--quick", action="store_true")
     subparsers.add_parser("status")
     operator_check = subparsers.add_parser("operator-check")
     operator_check.add_argument("--data", default=argparse.SUPPRESS, help=argparse.SUPPRESS)

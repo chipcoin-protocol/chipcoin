@@ -87,6 +87,9 @@ Architecture added for testnet/devnet only:
 - transaction v2 carries per-input `sig_scheme_id`
 - v2 signatures include `chipcoin:tx-signature:v2:<network>`
 - ML-DSA-44 public key/signature sizes are checked before verifier calls
+- node-local PQ mempool policy rejects malformed ML-DSA-44 inputs before UTXO
+  overlay construction and native verifier calls; see
+  `docs/pq-transaction-hardening.md`
 
 ### Backend Status
 

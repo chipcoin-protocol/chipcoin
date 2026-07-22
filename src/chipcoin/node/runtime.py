@@ -1657,6 +1657,7 @@ class NodeRuntime:
                 txid,
                 accepted.fee,
             )
+            self.service.mempool.record_pq_relay(transaction)
             self._relayed_mempool_txids.add(txid)
             await self._broadcast_inventory(
                 InventoryVector(object_type="tx", object_hash=txid),
@@ -3519,7 +3520,7 @@ class NodeRuntime:
 
         metrics = self.runtime_memory_metrics()
         self.logger.info(
-            "runtime memory metrics rss_mb=%s asyncio_tasks=%s sessions_total=%s sessions_handshaken=%s pending_handshakes=%s inbound_pending=%s outbound_pending=%s tracked_tasks=%s reconnect_tasks=%s peerbook_entries=%s aliases_total=%s queue_sizes=%s inbound_sessions=%s outbound_sessions=%s sessions_created=%s sessions_closed=%s",
+            "runtime memory metrics rss_mb=%s asyncio_tasks=%s sessions_total=%s sessions_handshaken=%s pending_handshakes=%s inbound_pending=%s outbound_pending=%s tracked_tasks=%s reconnect_tasks=%s peerbook_entries=%s aliases_total=%s queue_sizes=%s inbound_sessions=%s outbound_sessions=%s sessions_created=%s sessions_closed=%s pq_verify_count=%s pq_verify_failures=%s pq_verify_duration_seconds_total=%s pq_tx_accepted=%s pq_tx_rejected=%s pq_malformed=%s pq_relay=%s pq_mined=%s pq_orphan=%s",
             metrics["rss_mb"],
             metrics["asyncio_tasks"],
             metrics["sessions_total"],
@@ -3536,6 +3537,15 @@ class NodeRuntime:
             metrics["outbound_sessions"],
             metrics["sessions_created"],
             metrics["sessions_closed"],
+            metrics["pq_metrics"]["pq_verify_count"],
+            metrics["pq_metrics"]["pq_verify_failures"],
+            metrics["pq_metrics"]["pq_verify_duration_seconds_total"],
+            metrics["pq_metrics"]["pq_tx_accepted"],
+            metrics["pq_metrics"]["pq_tx_rejected"],
+            metrics["pq_metrics"]["pq_malformed"],
+            metrics["pq_metrics"]["pq_relay"],
+            metrics["pq_metrics"]["pq_mined"],
+            metrics["pq_metrics"]["pq_orphan"],
         )
         self._log_tracemalloc_growth()
 
@@ -3566,6 +3576,7 @@ class NodeRuntime:
             "outbound_sessions": self._active_outbound_session_count(),
             "sessions_created": self._session_created_count,
             "sessions_closed": self._session_closed_count,
+            "pq_metrics": self.service.mempool.pq_metrics_snapshot(),
         }
 
     def _current_rss_mb(self) -> float:
