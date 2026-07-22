@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
             configure_logging(args.log_level)
         data_path = resolve_data_path(args.data, args.network)
-        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark", "pq-audit-report"} else NodeService.open_sqlite(data_path, network=args.network)
+        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark", "pq-audit-report", "pq-dress-rehearsal"} else NodeService.open_sqlite(data_path, network=args.network)
 
         if service is not None and getattr(args, "snapshot_file", None) and args.command in {"run", "start"}:
             if getattr(args, "snapshot_reset", False) or service.chain_tip() is None:
@@ -138,6 +138,22 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 pq_args.append("--json")
             return pq_audit_report_main(pq_args)
+
+        if args.command == "pq-dress-rehearsal":
+            from ..tools.pq_dress_rehearsal import main as pq_dress_rehearsal_main
+
+            pq_args = ["--activation-height", str(args.activation_height)]
+            pq_args.extend(["--output-json", args.output_json])
+            pq_args.extend(["--output-markdown", args.output_markdown])
+            if args.skip_subprocess_checks:
+                pq_args.append("--skip-subprocess-checks")
+            if args.skip_browser_checks:
+                pq_args.append("--skip-browser-checks")
+            if args.json:
+                pq_args.append("--json")
+            if args.verbose:
+                pq_args.append("--verbose")
+            return pq_dress_rehearsal_main(pq_args)
 
         if args.command == "status":
             assert service is not None
@@ -883,6 +899,14 @@ def _build_parser() -> argparse.ArgumentParser:
     pq_benchmark_parser.add_argument("--quick", action="store_true")
     pq_audit_report_parser = subparsers.add_parser("pq-audit-report")
     pq_audit_report_parser.add_argument("--json", action="store_true")
+    pq_dress_rehearsal_parser = subparsers.add_parser("pq-dress-rehearsal")
+    pq_dress_rehearsal_parser.add_argument("--activation-height", type=int, default=8)
+    pq_dress_rehearsal_parser.add_argument("--output-json", default="pq-dress-rehearsal.json")
+    pq_dress_rehearsal_parser.add_argument("--output-markdown", default="docs/post-quantum-dress-rehearsal-report.md")
+    pq_dress_rehearsal_parser.add_argument("--skip-subprocess-checks", action="store_true")
+    pq_dress_rehearsal_parser.add_argument("--skip-browser-checks", action="store_true")
+    pq_dress_rehearsal_parser.add_argument("--json", action="store_true")
+    pq_dress_rehearsal_parser.add_argument("--verbose", action="store_true")
     subparsers.add_parser("status")
     operator_check = subparsers.add_parser("operator-check")
     operator_check.add_argument("--data", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
