@@ -1262,6 +1262,38 @@ def test_validate_transaction_accepts_valid_mldsa44_pq_spend(monkeypatch: pytest
     assert validate_transaction(transaction, context) == 10
 
 
+def test_validate_block_records_pq_verify_observer(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mldsa44_test_scheme(monkeypatch)
+    previous_outpoint = OutPoint(txid="bb" * 32, index=0)
+    transaction, address, _, _ = _signed_pq_spend(previous_outpoint=previous_outpoint)
+    fees = 10
+    coinbase = _coinbase_transaction(block_subsidy(30_000, MAINNET_PARAMS) + fees)
+    transactions = (coinbase, transaction)
+    block = Block(
+        header=_mine_easy_header("00" * 32, merkle_root([tx.txid() for tx in transactions])),
+        transactions=transactions,
+    )
+    utxo_view = InMemoryUtxoView.from_entries(
+        [(previous_outpoint, UtxoEntry(output=TxOutput(value=100, recipient=address), height=1, is_coinbase=False))]
+    )
+    events: list[dict[str, object]] = []
+    context = ValidationContext(
+        height=30_000,
+        median_time_past=0,
+        params=MAINNET_PARAMS,
+        utxo_view=utxo_view,
+        network="testnet",
+        expected_previous_block_hash="00" * 32,
+        expected_bits=MAINNET_PARAMS.genesis_bits,
+        pq_verify_observer=lambda **event: events.append(event),
+    )
+
+    assert validate_block(block, context) == fees
+    assert len(events) == 1
+    assert events[0]["verified"] is True
+    assert events[0]["duration_seconds"] >= 0
+
+
 def test_validate_transaction_rejects_chcq_spend_before_activation(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_mldsa44_test_scheme(monkeypatch)
     previous_outpoint = OutPoint(txid="ab" * 32, index=0)

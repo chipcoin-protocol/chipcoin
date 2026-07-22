@@ -309,6 +309,7 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
                 if context.reward_fee_registry_count is not None
                 else reward_registered_node_count(context.node_registry_view)
             ),
+            pq_verify_observer=context.pq_verify_observer,
         )
         try:
             fee_chipbits = validate_transaction_stateful(transaction, staged_context)

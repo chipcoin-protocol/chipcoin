@@ -33,9 +33,15 @@ def _decode_varint(buffer: bytes, offset: int = 0) -> tuple[int, int]:
     if prefix < 0xFD:
         return prefix, offset
     if prefix == 0xFD:
+        if offset + 2 > len(buffer):
+            raise ValueError("Unexpected end of payload while decoding varint.")
         return unpack_from("<H", buffer, offset)[0], offset + 2
     if prefix == 0xFE:
+        if offset + 4 > len(buffer):
+            raise ValueError("Unexpected end of payload while decoding varint.")
         return unpack_from("<I", buffer, offset)[0], offset + 4
+    if offset + 8 > len(buffer):
+        raise ValueError("Unexpected end of payload while decoding varint.")
     return unpack_from("<Q", buffer, offset)[0], offset + 8
 
 

@@ -202,6 +202,47 @@ def test_post_activation_full_chcq_lifecycle_and_mixed_compatibility() -> None:
         assert set(accepted_txids).issubset(mined_txids)
 
 
+def test_reorg_below_activation_does_not_readd_chcq_transaction_to_mempool() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "node.sqlite3",
+            network="testnet",
+            params=make_pq_readiness_params(activation_height=2),
+            time_provider=iter(range(1_800_100_000, 1_800_101_000)).__next__,
+        )
+        miner = wallet_key(2)
+        legacy_owner = miner
+        pq_owner = wallet_key_from_mldsa44_seed(bytes(range(32)))
+
+        common_block = _mine_next_with_mempool(service)
+        common_hash = common_block.block_hash()
+        funding_outpoint = OutPoint(txid=common_block.transactions[0].txid(), index=0)
+        funding_value = int(common_block.transactions[0].outputs[0].value)
+
+        mine_to_pre_activation = mine_easy_block(service.build_candidate_block(miner.address).block)
+        service.apply_block(mine_to_pre_activation)
+        assert service.chain_tip().height == 1
+
+        chc_to_chcq = signed_payment(
+            funding_outpoint,
+            value=funding_value,
+            sender=legacy_owner,
+            recipient=pq_owner.address,
+            amount=400_000,
+            fee=1_000,
+        )
+        service.receive_transaction(chc_to_chcq)
+        post_activation_block = _mine_next_with_mempool(service)
+        assert post_activation_block.transactions[1].txid() == chc_to_chcq.txid()
+        assert service.find_transaction(chc_to_chcq.txid())["location"] == "chain"
+
+        result = service.activate_chain(common_hash)
+
+        assert result.reorged is True
+        assert service.chain_tip().height == 0
+        assert service.find_transaction(chc_to_chcq.txid()) is None
+
+
 def test_malformed_pq_transactions_fail_gracefully() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "node.sqlite3")

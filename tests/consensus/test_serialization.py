@@ -1,3 +1,5 @@
+import pytest
+
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.serialization import (
     deserialize_transaction,
@@ -148,6 +150,13 @@ def test_v2_signing_serialization_includes_scheme_id_and_network_domain() -> Non
     assert b"chipcoin:tx-signature:v2:testnet" in payload
     assert "070000000a0000fdffffff" in payload.hex()
     assert payload.endswith((2).to_bytes(4, "little"))
+
+
+def test_deserialize_transaction_rejects_truncated_extended_varint() -> None:
+    payload = b"\x02\x00\x00\x00\xfd"
+
+    with pytest.raises(ValueError, match="Unexpected end of payload while decoding varint"):
+        deserialize_transaction(payload)
 
 
 def test_block_serialization_includes_header_and_transactions() -> None:
