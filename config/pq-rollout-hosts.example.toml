@@ -1,0 +1,42 @@
+# Example inventory for the mandatory Chipcoin testnet PQ height 20000 rollout.
+# Copy to config/pq-rollout-hosts.toml for real operations. Do not commit private
+# hostnames, usernames, ports, credentials, or secrets.
+
+[[hosts]]
+name = "chipcom"
+role = ["bootstrap", "api", "miner-connected-node"]
+ssh_target = "USER@HOST"
+ssh_port = 22
+project_path = "/opt/chipcoin"
+compose_file = "docker-compose.yml"
+node_service = "node"
+miner_service = "miner"
+required = true
+
+[[hosts]]
+name = "seed-node-example"
+role = ["seed", "bootstrap"]
+ssh_target = "USER@HOST"
+ssh_port = 22
+project_path = "/opt/chipcoin"
+compose_file = "docker-compose.yml"
+node_service = "node"
+required = true
+
+[[hosts]]
+name = "reward-node-example"
+role = ["reward"]
+ssh_target = "USER@HOST"
+ssh_port = 22
+project_path = "/opt/chipcoin"
+compose_file = "docker-compose.yml"
+node_service = "node"
+required = true
+
+[[hosts]]
+name = "explorer-host-example"
+role = ["explorer", "website"]
+ssh_target = "USER@HOST"
+ssh_port = 22
+project_path = "/opt/chipcoin-central"
+required = false

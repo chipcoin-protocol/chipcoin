@@ -15,6 +15,9 @@ rewards, or wallet file formats changed.
 
 ## Before Activation
 
+- [ ] Review rollout runbook: `docs/pq-height-20000-rollout.md`.
+- [ ] Review release note draft: `docs/releases/testnet-pq-height-20000.md`.
+- [ ] Run preflight: `scripts/pq-height-20000-preflight.sh --api-url <api-url>`.
 - [ ] Confirm code version includes `549b69b Add PQ transaction validation hardening`
       or a later commit containing the same PQ hardening.
 - [ ] Confirm `pq_support_activation_height("testnet") == 20000`.
@@ -36,6 +39,8 @@ rewards, or wallet file formats changed.
 - [ ] Confirm API metadata exposes `sig_scheme_id`, `sig_scheme_name`,
       `address_kind`, and `address_scheme_id` for PQ vectors.
 - [ ] Confirm explorer displays CHCQ/PQ badges and recent-window PQ stats.
+- [ ] Complete external services checklist:
+      `docs/pq-height-20000-external-services-checklist.md`.
 - [ ] Confirm browser wallet still blocks CHCQ send and does not store PQ keys.
 - [ ] Confirm runtime memory metrics include PQ counters.
 - [ ] Confirm minimum compatible node version is published.
@@ -85,3 +90,5 @@ Rollback must not change consensus history. If an incompatible bug appears befor
 any CHCQ output is mined, operators can revert deployment after coordinating a
 halt. If CHCQ outputs or spends are mined, any protocol-impacting rollback
 requires explicit consensus analysis before action.
+
+Detailed rollback procedure: `docs/pq-height-20000-rollback.md`.

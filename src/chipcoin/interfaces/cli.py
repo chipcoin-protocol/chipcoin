@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
             configure_logging(args.log_level)
         data_path = resolve_data_path(args.data, args.network)
-        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark", "pq-audit-report", "pq-dress-rehearsal", "pq-operational-readiness"} else NodeService.open_sqlite(data_path, network=args.network)
+        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark", "pq-audit-report", "pq-dress-rehearsal", "pq-operational-readiness", "verify-pq-activation"} else NodeService.open_sqlite(data_path, network=args.network)
 
         if service is not None and getattr(args, "snapshot_file", None) and args.command in {"run", "start"}:
             if getattr(args, "snapshot_reset", False) or service.chain_tip() is None:
@@ -184,6 +184,16 @@ def main(argv: list[str] | None = None) -> int:
                 if enabled:
                     pq_args.append(flag)
             return pq_operational_readiness_main(pq_args)
+
+        if args.command == "verify-pq-activation":
+            from ..tools.verify_pq_activation import main as verify_pq_activation_main
+
+            pq_args = ["--network", args.verify_network]
+            if args.expected_height is not None:
+                pq_args.extend(["--expected-height", str(args.expected_height)])
+            if args.json:
+                pq_args.append("--json")
+            return verify_pq_activation_main(pq_args)
 
         if args.command == "status":
             assert service is not None
@@ -954,6 +964,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pq_operational_readiness_parser.add_argument("--html-stdout", action="store_true")
     pq_operational_readiness_parser.add_argument("--markdown-stdout", action="store_true")
     pq_operational_readiness_parser.add_argument("--verbose", action="store_true")
+    verify_pq_activation_parser = subparsers.add_parser("verify-pq-activation")
+    verify_pq_activation_parser.add_argument("--network", dest="verify_network", default="testnet")
+    verify_pq_activation_parser.add_argument("--expected-height", type=int)
+    verify_pq_activation_parser.add_argument("--json", action="store_true")
     subparsers.add_parser("status")
     operator_check = subparsers.add_parser("operator-check")
     operator_check.add_argument("--data", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
