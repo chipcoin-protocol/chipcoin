@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
             configure_logging(args.log_level)
         data_path = resolve_data_path(args.data, args.network)
-        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark", "pq-audit-report", "pq-dress-rehearsal"} else NodeService.open_sqlite(data_path, network=args.network)
+        service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark", "pq-audit-report", "pq-dress-rehearsal", "pq-operational-readiness"} else NodeService.open_sqlite(data_path, network=args.network)
 
         if service is not None and getattr(args, "snapshot_file", None) and args.command in {"run", "start"}:
             if getattr(args, "snapshot_reset", False) or service.chain_tip() is None:
@@ -154,6 +154,36 @@ def main(argv: list[str] | None = None) -> int:
             if args.verbose:
                 pq_args.append("--verbose")
             return pq_dress_rehearsal_main(pq_args)
+
+        if args.command == "pq-operational-readiness":
+            from ..tools.pq_operational_readiness import main as pq_operational_readiness_main
+
+            pq_args = []
+            for flag, value in (
+                ("--html", args.html),
+                ("--output", args.output),
+                ("--markdown", args.markdown),
+                ("--output-dir", args.output_dir),
+                ("--api-url", args.api_url),
+                ("--timeout", args.timeout),
+                ("--config", args.config),
+                ("--block-interval-window", args.block_interval_window),
+            ):
+                if value is not None:
+                    pq_args.extend([flag, str(value)])
+            for flag, enabled in (
+                ("--json", args.json),
+                ("--no-network", args.no_network),
+                ("--strict", args.strict),
+                ("--compact", args.compact),
+                ("--run-local-checks", args.run_local_checks),
+                ("--html-stdout", args.html_stdout),
+                ("--markdown-stdout", args.markdown_stdout),
+                ("--verbose", args.verbose),
+            ):
+                if enabled:
+                    pq_args.append(flag)
+            return pq_operational_readiness_main(pq_args)
 
         if args.command == "status":
             assert service is not None
@@ -907,6 +937,23 @@ def _build_parser() -> argparse.ArgumentParser:
     pq_dress_rehearsal_parser.add_argument("--skip-browser-checks", action="store_true")
     pq_dress_rehearsal_parser.add_argument("--json", action="store_true")
     pq_dress_rehearsal_parser.add_argument("--verbose", action="store_true")
+    pq_operational_readiness_parser = subparsers.add_parser("pq-operational-readiness")
+    pq_operational_readiness_parser.add_argument("--json", action="store_true")
+    pq_operational_readiness_parser.add_argument("--html")
+    pq_operational_readiness_parser.add_argument("--output")
+    pq_operational_readiness_parser.add_argument("--markdown")
+    pq_operational_readiness_parser.add_argument("--output-dir")
+    pq_operational_readiness_parser.add_argument("--api-url")
+    pq_operational_readiness_parser.add_argument("--timeout", type=float)
+    pq_operational_readiness_parser.add_argument("--no-network", action="store_true")
+    pq_operational_readiness_parser.add_argument("--strict", action="store_true")
+    pq_operational_readiness_parser.add_argument("--compact", action="store_true")
+    pq_operational_readiness_parser.add_argument("--config")
+    pq_operational_readiness_parser.add_argument("--block-interval-window", type=int)
+    pq_operational_readiness_parser.add_argument("--run-local-checks", action="store_true")
+    pq_operational_readiness_parser.add_argument("--html-stdout", action="store_true")
+    pq_operational_readiness_parser.add_argument("--markdown-stdout", action="store_true")
+    pq_operational_readiness_parser.add_argument("--verbose", action="store_true")
     subparsers.add_parser("status")
     operator_check = subparsers.add_parser("operator-check")
     operator_check.add_argument("--data", default=argparse.SUPPRESS, help=argparse.SUPPRESS)

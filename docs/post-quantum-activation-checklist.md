@@ -14,6 +14,10 @@ Every item should be checked with exact command output, date and operator.
 - [ ] Run smoke command: `.venv/bin/python -m chipcoin.tools.pq_smoke`.
 - [ ] Run benchmark: `.venv/bin/python -m chipcoin.tools.pq_benchmark`.
 - [ ] Save audit report: `.venv/bin/python -m chipcoin.tools.pq_audit_report --json`.
+- [ ] Generate operational readiness dashboard:
+      `.venv/bin/python -m chipcoin.tools.pq_operational_readiness --output-dir /var/lib/chipcoin/pq-readiness`.
+- [ ] Confirm dashboard status is `READY` or explicitly document every
+      `DEGRADED`/`UNKNOWN` reason before proceeding.
 - [ ] Run browser wallet tests: `cd apps/browser-wallet && npm ci && npm test`.
 - [ ] Run browser builds: `npm run build`.
 - [ ] Run bundle inspection: `npm run test:mldsa:bundle`.
@@ -33,6 +37,8 @@ Every item should be checked with exact command output, date and operator.
 ## Near Height 30000
 
 - [ ] Record current height and blocks remaining.
+- [ ] Run `chipcoin pq-operational-readiness --compact` at least every monitoring
+      interval and archive `latest.json`.
 - [ ] Record peer version distribution.
 - [ ] Record miner version readiness.
 - [ ] Record percentage of known operational nodes upgraded.
@@ -48,6 +54,8 @@ Every item should be checked with exact command output, date and operator.
 ## After Activation
 
 - [ ] Confirm activation state is active at height >= `30000`.
+- [ ] Confirm operational readiness dashboard no longer reports activation as
+      scheduled once the chain is beyond height `30000`.
 - [ ] Submit or observe first CHC -> CHCQ transaction.
 - [ ] Confirm first CHCQ UTXO exists with correct amount and metadata.
 - [ ] Submit or observe first CHCQ -> CHC spend.
