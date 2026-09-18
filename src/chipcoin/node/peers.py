@@ -124,6 +124,11 @@ class PeerManager:
 
         self._peers.pop((peer.host, peer.port, peer.network), None)
 
+    def get(self, *, host: str, port: int, network: str) -> PeerInfo | None:
+        """Return one peer by endpoint when present."""
+
+        return self._peers.get((host, port, network))
+
     def reset_session_state(self, *, network: str) -> None:
         """Clear runtime-only session markers for one network."""
 

@@ -1256,6 +1256,11 @@ class NodeService:
             self.peerbook.add(peer)
         return self.peerbook.list_all(network=self.network)
 
+    def peer_info(self, host: str, port: int) -> PeerInfo | None:
+        """Return one in-memory peer record by endpoint when known."""
+
+        return self.peerbook.get(host=host, port=port, network=self.network)
+
     def reset_peer_session_state(self) -> None:
         """Clear runtime-only peer session flags after a node process restart."""
 

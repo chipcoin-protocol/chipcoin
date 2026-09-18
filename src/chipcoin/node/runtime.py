@@ -2276,25 +2276,32 @@ class NodeRuntime:
             score = None
             if penalty > 0 and not (existing is not None and existing.last_error == current_error):
                 score = self._updated_peer_score(endpoint.host, endpoint.port, delta=-penalty)
-            self.service.record_peer_observation(
-                host=endpoint.host,
-                port=endpoint.port,
-                direction=(
-                    None
-                    if handle is None or handle.reusable_endpoint
-                    else ("outbound" if handle.outbound else "inbound")
-                ),
-                handshake_complete=False,
-                last_known_height=None if remote is None else remote.start_height,
-                node_id=None if remote is None else remote.node_id,
-                score=score,
-                reconnect_attempts=reconnect_attempts,
-                backoff_until=backoff_until,
-                last_error=current_error,
-                last_error_at=self.service.time_provider() if current_error is not None else None,
-                protocol_error_class=classify_peer_error(current_error_obj or current_error),
-                disconnect_count=0 if existing is None or existing.disconnect_count is None else existing.disconnect_count + 1,
-            )
+            if not self._is_transient_inbound_pre_handshake_endpoint(
+                endpoint,
+                handle=handle,
+                existing=existing,
+                handshake_complete=session.state.handshake_complete,
+                remote=remote,
+            ):
+                self.service.record_peer_observation(
+                    host=endpoint.host,
+                    port=endpoint.port,
+                    direction=(
+                        None
+                        if handle is None or handle.reusable_endpoint
+                        else ("outbound" if handle.outbound else "inbound")
+                    ),
+                    handshake_complete=False,
+                    last_known_height=None if remote is None else remote.start_height,
+                    node_id=None if remote is None else remote.node_id,
+                    score=score,
+                    reconnect_attempts=reconnect_attempts,
+                    backoff_until=backoff_until,
+                    last_error=current_error,
+                    last_error_at=self.service.time_provider() if current_error is not None else None,
+                    protocol_error_class=classify_peer_error(current_error_obj or current_error),
+                    disconnect_count=0 if existing is None or existing.disconnect_count is None else existing.disconnect_count + 1,
+                )
             log = self.logger.debug if self._is_low_value_session_drop(current_error_obj or current_error) else self.logger.info
             log(
                 "session dropped peer=%s:%s handshake_complete=%s error=%s disconnects=%s",
@@ -2316,6 +2323,26 @@ class NodeRuntime:
                 prefer_configured=None if handle is None else handle.endpoint,
             )
         self._update_sync_status()
+
+    def _is_transient_inbound_pre_handshake_endpoint(
+        self,
+        endpoint: PeerEndpoint,
+        *,
+        handle: SessionHandle | None,
+        existing,
+        handshake_complete: bool,
+        remote,
+    ) -> bool:
+        """Return whether an inbound drop is a non-reusable socket endpoint."""
+
+        if handle is None or handle.outbound or handle.reusable_endpoint:
+            return False
+        if handshake_complete or remote is not None:
+            return False
+        default_port = get_network_config(self.service.network).default_p2p_port
+        if endpoint.port == default_port:
+            return False
+        return existing is None or existing.source not in {"manual", "seed"}
 
     def _has_active_endpoint(self, peer: OutboundPeer) -> bool:
         """Return whether an active outbound session already targets the endpoint."""
@@ -2830,10 +2857,7 @@ class NodeRuntime:
     def _known_peer_info(self, host: str, port: int):
         """Return the current persisted peer info for one endpoint when known."""
 
-        for peer in self.service.list_peers():
-            if peer.host == host and peer.port == port and peer.network == self.service.network:
-                return peer
-        return None
+        return self.service.peer_info(host, port)
 
     def _mark_session_activity(self, session: PeerProtocol) -> None:
         """Record recent peer activity for liveness decisions."""
@@ -3012,6 +3036,8 @@ class NodeRuntime:
             peer
             for peer in self.service.list_peers()
             if (
+                self._is_legacy_transient_inbound_peer(peer)
+                or
                 (peer.source == "discovered" and not self._is_reusable_discovered_peer(peer))
                 or (peer.source not in {"manual", "seed", "discovered"} and not self._is_persisted_peer_host_dialable(peer.host))
             )
@@ -3020,6 +3046,18 @@ class NodeRuntime:
             self._outbound_targets.pop((peer.host, peer.port), None)
             self.service.remove_peer(peer.host, peer.port)
             self.logger.info("removed startup undialable peer=%s:%s", peer.host, peer.port)
+
+    def _is_legacy_transient_inbound_peer(self, peer) -> bool:
+        """Return whether a persisted peer is a pre-fix inbound ephemeral socket."""
+
+        default_port = get_network_config(peer.network).default_p2p_port
+        return (
+            peer.direction == "inbound"
+            and peer.port != default_port
+            and peer.handshake_complete is not True
+            and peer.source not in {"manual", "seed", "discovered"}
+            and peer.last_success is None
+        )
 
     def _purge_persisted_startup_duplicate_aliases(self) -> None:
         """Drop persisted startup aliases previously classified as duplicate/self connections."""

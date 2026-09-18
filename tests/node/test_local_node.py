@@ -646,6 +646,45 @@ def test_runtime_does_not_promote_new_ephemeral_inbound_alias_for_same_node_id(c
     asyncio.run(scenario())
 
 
+def test_runtime_does_not_persist_failed_pre_handshake_inbound_ephemeral_peer() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            service = NodeService.open_sqlite(Path(tempdir) / "chipcoin-devnet.sqlite3", network="devnet")
+            runtime = NodeRuntime(service=service, listen_host="0.0.0.0", listen_port=18444)
+
+            class _FakeState:
+                closed = False
+                handshake_complete = False
+                remote_version = None
+                errors = ["Peer connection closed while reading frame."]
+                error_causes: list[Exception] = []
+
+            class _FakeTransport:
+                @staticmethod
+                def peer_endpoint():
+                    return type("_Peer", (), {"host": "188.217.94.86", "port": 49140})()
+
+            class _FakeSession:
+                inbound = True
+                state = _FakeState()
+                transport = _FakeTransport()
+
+                async def send_message(self, message: MessageEnvelope) -> None:
+                    return None
+
+                async def close(self, *, reason: str | None = None, error: Exception | None = None) -> None:
+                    self.state.closed = True
+
+            session = _FakeSession()
+            runtime._sessions[session] = SessionHandle(protocol=session, outbound=False)
+
+            await runtime._drop_session(session)
+
+            assert not any(peer.host == "188.217.94.86" and peer.port == 49140 for peer in service.list_peers())
+
+    asyncio.run(scenario())
+
+
 def test_runtime_reuses_canonicalized_public_peer_after_restart() -> None:
     with TemporaryDirectory() as tempdir:
         database_path = Path(tempdir) / "chipcoin-devnet.sqlite3"
@@ -1026,6 +1065,39 @@ def test_runtime_start_purges_persisted_private_ip_peers() -> None:
 
         peers = service.list_peers()
         assert not any(peer.host == "172.18.0.2" and peer.port == 18444 for peer in peers)
+
+
+def test_runtime_start_purges_legacy_inbound_pre_handshake_ephemeral_peers() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=49140,
+            direction="inbound",
+            handshake_complete=False,
+            last_error="Peer connection closed while reading frame.",
+            protocol_error_class="connection_closed",
+        )
+        service.record_peer_observation(
+            host="188.217.94.86",
+            port=18444,
+            source="manual",
+            direction="inbound",
+            handshake_complete=True,
+            last_success=1_700_000_000,
+            node_id="known-peer",
+        )
+        runtime = NodeRuntime(
+            service=service,
+            listen_host="127.0.0.1",
+            listen_port=18445,
+        )
+
+        runtime._purge_undialable_persisted_peers()
+
+        peers = service.list_peers()
+        assert not any(peer.host == "188.217.94.86" and peer.port == 49140 for peer in peers)
+        assert any(peer.host == "188.217.94.86" and peer.port == 18444 for peer in peers)
 
 
 def test_runtime_start_purges_persisted_startup_duplicate_aliases() -> None:
