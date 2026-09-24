@@ -310,7 +310,9 @@ def render_cli(result: OperationalReadinessResult, *, compact: bool = False) -> 
         f"Readiness suite: {payload['operational_tests']['readiness_suite']['status']}",
         f"Dress rehearsal: {payload['operational_tests']['dress_rehearsal']['status']}",
         f"Chromium runtime: {payload['operational_tests']['chromium_runtime_ci']['status']}",
-        f"PQ verify failures: {_display(payload['pq_metrics']['pq_verify_failures']['value'])}",
+        "PQ verify failures: "
+        f"{_display(payload['pq_metrics']['pq_verify_failures']['value'])} "
+        f"({_display(payload['pq_metrics']['pq_verify_failures'].get('source'))})",
         f"Explorer: {payload['services'].get('explorer', {}).get('status', 'UNKNOWN')}",
         f"API: {payload['chain'].get('api_status', 'UNKNOWN')}",
         "",
@@ -540,11 +542,14 @@ def _network_readiness(*, chain: dict[str, Any], peers_public: dict[str, Any] | 
         for peer in peers_public.get("peers", []):
             if isinstance(peer, dict) and isinstance(peer.get("last_known_height"), int):
                 heights.append(peer["last_known_height"])
-    spread = None if not heights else max(heights) - min(heights)
-    spread_source = "/v1/peers/public"
-    if spread is None and isinstance(chain.get("height_spread"), int):
+    # Public peer records omit session freshness, so their canonical heights can
+    # lag behind active inbound aliases. Prefer the live sync view when present.
+    if isinstance(chain.get("height_spread"), int):
         spread = int(chain["height_spread"])
         spread_source = "/v1/status sync.local_height/remote_height"
+    else:
+        spread = None if not heights else max(heights) - min(heights)
+        spread_source = "/v1/peers/public"
     return {
         "peer_total": chain.get("peer_count"),
         "peer_operational": chain.get("operational_peer_count"),

@@ -47,6 +47,39 @@ def test_height_spread_falls_back_to_status_sync_when_public_peers_unavailable(m
     assert result.status == "READY"
 
 
+def test_height_spread_prefers_live_sync_over_stale_public_peer_heights(monkeypatch) -> None:
+    def fake_collect_api(*, config, activation_height):
+        chain = readiness._empty_chain(config=config)
+        chain.update(
+            {
+                "api_status": "OK",
+                "api_latency_ms": 30,
+                "network": "testnet",
+                "height": 19_383,
+                "synced": True,
+                "sync_phase": "synced",
+                "best_block_hash": "00" * 32,
+                "peer_count": 9,
+                "operational_peer_count": 7,
+                "height_spread": 0,
+            }
+        )
+        peers = {"peers": [{"last_known_height": 19_303}, {"last_known_height": 19_383}]}
+        return {"status": "OK", "available": True, "latency_ms": 30}, chain, [], peers
+
+    monkeypatch.setattr(readiness, "_collect_api", fake_collect_api)
+    monkeypatch.setattr(readiness, "_service_checks", lambda *, config: _ok_services())
+
+    result = readiness.collect_operational_readiness(
+        config=readiness.OperationalReadinessConfig(no_network=False),
+        repo_root=Path.cwd(),
+    )
+
+    assert result.payload["network_readiness"]["height_spread"] == 0
+    assert result.payload["network_readiness"]["height_spread_source"] == "/v1/status sync.local_height/remote_height"
+    assert result.status == "READY"
+
+
 def test_operational_readiness_degraded_for_major_warning(monkeypatch) -> None:
     _fake_live(monkeypatch, operational_peers=2)
     result = readiness.collect_operational_readiness(config=readiness.OperationalReadinessConfig(no_network=False), repo_root=Path.cwd())
@@ -147,6 +180,15 @@ def test_cli_compact_render(monkeypatch) -> None:
 
     assert compact.startswith("status=READY")
     assert "activation_height=20000" in compact
+
+
+def test_cli_labels_dress_rehearsal_pq_verify_failures(monkeypatch) -> None:
+    _fake_live(monkeypatch)
+    result = readiness.collect_operational_readiness(config=readiness.OperationalReadinessConfig(no_network=False), repo_root=Path.cwd())
+
+    rendered = readiness.render_cli(result)
+
+    assert "PQ verify failures: 1 (dress_rehearsal)" in rendered
 
 
 def _fake_live(monkeypatch, *, height: int = 11_500, operational_peers: int = 7) -> None:
