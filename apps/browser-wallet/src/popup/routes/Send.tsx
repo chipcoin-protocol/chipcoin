@@ -92,7 +92,7 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
     }
     setIsSubmitting(true);
     try {
-      const response = await sendWalletMessage<{ status: string; txid?: string }>({
+      const response = await sendWalletMessage<{ status: string; txid?: string; errorMessage?: string }>({
         type: "wallet:submit",
         recipient: trimmedRecipient,
         amountChipbits: parsedAmountChipbits,
@@ -103,7 +103,8 @@ export function Send({ state, onRefresh }: { state: AppState; onRefresh(): Promi
         rejected: "Rejected",
         failed_to_submit: "Failed to submit",
       } as const)[response.status as "submitted" | "rejected" | "failed_to_submit"] ?? response.status;
-      setResult(response.txid ? `${label}: ${response.txid}` : label);
+      const detail = response.errorMessage ?? response.txid;
+      setResult(detail ? `${label}: ${detail}` : label);
       await onRefresh();
       if (response.status === "submitted") {
         setRecipient("");

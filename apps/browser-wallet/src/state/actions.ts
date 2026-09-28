@@ -55,7 +55,11 @@ export type BackgroundResponse<T> = BackgroundSuccess<T> | BackgroundFailure;
 
 export type WalletStateResponse = BackgroundResponse<AppState>;
 export type ExportPrivateKeyResponse = BackgroundResponse<{ privateKeyHex: string }>;
-export type SubmitTransactionResponse = BackgroundResponse<{ status: "submitted" | "rejected" | "failed_to_submit"; txid?: string }>;
+export type SubmitTransactionResponse = BackgroundResponse<{
+  status: "submitted" | "rejected" | "failed_to_submit";
+  txid?: string;
+  errorMessage?: string;
+}>;
 export type HistoryResponse = BackgroundResponse<HistoryEntry[]>;
 export type ProviderRuntimeResponse = {
   request_id: string;

@@ -185,6 +185,25 @@ describe("transaction parity", () => {
     expect(built.transaction.version).toBe(1);
   });
 
+  it("explains when only immature coinbase rewards are available", () => {
+    expect(() => buildSignedPaymentTransaction({
+      privateKeyHex: SENDER_PRIVATE_KEY,
+      walletAddress: SENDER_ADDRESS,
+      recipient: RECIPIENT_ADDRESS,
+      amountChipbits: 1_000_000,
+      feeChipbits: 1_000,
+      utxos: [{
+        txid: "22".repeat(32),
+        vout: 0,
+        amount_chipbits: 5_000_000_000,
+        coinbase: true,
+        mature: false,
+        status: "unspent",
+        origin_height: 20_032,
+      }],
+    })).toThrow("Insufficient spendable balance. Coinbase rewards are still immature.");
+  });
+
   it("builds and signs a v2 ML-DSA spend from a CHCQ wallet", async () => {
     const built = await buildSignedPqPaymentTransaction({
       pqSeedHex: pqVector.seed_hex,

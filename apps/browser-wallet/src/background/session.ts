@@ -358,7 +358,7 @@ export async function submitTransaction(args: {
   recipient: string;
   amountChipbits: number;
   feeChipbits: number;
-}): Promise<{ status: "submitted" | "rejected" | "failed_to_submit"; txid?: string }> {
+}): Promise<{ status: "submitted" | "rejected" | "failed_to_submit"; txid?: string; errorMessage?: string }> {
   const session = await loadActiveSession();
   if (!session) {
     throw new Error("Unlock the wallet before sending transactions.");
@@ -411,7 +411,7 @@ export async function submitTransaction(args: {
         status: "rejected",
         errorMessage: error.message,
       });
-      return { status: "rejected", txid: built.txid };
+      return { status: "rejected", txid: built.txid, errorMessage: error.message };
     }
     if (built) {
       await rememberSubmittedTransaction({
@@ -424,7 +424,11 @@ export async function submitTransaction(args: {
         errorMessage: error instanceof Error ? error.message : "Unable to submit transaction.",
       });
     }
-    return { status: "failed_to_submit", txid: built?.txid };
+    return {
+      status: "failed_to_submit",
+      txid: built?.txid,
+      errorMessage: error instanceof Error ? error.message : "Unable to submit transaction.",
+    };
   }
 }
 

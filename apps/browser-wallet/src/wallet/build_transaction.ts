@@ -41,7 +41,14 @@ export function buildSendPlan(args: {
   if (recipientValidation.status !== "sendable") {
     throw new Error(recipientValidation.error ?? "Recipient is not sendable.");
   }
-  const selection = selectInputs(filterSpendableCandidates(walletAddress, utxos), amountChipbits + feeChipbits);
+  const spendableCandidates = filterSpendableCandidates(walletAddress, utxos);
+  const targetValue = amountChipbits + feeChipbits;
+  const spendableValue = spendableCandidates.reduce((total, candidate) => total + candidate.amountChipbits, 0);
+  const hasImmatureCoinbase = utxos.some((utxo) => utxo.status === "unspent" && utxo.coinbase && !utxo.mature);
+  if (spendableValue < targetValue && hasImmatureCoinbase) {
+    throw new Error("Insufficient spendable balance. Coinbase rewards are still immature.");
+  }
+  const selection = selectInputs(spendableCandidates, targetValue);
   return {
     recipient,
     amountChipbits,
