@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type { AppState } from "../../state/app_state";
 import { DEFAULT_EXPLORER_URL } from "../../shared/constants";
+import { explorerAddressUrl, explorerTransactionUrl, normalizeExplorerBaseUrl } from "../../shared/explorer";
 import { formatChc, shortHash } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
 import { unixToIso } from "../../shared/time";
@@ -160,13 +161,13 @@ export function WatchOnly(
 }
 
 function explorerBaseUrl(): string {
-  return DEFAULT_EXPLORER_URL.trim().replace(/\/+$/, "");
+  return normalizeExplorerBaseUrl(DEFAULT_EXPLORER_URL);
 }
 
 function addressExplorerUrl(state: AppState, address: string): string {
   const base = explorerBaseUrl();
   if (base) {
-    return `${base}/#/${state.expectedNetwork}/address/${encodeURIComponent(address)}`;
+    return explorerAddressUrl(base, state.expectedNetwork, address);
   }
   return `${state.nodeApiBaseUrl}/v1/address/${address}`;
 }
@@ -174,7 +175,7 @@ function addressExplorerUrl(state: AppState, address: string): string {
 function txExplorerUrl(state: AppState, txid: string): string {
   const base = explorerBaseUrl();
   if (base) {
-    return `${base}/#/${state.expectedNetwork}/tx/${encodeURIComponent(txid)}`;
+    return explorerTransactionUrl(base, state.expectedNetwork, txid);
   }
   return `${state.nodeApiBaseUrl}/v1/tx/${txid}`;
 }

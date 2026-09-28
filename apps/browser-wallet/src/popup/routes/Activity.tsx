@@ -4,6 +4,7 @@ import { ChipcoinApiClient } from "../../api/client";
 import type { HistoryEntry, TxLookup } from "../../api/types";
 import type { AppState } from "../../state/app_state";
 import { DEFAULT_EXPLORER_URL } from "../../shared/constants";
+import { explorerTransactionUrl, normalizeExplorerBaseUrl } from "../../shared/explorer";
 import { formatChc, shortHash } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
 import { unixToIso } from "../../shared/time";
@@ -87,9 +88,9 @@ export function Activity({ state }: { state: AppState }): JSX.Element {
   }, [state.nodeApiBaseUrl, state.overview.submittedTransactions]);
 
   function transactionUrl(txid: string): string {
-    const explorerBaseUrl = DEFAULT_EXPLORER_URL.trim().replace(/\/+$/, "");
+    const explorerBaseUrl = normalizeExplorerBaseUrl(DEFAULT_EXPLORER_URL);
     if (explorerBaseUrl) {
-      return `${explorerBaseUrl}/#/tx/${encodeURIComponent(txid)}`;
+      return explorerTransactionUrl(explorerBaseUrl, state.expectedNetwork, txid);
     }
     return `${state.nodeApiBaseUrl}/v1/tx/${txid}`;
   }
