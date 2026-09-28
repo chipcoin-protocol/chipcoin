@@ -120,6 +120,26 @@ describe("wallet session security", () => {
     await expect(session.exportRecoveryPhrase({ confirmActiveSession: true })).rejects.toThrow("has no recovery phrase");
   });
 
+  it("imports, encrypts, restores, and exports an ML-DSA seed", async () => {
+    const session = await import("../../src/background/session");
+    const { loadWalletRecord } = await import("../../src/storage/wallet_store");
+    const seedHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    const state = await session.importPqWallet(seedHex, "phase12-password");
+    const record = await loadWalletRecord();
+
+    expect(state.address).toBe("CHCQCqjJWcT8Jqxvmn9xspxBWnTojXQp93Wqu9sP5F6GkFd1f5xKiRhE");
+    expect(state.walletType).toBe("pq_seed");
+    expect(record?.walletType).toBe("pq_seed");
+    expect(record?.encryptedWalletBlob).not.toContain(seedHex);
+    await expect(session.exportPrivateKey({ confirmActiveSession: true })).rejects.toThrow("PQ wallet");
+    await expect(session.exportPqSeed({ confirmActiveSession: true })).resolves.toBe(seedHex);
+
+    await session.lockWallet();
+    await session.unlockWallet("phase12-password");
+    await expect(session.exportPqSeed({ confirmActiveSession: true })).resolves.toBe(seedHex);
+  });
+
   it("clears wallet state, submitted cache, and local snapshot on remove", async () => {
     const session = await import("../../src/background/session");
     const { createSubmittedTransactionRecord } = await import("../../src/wallet/submitted_cache");

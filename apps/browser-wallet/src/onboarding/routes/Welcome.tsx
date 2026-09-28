@@ -7,7 +7,7 @@ import { RecoverWallet } from "./RecoverWallet";
 import { SetPassword } from "./SetPassword";
 
 type Step = "welcome" | "create" | "recover" | "import" | "password" | "node";
-type Mode = "create-seed" | "recover-seed" | "import-key";
+type Mode = "create-seed" | "recover-seed" | "import-key" | "create-pq" | "import-pq";
 
 export function OnboardingApp(): JSX.Element {
   const [step, setStep] = useState<Step>("welcome");
@@ -24,11 +24,13 @@ export function OnboardingApp(): JSX.Element {
           <button onClick={() => { setMode("create-seed"); setStep("create"); }}>Create new wallet</button>
           <button onClick={() => { setMode("recover-seed"); setStep("recover"); }}>Recover wallet</button>
           <button onClick={() => { setMode("import-key"); setStep("import"); }}>Import private key</button>
+          <button onClick={() => { setMode("create-pq"); setStep("password"); }}>Create PQ wallet</button>
+          <button onClick={() => { setMode("import-pq"); setStep("import"); }}>Import PQ seed</button>
         </section>
       )}
       {step === "create" && <CreateWallet onContinue={(value) => { setRecoveryPhrase(value); setStep("password"); }} />}
       {step === "recover" && <RecoverWallet onContinue={(value) => { setRecoveryPhrase(value); setStep("password"); }} />}
-      {step === "import" && <ImportWallet onContinue={(value) => { setPrivateKeyHex(value); setStep("password"); }} />}
+      {step === "import" && <ImportWallet pq={mode === "import-pq"} onContinue={(value) => { setPrivateKeyHex(value); setStep("password"); }} />}
       {step === "password" && (
         <SetPassword
           mode={mode}

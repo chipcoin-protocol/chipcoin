@@ -1,9 +1,11 @@
 import { ChipcoinApiClient } from "../api/client";
 import { ApiClientError } from "../api/errors";
 import type { AddressSummary, AddressUtxo, HistoryEntry } from "../api/types";
-import { privateKeyHexToAddress } from "../crypto/addresses";
+import { privateKeyHexToAddress, publicKeyHexToPqAddress } from "../crypto/addresses";
 import { decryptPrivateKeyHex, decryptWalletSecret, encryptPrivateKeyHex, encryptWalletSecret } from "../crypto/encryption";
 import { buildWalletKeyMaterial, generatePrivateKeyHex, normalizePrivateKeyHex } from "../crypto/keys";
+import { bytesToHex, hexToBytes } from "../crypto/keys";
+import { createExperimentalMlDsa44Backend, MLDSA44_SEED_BYTES, ML_DSA_44_SCHEME_ID } from "../crypto/mldsa44";
 import {
   assertPublicKeyMatchesAddress,
   parseChipcoinSignedLoginMessage,
@@ -17,7 +19,7 @@ import {
   generateRecoveryPhrase,
   validateRecoveryPhrase,
 } from "../crypto/recovery_phrase";
-import { buildSignedPaymentTransaction } from "../wallet/build_transaction";
+import { buildSignedPaymentTransaction, buildSignedPqPaymentTransaction } from "../wallet/build_transaction";
 import {
   createSubmittedTransactionRecord,
   dedupeConfirmedHistory,
@@ -110,6 +112,21 @@ export async function importWallet(privateKeyHex: string, password: string): Pro
   return persistPrivateKeyWallet(normalizePrivateKeyHex(privateKeyHex), password);
 }
 
+export async function createPqWallet(password: string): Promise<AppState> {
+  requireMinPasswordLength(password);
+  const seed = crypto.getRandomValues(new Uint8Array(MLDSA44_SEED_BYTES));
+  return persistPqSeedWallet(bytesToHex(seed), password);
+}
+
+export async function importPqWallet(pqSeedHex: string, password: string): Promise<AppState> {
+  requireMinPasswordLength(password);
+  const normalized = pqSeedHex.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error("ML-DSA-44 seed must be exactly 32 bytes encoded as 64 hexadecimal characters.");
+  }
+  return persistPqSeedWallet(normalized, password);
+}
+
 export async function unlockWallet(password: string): Promise<AppState> {
   const record = await requireWalletRecord();
   const secret = await decryptWalletSecret(
@@ -120,7 +137,12 @@ export async function unlockWallet(password: string): Promise<AppState> {
     record.iterations,
   );
   const settings = await loadSettings();
-  if (secret.walletType === "private_key") {
+  if (secret.walletType === "pq_seed") {
+    if (!secret.pqSeedHex) {
+      throw new Error("Wallet payload does not include an ML-DSA seed.");
+    }
+    await setActiveSession(await makeUnlockedPqSession(secret.pqSeedHex, settings.autoLockMinutes, record.accountIndex));
+  } else if (secret.walletType === "private_key") {
     if (!secret.privateKeyHex) {
       throw new Error("Wallet payload does not include a private key.");
     }
@@ -162,6 +184,9 @@ export async function removeWallet(): Promise<AppState> {
 export async function exportPrivateKey(args: { password?: string; confirmActiveSession?: boolean }): Promise<string> {
   const session = await loadActiveSession();
   if (session) {
+    if (session.walletType === "pq_seed") {
+      throw new Error("This is a PQ wallet. Export its ML-DSA seed instead.");
+    }
     if (!args.confirmActiveSession) {
       throw new Error("Explicit confirmation is required before revealing the private key.");
     }
@@ -173,6 +198,38 @@ export async function exportPrivateKey(args: { password?: string; confirmActiveS
   }
   const record = await requireWalletRecord();
   return decryptPrivateKeyHex(record.encryptedWalletBlob, args.password, record.saltBase64, record.ivBase64, record.iterations);
+}
+
+export async function exportPqSeed(args: { password?: string; confirmActiveSession?: boolean }): Promise<string> {
+  const session = await loadActiveSession();
+  if (session?.walletType === "pq_seed") {
+    if (!args.confirmActiveSession) {
+      throw new Error("Explicit confirmation is required before revealing the ML-DSA seed.");
+    }
+    await touchSession();
+    if (!session.pqSeedHex) {
+      throw new Error("ML-DSA seed is unavailable for this wallet.");
+    }
+    return session.pqSeedHex;
+  }
+  const record = await requireWalletRecord();
+  if (record.walletType !== "pq_seed") {
+    throw new Error("This wallet does not contain an ML-DSA seed.");
+  }
+  if (!args.password) {
+    throw new Error("Password is required to export the ML-DSA seed while locked.");
+  }
+  const secret = await decryptWalletSecret(
+    record.encryptedWalletBlob,
+    args.password,
+    record.saltBase64,
+    record.ivBase64,
+    record.iterations,
+  );
+  if (!secret.pqSeedHex) {
+    throw new Error("ML-DSA seed is unavailable for this wallet.");
+  }
+  return secret.pqSeedHex;
 }
 
 export async function exportRecoveryPhrase(args: { password?: string; confirmActiveSession?: boolean }): Promise<string> {
@@ -314,14 +371,24 @@ export async function submitTransaction(args: {
   try {
     await validateClientNetwork(client, settings.expectedNetwork);
     const utxos = await client.utxos(session.address);
-    built = buildSignedPaymentTransaction({
-      privateKeyHex: session.privateKeyHex,
-      walletAddress: session.address,
-      recipient: args.recipient,
-      amountChipbits: args.amountChipbits,
-      feeChipbits: args.feeChipbits,
-      utxos,
-    });
+    built = session.walletType === "pq_seed"
+      ? await buildSignedPqPaymentTransaction({
+          pqSeedHex: session.pqSeedHex ?? "",
+          walletAddress: session.address,
+          recipient: args.recipient,
+          amountChipbits: args.amountChipbits,
+          feeChipbits: args.feeChipbits,
+          utxos,
+          network: settings.expectedNetwork,
+        })
+      : buildSignedPaymentTransaction({
+          privateKeyHex: session.privateKeyHex,
+          walletAddress: session.address,
+          recipient: args.recipient,
+          amountChipbits: args.amountChipbits,
+          feeChipbits: args.feeChipbits,
+          utxos,
+        });
     await client.submitRawTransaction(built.rawHex);
     await rememberSubmittedTransaction(createSubmittedTransactionRecord({
       txid: built.txid,
@@ -411,6 +478,9 @@ export async function signProviderLoginMessage(args: {
   const session = await loadActiveSession(walletRecord);
   if (!session) {
     throw new Error("WALLET_LOCKED");
+  }
+  if (session.walletType === "pq_seed") {
+    throw new Error("PQ_PROVIDER_LOGIN_UNSUPPORTED");
   }
   const settings = await loadSettings();
   if (settings.expectedNetwork !== "testnet") {
@@ -505,6 +575,50 @@ async function persistSeedWallet(recoveryPhrase: string, password: string, accou
   await scheduleAutoLock(settings.autoLockMinutes);
   await refreshWalletDataCache(settings, record.address, { includeHistory: false });
   return getAppState();
+}
+
+async function persistPqSeedWallet(pqSeedHex: string, password: string): Promise<AppState> {
+  const backend = createExperimentalMlDsa44Backend();
+  await backend.initialize();
+  const keyPair = await backend.generateKeyPair(hexToBytes(pqSeedHex));
+  const publicKeyHex = bytesToHex(keyPair.publicKey);
+  const encrypted = await encryptWalletSecret({ walletType: "pq_seed", pqSeedHex }, password);
+  const record: EncryptedWalletRecord = {
+    walletFormatVersion: WALLET_FORMAT_VERSION,
+    walletType: "pq_seed",
+    address: publicKeyHexToPqAddress(publicKeyHex, ML_DSA_44_SCHEME_ID),
+    publicKeyHex,
+    accountIndex: 0,
+    createdAt: Date.now(),
+    ...encrypted,
+  };
+  extensionAlarms().clear(SUBMITTED_TX_POLL_ALARM);
+  await clearAllSubmittedTransactions();
+  await clearAllWalletDataCaches();
+  await saveWalletRecord(record);
+  const settings = await loadSettings();
+  await setActiveSession(await makeUnlockedPqSession(pqSeedHex, settings.autoLockMinutes, 0));
+  await scheduleAutoLock(settings.autoLockMinutes);
+  await refreshWalletDataCache(settings, record.address, { includeHistory: false });
+  return getAppState();
+}
+
+async function makeUnlockedPqSession(pqSeedHex: string, autoLockMinutes: number, accountIndex: number): Promise<UnlockedSession> {
+  const backend = createExperimentalMlDsa44Backend();
+  await backend.initialize();
+  const keyPair = await backend.generateKeyPair(hexToBytes(pqSeedHex));
+  const publicKeyHex = bytesToHex(keyPair.publicKey);
+  const now = Date.now();
+  return {
+    walletType: "pq_seed",
+    privateKeyHex: "",
+    pqSeedHex,
+    publicKeyHex,
+    address: publicKeyHexToPqAddress(publicKeyHex, ML_DSA_44_SCHEME_ID),
+    accountIndex,
+    unlockedAt: now,
+    expiresAt: now + minutesToMilliseconds(autoLockMinutes || DEFAULT_AUTO_LOCK_MINUTES),
+  };
 }
 
 function makeUnlockedSession(

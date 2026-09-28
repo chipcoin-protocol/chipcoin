@@ -49,7 +49,7 @@ const LEGACY_SCHEME: SchemeUiInfo = {
 const PQ_SCHEME: SchemeUiInfo = {
   kind: "pq",
   label: "Post-quantum CHCQ",
-  title: "Post-quantum address. Browser signing is not available yet.",
+  title: "Post-quantum ML-DSA-44 address",
   schemeId: ML_DSA_44_SCHEME_ID,
   schemeName: "mldsa44",
 };
@@ -172,11 +172,7 @@ export function validateBrowserSendRecipient(recipient: string): SendRecipientVa
     return { status: "sendable", scheme, error: null };
   }
   if (scheme.kind === "pq") {
-    return {
-      status: "blocked_pq",
-      scheme,
-      error: "This is a valid post-quantum CHCQ address, but browser-wallet signing and sending are not enabled yet.",
-    };
+    return { status: "sendable", scheme, error: null };
   }
   return {
     status: "unsupported_scheme",

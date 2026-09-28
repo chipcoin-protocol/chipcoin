@@ -29,12 +29,15 @@ export type BackgroundRequest =
   | { type: "wallet:create"; password: string }
   | { type: "wallet:createFromSeed"; password: string; recoveryPhrase: string }
   | { type: "wallet:import"; password: string; privateKeyHex: string }
+  | { type: "wallet:createPq"; password: string }
+  | { type: "wallet:importPq"; password: string; pqSeedHex: string }
   | { type: "wallet:recoverFromSeed"; password: string; recoveryPhrase: string }
   | { type: "wallet:unlock"; password: string }
   | { type: "wallet:lock" }
   | { type: "wallet:remove" }
   | { type: "wallet:exportPrivateKey"; password?: string; confirmActiveSession?: boolean }
   | { type: "wallet:exportRecoveryPhrase"; password?: string; confirmActiveSession?: boolean }
+  | { type: "wallet:exportPqSeed"; password?: string; confirmActiveSession?: boolean }
   | { type: "wallet:updateNode"; nodeApiBaseUrl: string; expectedNetwork: SupportedNetworkId; autoLockMinutes?: number }
   | { type: "wallet:refresh" }
   | { type: "wallet:addWatchOnlyAddress"; address: string; label?: string }

@@ -9,7 +9,7 @@ export function SetPassword({
   privateKeyHex,
   onCreated,
 }: {
-  mode: "create-seed" | "recover-seed" | "import-key";
+  mode: "create-seed" | "recover-seed" | "import-key" | "create-pq" | "import-pq";
   recoveryPhrase?: string;
   privateKeyHex: string;
   onCreated(state: AppState): void;
@@ -19,7 +19,11 @@ export function SetPassword({
 
   async function handleSubmit(): Promise<void> {
     try {
-      const state = mode === "create-seed"
+      const state = mode === "create-pq"
+        ? await sendWalletMessage<AppState>({ type: "wallet:createPq", password })
+        : mode === "import-pq"
+          ? await sendWalletMessage<AppState>({ type: "wallet:importPq", password, pqSeedHex: privateKeyHex })
+          : mode === "create-seed"
         ? await sendWalletMessage<AppState>({ type: "wallet:createFromSeed", password, recoveryPhrase: recoveryPhrase ?? "" })
         : mode === "recover-seed"
           ? await sendWalletMessage<AppState>({ type: "wallet:recoverFromSeed", password, recoveryPhrase: recoveryPhrase ?? "" })
@@ -33,7 +37,7 @@ export function SetPassword({
   return (
     <section>
       <h2>Set password</h2>
-      <p>Your wallet data stays in browser extension storage and is encrypted with this password. The recovery phrase is still your main backup.</p>
+      <p>Your wallet data stays in browser extension storage and is encrypted with this password. Keep the recovery material offline.</p>
       <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />
       <button onClick={() => void handleSubmit()}>Continue</button>
       {error ? <p>{error}</p> : null}

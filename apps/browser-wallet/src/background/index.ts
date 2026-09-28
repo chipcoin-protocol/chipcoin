@@ -2,8 +2,10 @@ import type { BackgroundRequest, BackgroundResponse } from "../state/actions";
 import {
   addWatchOnlyAddress,
   createWallet,
+  createPqWallet,
   createWalletFromSeed,
   exportPrivateKey,
+  exportPqSeed,
   exportRecoveryPhrase,
   generateWalletRecoveryPhrase,
   getWalletHistory,
@@ -11,6 +13,7 @@ import {
   handleAutoLockAlarm,
   initializeBackground,
   importWallet,
+  importPqWallet,
   lockWallet,
   removeWallet,
   removeWatchOnlyAddress,
@@ -68,6 +71,10 @@ async function handleMessage(message: BackgroundRequest, sender: chrome.runtime.
         return { ok: true, payload: await createWalletFromSeed(message.recoveryPhrase, message.password) };
       case "wallet:import":
         return { ok: true, payload: await importWallet(message.privateKeyHex, message.password) };
+      case "wallet:createPq":
+        return { ok: true, payload: await createPqWallet(message.password) };
+      case "wallet:importPq":
+        return { ok: true, payload: await importPqWallet(message.pqSeedHex, message.password) };
       case "wallet:recoverFromSeed":
         return { ok: true, payload: await recoverWalletFromSeed(message.recoveryPhrase, message.password) };
       case "wallet:unlock":
@@ -91,6 +98,16 @@ async function handleMessage(message: BackgroundRequest, sender: chrome.runtime.
           ok: true,
           payload: {
             recoveryPhrase: await exportRecoveryPhrase({
+              password: message.password,
+              confirmActiveSession: message.confirmActiveSession,
+            }),
+          },
+        };
+      case "wallet:exportPqSeed":
+        return {
+          ok: true,
+          payload: {
+            pqSeedHex: await exportPqSeed({
               password: message.password,
               confirmActiveSession: message.confirmActiveSession,
             }),

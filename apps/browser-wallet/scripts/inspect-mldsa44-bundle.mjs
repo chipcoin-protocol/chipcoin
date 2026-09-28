@@ -4,13 +4,6 @@ import { join } from "node:path";
 
 const distDir = "dist";
 const disallowedAssetExtensions = new Set([".wasm"]);
-const disallowedBundleNeedles = [
-  "@noble/post-quantum",
-  "ml_dsa44",
-  "internal.sign",
-  "internal.verify",
-  "ML-DSA-44 backend",
-];
 const disallowedRuntimeNeedles = [
   "node:",
   "require(",
@@ -47,15 +40,23 @@ for (const asset of assetNames) {
   }
 }
 
+let bundledJavaScript = "";
 for (const file of files) {
   if (!/\.(js|json|html)$/.test(file)) {
     continue;
   }
   const body = readFileSync(file, "utf8");
-  for (const needle of [...disallowedBundleNeedles, ...disallowedRuntimeNeedles]) {
+  if (file.endsWith(".js")) {
+    bundledJavaScript += body;
+  }
+  for (const needle of disallowedRuntimeNeedles) {
     assert(!body.includes(needle), `production bundle unexpectedly contains ${needle} in ${file}`);
   }
 }
+
+assert(bundledJavaScript.includes("internal.sign"), "production bundle is missing ML-DSA raw-digest signing");
+assert(bundledJavaScript.includes("internal.verify"), "production bundle is missing ML-DSA raw-digest verification");
+assert(bundledJavaScript.includes("ML-DSA-44 backend"), "production bundle is missing ML-DSA compatibility checks");
 
 const manifest = JSON.parse(readFileSync(join(distDir, "manifest.json"), "utf8"));
 const csp = JSON.stringify(manifest.content_security_policy ?? {});
@@ -75,6 +76,6 @@ console.log(JSON.stringify({
   ok: true,
   files: assetNames.length,
   wasm_assets: assetNames.filter((asset) => asset.endsWith(".wasm")).length,
-  noble_in_production_bundle: false,
+  mldsa_in_production_bundle: true,
   csp_has_unsafe_eval: false,
 }, null, 2));

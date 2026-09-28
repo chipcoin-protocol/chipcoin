@@ -12,15 +12,14 @@ CHCQ status:
 
 | Status | Browser wallet behavior |
 | --- | --- |
-| Live now | CHCQ address recognition, CHCQ labels, transaction scheme visibility from API metadata, receive/address display badges, and CHCQ watch-only balance/history tracking |
-| Scheduled | Testnet consensus activation at height `20000` for CHCQ outputs and v2 wallet spends |
-| Not yet available | Browser-side ML-DSA signing, CHCQ wallet generation, CHCQ spending, and Send to CHCQ recipients |
+| Live on testnet | CHCQ wallet generation/import, encrypted ML-DSA seed storage, v2 signing and spending, Send to CHCQ recipients, scheme labels, and watch-only tracking |
+| Activated | Testnet consensus activation was reached at height `20000` |
+| Not available | Mainnet operation and PQ provider-login signatures |
 
-Before activation, testnet consensus rejects CHCQ outputs and CHCQ spends. After
-activation, the browser wallet will still block CHCQ sending until the full
-ML-DSA browser signing path is implemented and verified against the node
-consensus backend. Watch-only CHCQ tracking stores only public addresses and
-optional local labels; it does not make CHCQ funds browser-spendable.
+The browser wallet signs ML-DSA-44 transactions locally and submits transaction
+format v2 to the configured testnet node. Watch-only CHCQ records still store
+only public addresses and optional local labels; import the matching 32-byte
+seed to spend from one of those addresses.
 
 ## Testnet Activation Rescheduled
 
@@ -96,10 +95,12 @@ Common endpoint failures:
 
 Create, recover, or import:
 - Fresh install opens onboarding automatically
-- Choose `Create new wallet`, `Recover wallet`, or `Import private key`
+- Choose a legacy wallet action or `Create PQ wallet` / `Import PQ seed`
 - `Create new wallet` generates a local recovery phrase, requires you to acknowledge backup, then encrypts the wallet in extension storage
 - `Recover wallet` recreates the same wallet deterministically from the saved recovery phrase
 - `Import private key` remains available as a fallback path for advanced users
+- `Create PQ wallet` generates an ML-DSA-44 seed and encrypts it in extension storage
+- `Import PQ seed` accepts the 64-character hexadecimal seed produced by the Chipcoin CLI
 
 Export private key:
 - Unlock the wallet
@@ -137,14 +138,14 @@ Included in this milestone:
 - Phase 2 API client wiring
 - read-only address, balance, history, and node-health flows
 - local transaction build, sign, serialize, and submit aligned with the current Chipcoin wallet primitives
-- CHCQ address recognition for API/UI compatibility, while CHCQ sending and browser-side PQ signing remain disabled
+- CHCQ wallet generation/import, browser-side ML-DSA-44 signing, v2 spending, and CHCQ recipients
 - CHCQ labels for receive/address display and transaction metadata returned by the node API
 - CHCQ watch-only balance/history tracking without keys or signing
 - submitted transaction tracking and confirmation polling
 
 Manual smoke test:
 1. Build and load the extension in Chrome or Firefox
-2. Create a wallet or import an existing private key
+2. Create a wallet, import an existing private key, or create/import a PQ wallet
 3. Confirm the wallet shows:
    - address
    - connected network `testnet`
@@ -156,8 +157,8 @@ Manual smoke test:
 Not included:
 - multisig
 - multiple accounts
-- browser-side CHCQ wallet generation or PQ transaction signing
 - CHCQ spending from watch-only addresses
+- PQ provider-login signatures
 - mainnet support
 
 Storage model:
@@ -165,6 +166,7 @@ Storage model:
 - the stored secret is encrypted with the user password
 - seed-based wallets store the encrypted recovery phrase and derive account `0` deterministically
 - private-key-imported wallets store the encrypted private key directly
+- PQ wallets store the encrypted 32-byte ML-DSA-44 seed directly
 
 Current limitation:
 - the recovery phrase format is Chipcoin-specific for now and is not advertised as BIP39-compatible

@@ -13,7 +13,7 @@ import {
 } from "../../src/crypto/serialization";
 import { bytesToHex, hexToBytes } from "../../src/crypto/keys";
 import { signDigestHex } from "../../src/crypto/signing";
-import { buildSignedPaymentTransaction } from "../../src/wallet/build_transaction";
+import { buildSignedPaymentTransaction, buildSignedPqPaymentTransaction } from "../../src/wallet/build_transaction";
 import type { TransactionModel } from "../../src/wallet/models";
 
 const SENDER_PRIVATE_KEY = "0000000000000000000000000000000000000000000000000000000000000001";
@@ -106,7 +106,7 @@ describe("transaction parity", () => {
     const signature = secp256k1.Signature.fromDER(hexToBytes(signatureHex));
     expect(signature.hasHighS()).toBe(false);
     expect(
-      secp256k1.verify(signature, hexToBytes(EXPECTED_DIGEST), hexToBytes(SENDER_PUBLIC_KEY), {
+      secp256k1.verify(signature.toCompactRawBytes(), hexToBytes(EXPECTED_DIGEST), hexToBytes(SENDER_PUBLIC_KEY), {
         lowS: true,
         prehash: false,
       }),
@@ -152,7 +152,7 @@ describe("transaction parity", () => {
     const signature = secp256k1.Signature.fromDER(hexToBytes(built.transaction.inputs[0].signatureHex));
     expect(signature.hasHighS()).toBe(false);
     expect(
-      secp256k1.verify(signature, hexToBytes(EXPECTED_DIGEST), hexToBytes(SENDER_PUBLIC_KEY), {
+      secp256k1.verify(signature.toCompactRawBytes(), hexToBytes(EXPECTED_DIGEST), hexToBytes(SENDER_PUBLIC_KEY), {
         lowS: true,
         prehash: false,
       }),
@@ -162,8 +162,8 @@ describe("transaction parity", () => {
     expect(built.txid).toHaveLength(64);
   });
 
-  it("keeps browser wallet CHCQ sending disabled until PQ signing is enabled", () => {
-    expect(() => buildSignedPaymentTransaction({
+  it("allows legacy wallets to create activated CHCQ outputs", () => {
+    const built = buildSignedPaymentTransaction({
       privateKeyHex: SENDER_PRIVATE_KEY,
       walletAddress: SENDER_ADDRESS,
       recipient: PQ_RECIPIENT_ADDRESS,
@@ -180,7 +180,34 @@ describe("transaction parity", () => {
           origin_height: 0,
         },
       ],
-    })).toThrow("valid post-quantum CHCQ address");
+    });
+    expect(built.transaction.outputs[0].recipient).toBe(PQ_RECIPIENT_ADDRESS);
+    expect(built.transaction.version).toBe(1);
+  });
+
+  it("builds and signs a v2 ML-DSA spend from a CHCQ wallet", async () => {
+    const built = await buildSignedPqPaymentTransaction({
+      pqSeedHex: pqVector.seed_hex,
+      walletAddress: pqVector.address,
+      recipient: pqVector.recipient,
+      amountChipbits: pqVector.amount_chipbits,
+      feeChipbits: pqVector.fee_chipbits,
+      network: pqVector.network,
+      utxos: [{
+        txid: pqVector.funding_outpoint.txid,
+        vout: pqVector.funding_outpoint.index,
+        amount_chipbits: pqVector.funding_value_chipbits,
+        coinbase: false,
+        mature: true,
+        status: "unspent",
+        origin_height: 20_001,
+      }],
+    });
+    expect(built.transaction.version).toBe(2);
+    expect(built.transaction.inputs[0].sigSchemeId).toBe(10);
+    expect(built.transaction.inputs[0].signatureHex).toHaveLength(2420 * 2);
+    expect(built.transaction.inputs[0].publicKeyHex).toHaveLength(1312 * 2);
+    expect(built.changeChipbits).toBe(pqVector.change_chipbits);
   });
 
   it("matches the frozen Python PQ v2 unsigned transaction and signing digest", () => {

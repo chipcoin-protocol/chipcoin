@@ -20,7 +20,7 @@ export const DEFAULT_NODE_ENDPOINT = __CHIPCOIN_DEFAULT_NODE_ENDPOINT__;
 export const DEFAULT_EXPLORER_URL = __CHIPCOIN_DEFAULT_EXPLORER_URL__;
 export const DEFAULT_NETWORK: SupportedNetworkId = "testnet";
 export const TESTNET_PQ_ACTIVATION_HEIGHT = 20_000;
-export const ENABLE_EXPERIMENTAL_BROWSER_MLDSA = false;
+export const ENABLE_EXPERIMENTAL_BROWSER_MLDSA = true;
 export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
   {
     id: "devnet",
@@ -42,7 +42,7 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     httpSafetyNote: "The public testnet API only allows wallet-safe reads and transaction submit. Keep raw node HTTP local/private and do not use the readonly explorer API for wallet submissions.",
   },
 ] as const;
-export const WALLET_FORMAT_VERSION = 2;
+export const WALLET_FORMAT_VERSION = 3;
 export const SUBMITTED_TX_POLL_ALARM = "chipcoin-submitted-tx-poll";
 export const SUBMITTED_TX_POLL_BACKOFF_MS = [
   15_000,

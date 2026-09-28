@@ -8,8 +8,9 @@ export interface EncryptionResult {
 }
 
 export interface EncryptedWalletSecretPayload {
-  walletType: "private_key" | "seed_phrase";
+  walletType: "private_key" | "seed_phrase" | "pq_seed";
   privateKeyHex?: string;
+  pqSeedHex?: string;
   recoveryPhrase?: string;
   accountIndex?: number;
 }
@@ -51,9 +52,9 @@ export async function decryptWalletSecret(
   const key = await deriveEncryptionKey(password, salt, iterations);
   try {
     const plainBuffer = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
+      { name: "AES-GCM", iv: new Uint8Array(iv).buffer },
       key,
-      base64ToBytes(encryptedWalletBlob),
+      new Uint8Array(base64ToBytes(encryptedWalletBlob)).buffer,
     );
     const decoded = JSON.parse(new TextDecoder().decode(plainBuffer)) as EncryptedWalletSecretPayload;
     validateSecretPayload(decoded);
@@ -88,7 +89,7 @@ async function deriveEncryptionKey(password: string, salt: Uint8Array, iteration
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt,
+      salt: new Uint8Array(salt).buffer,
       iterations,
       hash: "SHA-256",
     },
@@ -115,6 +116,9 @@ function validateSecretPayload(payload: EncryptedWalletSecretPayload): void {
     return;
   }
   if (payload.walletType === "seed_phrase" && payload.recoveryPhrase) {
+    return;
+  }
+  if (payload.walletType === "pq_seed" && payload.pqSeedHex) {
     return;
   }
   throw new Error("Wallet payload is incomplete.");

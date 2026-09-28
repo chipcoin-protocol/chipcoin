@@ -98,8 +98,8 @@ describe("scheme badges", () => {
   it("renders a CHCQ badge with accessible text", () => {
     const element = SchemeBadge({ scheme: classifyAddressScheme({ address: CHCQ_ADDRESS }) });
     expect(element.props.children).toBe("Post-quantum CHCQ");
-    expect(element.props.title).toBe("Post-quantum address. Browser signing is not available yet.");
-    expect(element.props["aria-label"]).toContain("Browser signing is not available yet");
+    expect(element.props.title).toBe("Post-quantum ML-DSA-44 address");
+    expect(element.props["aria-label"]).toContain("Post-quantum ML-DSA-44 address");
   });
 
   it("renders transaction details with input and output scheme badges", () => {
@@ -132,10 +132,10 @@ describe("send recipient validation", () => {
     });
   });
 
-  it("recognizes CHCQ as valid but not sendable", () => {
+  it("recognizes supported CHCQ recipients as sendable", () => {
     expect(validateBrowserSendRecipient(CHCQ_ADDRESS)).toMatchObject({
-      status: "blocked_pq",
-      error: "This is a valid post-quantum CHCQ address, but browser-wallet signing and sending are not enabled yet.",
+      status: "sendable",
+      error: null,
     });
     expect(computeSendFormState({
       connectedNetwork: "testnet",
@@ -145,8 +145,8 @@ describe("send recipient validation", () => {
       feeChc: "0.00001",
       isSubmitting: false,
     })).toMatchObject({
-      isSubmitDisabled: true,
-      formError: "This is a valid post-quantum CHCQ address, but browser-wallet signing and sending are not enabled yet.",
+      isSubmitDisabled: false,
+      formError: null,
     });
   });
 

@@ -5,11 +5,12 @@ import { sendWalletMessage } from "../../shared/messages";
 
 const EXPORT_CONFIRMATION_TEXT = "EXPORT";
 
-export function Backup(): JSX.Element {
+export function Backup({ walletType }: { walletType: "private_key" | "seed_phrase" | "pq_seed" | null }): JSX.Element {
   const [hasAcknowledgedRisk, setHasAcknowledgedRisk] = useState(false);
   const [confirmationText, setConfirmationText] = useState("");
   const [recoveryPhrase, setRecoveryPhrase] = useState<string | null>(null);
   const [privateKeyHex, setPrivateKeyHex] = useState<string | null>(null);
+  const [pqSeedHex, setPqSeedHex] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const canReveal = hasAcknowledgedRisk && confirmationText.trim().toUpperCase() === EXPORT_CONFIRMATION_TEXT;
@@ -40,9 +41,20 @@ export function Backup(): JSX.Element {
     }
   }
 
+  async function handleRevealPqSeed(): Promise<void> {
+    try {
+      const response = await sendWalletMessage<{ pqSeedHex: string }>({ type: "wallet:exportPqSeed", confirmActiveSession: true });
+      setPqSeedHex(response.pqSeedHex);
+      setMessage("ML-DSA seed revealed. Store it securely.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to reveal the ML-DSA seed.");
+    }
+  }
+
   function handleHide(): void {
     setRecoveryPhrase(null);
     setPrivateKeyHex(null);
+    setPqSeedHex(null);
     setMessage("Sensitive backup data hidden.");
   }
 
@@ -50,7 +62,7 @@ export function Backup(): JSX.Element {
     <section className="panel">
       <h2>Backup / Export</h2>
       <div className="warning-panel">
-        <p><strong>This is your private key. Anyone with it can take your funds.</strong></p>
+        <p><strong>This is your wallet recovery secret. Anyone with it can take your funds.</strong></p>
         <p>Only reveal it if you are backing up or recovering this wallet on a trusted machine.</p>
       </div>
       <div className="stack">
@@ -73,11 +85,12 @@ export function Backup(): JSX.Element {
             spellCheck={false}
           />
         </label>
-        {!recoveryPhrase ? (
+        {walletType === "seed_phrase" && !recoveryPhrase ? (
           <button className="secondary-button" disabled={!canReveal} onClick={() => void handleRevealRecoveryPhrase()}>
             Reveal recovery phrase
           </button>
-        ) : (
+        ) : null}
+        {recoveryPhrase ? (
           <>
             <textarea className="secret-box" readOnly value={recoveryPhrase} />
             <div className="button-row">
@@ -86,12 +99,13 @@ export function Backup(): JSX.Element {
               </button>
             </div>
           </>
-        )}
-        {!privateKeyHex ? (
+        ) : null}
+        {walletType !== "pq_seed" && !privateKeyHex ? (
           <button className="danger-button" disabled={!canReveal} onClick={() => void handleReveal()}>
             Reveal private key
           </button>
-        ) : (
+        ) : null}
+        {privateKeyHex ? (
           <>
             <textarea className="secret-box" readOnly value={privateKeyHex} />
             <div className="button-row">
@@ -101,7 +115,19 @@ export function Backup(): JSX.Element {
               <button onClick={handleHide}>Hide private key</button>
             </div>
           </>
-        )}
+        ) : null}
+        {walletType === "pq_seed" && !pqSeedHex ? (
+          <button className="danger-button" disabled={!canReveal} onClick={() => void handleRevealPqSeed()}>Reveal ML-DSA seed</button>
+        ) : null}
+        {pqSeedHex ? (
+          <>
+            <textarea className="secret-box" readOnly value={pqSeedHex} />
+            <div className="button-row">
+              <button className="secondary-button" onClick={() => void copyText(pqSeedHex).then(() => setMessage("ML-DSA seed copied."))}>Copy ML-DSA seed</button>
+              <button onClick={handleHide}>Hide seed</button>
+            </div>
+          </>
+        ) : null}
       </div>
       {message ? <p className="message">{message}</p> : null}
     </section>

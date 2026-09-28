@@ -77,7 +77,7 @@ export function App(): JSX.Element {
       {route === "activity" && <Activity state={state} />}
       {route === "send" && <Send state={state} onRefresh={loadState} />}
       {route === "watch" && <WatchOnly state={state} onUpdated={setState} />}
-      {route === "backup" && <Backup />}
+      {route === "backup" && <Backup walletType={state.walletType} />}
       {route === "settings" && <Settings state={state} onUpdated={setState} onOpenBackup={() => setRoute("backup")} />}
     </main>
   );

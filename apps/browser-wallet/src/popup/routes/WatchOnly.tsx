@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import type { AppState } from "../../state/app_state";
-import { DEFAULT_EXPLORER_URL, TESTNET_PQ_ACTIVATION_HEIGHT } from "../../shared/constants";
+import { DEFAULT_EXPLORER_URL } from "../../shared/constants";
 import { formatChc, shortHash } from "../../shared/formatting";
 import { sendWalletMessage } from "../../shared/messages";
 import { unixToIso } from "../../shared/time";
@@ -68,8 +68,8 @@ export function WatchOnly(
     <section className="panel">
       <h2>Watch-only CHCQ</h2>
       <p className="message">
-        Track CHCQ balances and history without importing keys. Browser wallet ML-DSA signing is not available yet,
-        and consensus CHCQ outputs are scheduled for testnet height {TESTNET_PQ_ACTIVATION_HEIGHT}.
+        Track another CHCQ address without importing its seed. To sign and spend from a CHCQ address,
+        create or import a PQ wallet instead.
       </p>
       <div className="stack">
         <label className="stack">

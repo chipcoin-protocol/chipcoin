@@ -16,7 +16,7 @@ describe("ChipcoinApiClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const client = ChipcoinApiClient.fromBaseUrl("http://127.0.0.1:28081");
-    const pending = expect(client.address("CHCCfW1doC5nV2HXB3m5aJhJdiuQP8ft5dPkL", 25)).rejects.toMatchObject<ApiClientError>({
+    const pending = expect(client.address("CHCCfW1doC5nV2HXB3m5aJhJdiuQP8ft5dPkL", 25)).rejects.toMatchObject({
       code: "request_timeout",
       message: "The node API request timed out.",
     });
@@ -40,7 +40,7 @@ describe("ChipcoinApiClient", () => {
 
     const client = ChipcoinApiClient.fromBaseUrl("http://127.0.0.1:28081");
 
-    await expect(client.submitRawTransaction("abcd", 100)).rejects.toMatchObject<ApiClientError>({
+    await expect(client.submitRawTransaction("abcd", 100)).rejects.toMatchObject({
       code: "validation_error",
       message: "transaction rejected",
       status: 400,

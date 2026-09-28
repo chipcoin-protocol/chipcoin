@@ -1,11 +1,12 @@
-import { privateKeyHexToAddress } from "../crypto/addresses";
+import { privateKeyHexToAddress, publicKeyHexToPqAddress } from "../crypto/addresses";
 import { validateBrowserSendRecipient } from "../shared/address_scheme";
 import {
   serializeSignedTransactionToRawHex,
   transactionId,
   transactionSignatureDigest,
 } from "../crypto/serialization";
-import { bytesToHex } from "../crypto/keys";
+import { bytesToHex, hexToBytes } from "../crypto/keys";
+import { createExperimentalMlDsa44Backend, ML_DSA_44_SCHEME_ID } from "../crypto/mldsa44";
 import { signDigestHex, walletKeyMaterialFromPrivateKeyHex } from "../crypto/signing";
 import type { AddressUtxo } from "../api/types";
 import type { BuiltTransaction, SendPlan, SpendCandidate, TransactionModel } from "./models";
@@ -119,6 +120,72 @@ export function buildSignedPaymentTransaction(args: {
     inputs: signedInputs,
   };
 
+  return {
+    transaction: signed,
+    rawHex: serializeSignedTransactionToRawHex(signed),
+    txid: transactionId(signed),
+    feeChipbits: plan.feeChipbits,
+    changeChipbits: plan.changeChipbits,
+  };
+}
+
+export async function buildSignedPqPaymentTransaction(args: {
+  pqSeedHex: string;
+  walletAddress: string;
+  recipient: string;
+  amountChipbits: number;
+  feeChipbits: number;
+  utxos: AddressUtxo[];
+  network: string;
+}): Promise<BuiltTransaction> {
+  const plan = buildSendPlan(args);
+  const backend = createExperimentalMlDsa44Backend();
+  await backend.initialize();
+  const keyPair = await backend.generateKeyPair(hexToBytes(args.pqSeedHex));
+  const publicKeyHex = bytesToHex(keyPair.publicKey);
+  const derivedAddress = publicKeyHexToPqAddress(publicKeyHex, ML_DSA_44_SCHEME_ID);
+  if (args.walletAddress !== derivedAddress) {
+    throw new Error("Wallet address does not match the provided ML-DSA seed.");
+  }
+
+  const unsigned: TransactionModel = {
+    version: 2,
+    inputs: plan.selectedInputs.map((input) => ({
+      previousOutput: { txid: input.txid, index: input.index },
+      signatureHex: "",
+      publicKeyHex: "",
+      sequence: 0xffffffff,
+      sigSchemeId: ML_DSA_44_SCHEME_ID,
+    })),
+    outputs: [
+      { value: plan.amountChipbits, recipient: plan.recipient },
+      ...(plan.changeChipbits > 0 ? [{ value: plan.changeChipbits, recipient: plan.changeRecipient }] : []),
+    ],
+    locktime: 0,
+    metadata: {},
+  };
+
+  const signedInputs = [];
+  for (let index = 0; index < unsigned.inputs.length; index += 1) {
+    const candidate = plan.selectedInputs[index];
+    if (candidate.recipient !== derivedAddress) {
+      throw new Error("Spend candidate recipient does not belong to this wallet key.");
+    }
+    const digest = transactionSignatureDigest({
+      transaction: unsigned,
+      inputIndex: index,
+      previousOutputValue: candidate.amountChipbits,
+      previousOutputRecipient: candidate.recipient,
+      network: args.network,
+    });
+    signedInputs.push({
+      ...unsigned.inputs[index],
+      signatureHex: bytesToHex(await backend.signDigest(digest, keyPair.privateKey)),
+      publicKeyHex,
+    });
+  }
+
+  const signed = { ...unsigned, inputs: signedInputs };
   return {
     transaction: signed,
     rawHex: serializeSignedTransactionToRawHex(signed),

@@ -4,7 +4,7 @@ import type { AppState } from "../../state/app_state";
 import { DEFAULT_NETWORK, getSupportedNetwork } from "../../shared/constants";
 import { sendWalletMessage } from "../../shared/messages";
 
-type SetupMode = "create-seed" | "recover-seed" | "import-key";
+type SetupMode = "create-seed" | "recover-seed" | "import-key" | "create-pq" | "import-pq";
 
 export function SetupWallet({ onCreated }: { onCreated(state: AppState): void }): JSX.Element {
   const defaultNetwork = getSupportedNetwork(DEFAULT_NETWORK);
@@ -28,6 +28,8 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
       (mode === "create-seed" && Boolean(recoveryPhrase) && hasBackedUpSeed)
       || (mode === "recover-seed" && recoveryPhrase.trim().length > 0)
       || (mode === "import-key" && privateKeyHex.trim().length > 0)
+      || mode === "create-pq"
+      || (mode === "import-pq" && privateKeyHex.trim().length > 0)
     );
 
   async function handleGenerateRecoveryPhrase(): Promise<void> {
@@ -51,7 +53,11 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
     setIsSubmitting(true);
     setError(null);
     try {
-      const state = mode === "create-seed"
+      const state = mode === "create-pq"
+        ? await sendWalletMessage<AppState>({ type: "wallet:createPq", password })
+        : mode === "import-pq"
+          ? await sendWalletMessage<AppState>({ type: "wallet:importPq", password, pqSeedHex: privateKeyHex })
+          : mode === "create-seed"
         ? await sendWalletMessage<AppState>({ type: "wallet:createFromSeed", password, recoveryPhrase })
         : mode === "recover-seed"
           ? await sendWalletMessage<AppState>({ type: "wallet:recoverFromSeed", password, recoveryPhrase })
@@ -77,6 +83,12 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
         </button>
         <button className={mode === "import-key" ? "is-active" : ""} onClick={() => { setMode("import-key"); setError(null); }}>
           Import key
+        </button>
+        <button className={mode === "create-pq" ? "is-active" : ""} onClick={() => { setMode("create-pq"); setError(null); }}>
+          Create PQ
+        </button>
+        <button className={mode === "import-pq" ? "is-active" : ""} onClick={() => { setMode("import-pq"); setError(null); }}>
+          Import PQ
         </button>
       </div>
       <div className="stack">
@@ -117,6 +129,13 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
             />
           </>
         ) : null}
+        {mode === "create-pq" ? <p className="message">Create an experimental testnet ML-DSA-44 wallet with a CHCQ address.</p> : null}
+        {mode === "import-pq" ? (
+          <>
+            <p className="message">Import the 64-character ML-DSA seed hex exported by the Chipcoin CLI.</p>
+            <textarea value={privateKeyHex} onChange={(event) => { setPrivateKeyHex(event.target.value); setError(null); }} placeholder="ML-DSA seed hex" />
+          </>
+        ) : null}
         <input
           type="password"
           value={password}
@@ -124,7 +143,7 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
           placeholder="Password"
         />
         <button className="primary-button" disabled={!canSubmit || isSubmitting} onClick={() => void handleSubmit()}>
-          {isSubmitting ? "Setting up..." : mode === "create-seed" ? "Create wallet" : mode === "recover-seed" ? "Recover wallet" : "Import private key"}
+          {isSubmitting ? "Setting up..." : mode === "create-pq" ? "Create PQ wallet" : mode === "import-pq" ? "Import PQ wallet" : mode === "create-seed" ? "Create wallet" : mode === "recover-seed" ? "Recover wallet" : "Import private key"}
         </button>
       </div>
       {error ? <p className="message error">{error}</p> : null}

@@ -20,11 +20,11 @@ export class ChipcoinApiClient {
     return new ChipcoinApiClient(normalizeNodeEndpoint(baseUrl));
   }
 
-  async health(timeoutMs = API_TIMEOUTS_MS.health): Promise<HealthResponse> {
+  async health(timeoutMs: number = API_TIMEOUTS_MS.health): Promise<HealthResponse> {
     return this.request("/v1/health", undefined, timeoutMs);
   }
 
-  async status(timeoutMs = API_TIMEOUTS_MS.status): Promise<NodeStatus> {
+  async status(timeoutMs: number = API_TIMEOUTS_MS.status): Promise<NodeStatus> {
     return this.request("/v1/status", undefined, timeoutMs);
   }
 
@@ -32,23 +32,23 @@ export class ChipcoinApiClient {
     return this.request("/v1/tip");
   }
 
-  async address(address: string, timeoutMs = API_TIMEOUTS_MS.summary): Promise<AddressSummary> {
+  async address(address: string, timeoutMs: number = API_TIMEOUTS_MS.summary): Promise<AddressSummary> {
     return this.request(`/v1/address/${address}`, undefined, timeoutMs);
   }
 
-  async utxos(address: string, timeoutMs = API_TIMEOUTS_MS.utxos): Promise<AddressUtxo[]> {
+  async utxos(address: string, timeoutMs: number = API_TIMEOUTS_MS.utxos): Promise<AddressUtxo[]> {
     return this.request(`/v1/address/${address}/utxos`, undefined, timeoutMs);
   }
 
-  async history(address: string, limit = 50, timeoutMs = API_TIMEOUTS_MS.history): Promise<HistoryEntry[]> {
+  async history(address: string, limit = 50, timeoutMs: number = API_TIMEOUTS_MS.history): Promise<HistoryEntry[]> {
     return this.request(`/v1/address/${address}/history?limit=${limit}&order=desc`, undefined, timeoutMs);
   }
 
-  async tx(txid: string, timeoutMs = API_TIMEOUTS_MS.txLookup): Promise<TxLookup> {
+  async tx(txid: string, timeoutMs: number = API_TIMEOUTS_MS.txLookup): Promise<TxLookup> {
     return this.request(`/v1/tx/${txid}`, undefined, timeoutMs);
   }
 
-  async submitRawTransaction(rawHex: string, timeoutMs = API_TIMEOUTS_MS.txSubmit): Promise<TxSubmitResponse> {
+  async submitRawTransaction(rawHex: string, timeoutMs: number = API_TIMEOUTS_MS.txSubmit): Promise<TxSubmitResponse> {
     return this.request("/v1/tx/submit", {
       method: "POST",
       body: JSON.stringify({ raw_hex: rawHex }),

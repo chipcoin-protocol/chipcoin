@@ -2,7 +2,7 @@ import type { AddressSummary, AddressUtxo, HistoryEntry, NodeStatus } from "../a
 import type { SupportedNetworkId } from "../shared/constants";
 
 export type SubmittedTransactionState = "submitted" | "confirmed" | "rejected" | "failed_to_submit";
-export type WalletType = "private_key" | "seed_phrase";
+export type WalletType = "private_key" | "seed_phrase" | "pq_seed";
 
 export interface SubmittedTransactionRecord {
   txid: string;
@@ -41,6 +41,7 @@ export interface EncryptedWalletRecord {
 export interface UnlockedSession {
   walletType: WalletType;
   privateKeyHex: string;
+  pqSeedHex?: string;
   recoveryPhrase?: string;
   publicKeyHex: string;
   address: string;

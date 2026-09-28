@@ -1,5 +1,6 @@
 import { ripemd160 } from "@noble/hashes/ripemd160";
 import { sha256 } from "@noble/hashes/sha256";
+import { sha3_256 } from "@noble/hashes/sha3";
 
 import { bytesToHex, derivePublicKeyHex, hexToBytes } from "./keys";
 
@@ -30,6 +31,15 @@ export function publicKeyHexToAddress(publicKeyHex: string): string {
   payload[0] = ADDRESS_VERSION;
   payload.set(hash160(publicKeyBytes), 1);
   return ADDRESS_PREFIX + base58CheckEncode(payload);
+}
+
+export function publicKeyHexToPqAddress(publicKeyHex: string, schemeId = 10): string {
+  const publicKeyBytes = hexToBytes(publicKeyHex);
+  const payload = new Uint8Array(2 + PQ_PUBLIC_KEY_COMMITMENT_SIZE);
+  payload[0] = PQ_ADDRESS_VERSION;
+  payload[1] = schemeId;
+  payload.set(sha3_256(publicKeyBytes), 2);
+  return PQ_ADDRESS_PREFIX + base58CheckEncode(payload);
 }
 
 export function isValidAddress(address: string): boolean {

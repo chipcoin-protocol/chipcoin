@@ -36,10 +36,10 @@ function expectBackendError(code: string, callable: () => Promise<unknown>) {
 }
 
 describe("experimental ML-DSA-44 browser backend", () => {
-  it("keeps the public feature flag disabled by default", async () => {
-    expect(ENABLE_EXPERIMENTAL_BROWSER_MLDSA).toBe(false);
+  it("enables the public testnet backend", async () => {
+    expect(ENABLE_EXPERIMENTAL_BROWSER_MLDSA).toBe(true);
     const backend = createExperimentalMlDsa44Backend();
-    await expectBackendError("feature_disabled", () => backend.initialize());
+    await expect(backend.initialize()).resolves.toBeUndefined();
   });
 
   it("requires initialization before use", async () => {
