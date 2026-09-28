@@ -73,12 +73,8 @@ async function runFirefox() {
     }
     return payload;
   } finally {
-    proc.kill();
-    await new Promise((resolveProcess) => {
-      proc.once("exit", resolveProcess);
-      setTimeout(resolveProcess, 1500);
-    });
-    removeTemporaryProfile(profile);
+    await stopBrowserProcess(proc);
+    await removeTemporaryProfile(profile);
   }
 }
 
@@ -140,23 +136,51 @@ async function runChromium() {
       ...payload,
     };
   } finally {
-    proc.kill();
-    await new Promise((resolveProcess) => {
-      proc.once("exit", resolveProcess);
-      setTimeout(resolveProcess, 1500);
-    });
+    await stopBrowserProcess(proc);
     await staticServer.close();
-    removeTemporaryProfile(profile);
+    await removeTemporaryProfile(profile);
   }
 }
 
-function removeTemporaryProfile(profile) {
-  rmSync(profile, {
-    recursive: true,
-    force: true,
-    maxRetries: 10,
-    retryDelay: 100,
+async function stopBrowserProcess(proc) {
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return;
+  }
+  proc.kill("SIGTERM");
+  await waitForProcessExit(proc, 3000);
+  if (proc.exitCode === null && proc.signalCode === null) {
+    proc.kill("SIGKILL");
+    await waitForProcessExit(proc, 3000);
+  }
+}
+
+function waitForProcessExit(proc, timeoutMs) {
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolveProcess) => {
+    const timeout = setTimeout(resolveProcess, timeoutMs);
+    proc.once("exit", () => {
+      clearTimeout(timeout);
+      resolveProcess();
+    });
   });
+}
+
+async function removeTemporaryProfile(profile) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      rmSync(profile, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const retryable = error && ["EBUSY", "ENOTEMPTY", "EPERM"].includes(error.code);
+      if (!retryable) {
+        throw error;
+      }
+      await sleep(100);
+    }
+  }
+  console.warn(`warning: unable to remove temporary browser profile ${profile}`);
 }
 
 async function pollHarnessResult(client, context) {
