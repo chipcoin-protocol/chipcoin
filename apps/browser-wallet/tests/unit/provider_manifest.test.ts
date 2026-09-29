@@ -21,5 +21,18 @@ describe("provider manifest injection", () => {
         }),
       ]);
     });
+
+    it(`${name} declares Chipcoin extension and toolbar icons`, () => {
+      expect(manifest.icons).toEqual({
+        "16": "icons/chipcoin-16.png",
+        "32": "icons/chipcoin-32.png",
+        "48": "icons/chipcoin-48.png",
+        "128": "icons/chipcoin-128.png",
+      });
+      expect(manifest.action.default_icon).toEqual({
+        "16": "icons/chipcoin-16.png",
+        "32": "icons/chipcoin-32.png",
+      });
+    });
   }
 });

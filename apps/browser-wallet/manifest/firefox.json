@@ -5,9 +5,19 @@
   "version": "0.1.2",
   "description": "Chipcoin devnet and testnet browser wallet",
   "homepage_url": "https://chipcoinprotocol.com/wallet",
+  "icons": {
+    "16": "icons/chipcoin-16.png",
+    "32": "icons/chipcoin-32.png",
+    "48": "icons/chipcoin-48.png",
+    "128": "icons/chipcoin-128.png"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Chipcoin Wallet"
+    "default_title": "Chipcoin Wallet",
+    "default_icon": {
+      "16": "icons/chipcoin-16.png",
+      "32": "icons/chipcoin-32.png"
+    }
   },
   "background": {
     "scripts": ["assets/background.js"],
