@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "release_id": "mainnet-v0.1.2-rc.1",
+  "created_at": "2026-10-15T12:53:47Z",
+  "source": {
+    "commit": "698816e15e4397dd2f5bba320b88ca5dd3e28830",
+    "tag": "mainnet-v0.1.2-rc.1",
+    "tag_object": "b70fc5d00fc64b0156d74d022924429a51a15c20",
+    "tag_signature": "annotated_unsigned",
+    "archive_sha256": "2b4381c3c27a2233695b7977be0477fa1c2bf908ec6c49ee33c6465fa244d9dc"
+  },
+  "node_image": {
+    "tag": "chipcoin-mainnet-node:0.1.2-rc.1",
+    "image_id": "sha256:25f3dca52fabad5f7b818e17132e994ef6d3ee5f6f169427d9533002eac1e3eb",
+    "registry_digest": null,
+    "export_tar_sha256": "cdcb917a9151c9854ee78554d1d39e882d6116f291535abbb05d0f35a8c49cb5",
+    "base_image_digest": "sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce",
+    "platform": "linux/amd64",
+    "package_version": "0.1.2"
+  },
+  "browser": {
+    "chrome_tree_sha256": "e21e975b13b555744ce3c6f473d0cc1370449411597e193c2b78beb55353a082",
+    "firefox_tree_sha256": "adcbfd457cb7170ce1b3d1106655abc93d5e0dff131efd4c9912ca6441056bb6",
+    "package_lock_sha256": "c09dbc0f069434f32e61aa5a93eea1986488ec21dbe02dd8c086e0f7578cf7fb"
+  },
+  "configuration_sha256": {
+    "Dockerfile": "efa8554b9744a33d33fcdff88eb99dbf463bcd939a12be2882561ed905d990db",
+    "pyproject.toml": "5d2a820e931a5384bdd96fe91b59b555383de899c397ee82e1b0bb8e7ee0ff70",
+    "docker/compose/docker-compose.mainnet-rehearsal.yml": "ab999672439c4b01012892f5ea86f767f6ce58419ab5876ddc8728fca8a54442",
+    "src/chipcoin/consensus/params.py": "ac14f75857ad69dac280123cb40d9a13bfc63536e0ab8d9039b515a6bf967a43"
+  },
+  "mainnet_consensus": {
+    "target_block_time_seconds": 600,
+    "difficulty_adjustment_window": 1000,
+    "initial_compact_target": "0x1d1399ad",
+    "coinbase_maturity": 100,
+    "halving_interval": 111000,
+    "initial_miner_subsidy_chipbits": 5000000000,
+    "initial_node_epoch_reward_chipbits": 5000000000,
+    "max_money_chipbits": 1100000000000000,
+    "reward_epoch_length_blocks": 100,
+    "reward_activation_height": 1000,
+    "reward_warmup_epochs": 2,
+    "max_rewarded_nodes_per_epoch": 25,
+    "require_pq_standard_transactions": true,
+    "reward_signature_scheme_id": 10
+  },
+  "validation": {
+    "python_tests_passed": 842,
+    "fault_harness_tests_passed": 109,
+    "browser_tests_passed": 89,
+    "browser_typecheck": "PASS",
+    "browser_builds": "PASS",
+    "browser_production_vulnerabilities": 0,
+    "image_smoke": "PASS",
+    "image_secret_scan": "PASS"
+  }
+}

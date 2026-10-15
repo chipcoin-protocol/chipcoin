@@ -13,7 +13,7 @@ lifecycle, and final A-E convergence reports.
 ## Decision
 
 ```text
-MAINNET_RC_READY = FALSE
+MAINNET_RC_READY = TRUE
 PUBLIC_LAUNCH_READY = FALSE
 ```
 
@@ -49,9 +49,9 @@ mainnet-rehearsal evidence.
 
 | Status | Count |
 |---|---:|
-| `PASS` | 94 |
+| `PASS` | 98 |
 | `FAIL` | 0 |
-| `NOT_RUN` | 4 |
+| `NOT_RUN` | 0 |
 | `PENDING_HEIGHT` | 0 |
 | `BLOCKED` | 0 |
 | **Total** | **98** |
@@ -236,10 +236,10 @@ and payout history/state. Height equality alone is insufficient.
 
 | ID | Status | Requirement |
 |---|---|---|
-| `SEC-REL-001` | `NOT_RUN` | Immutable RC version and Git commit/tag. |
-| `SEC-REL-002` | `NOT_RUN` | Verify clean/inventoried working tree when the RC freeze actually begins. |
-| `SEC-REL-004` | `NOT_RUN` | Record immutable Docker image digests. |
-| `SEC-REL-005` | `NOT_RUN` | Produce traceable/reproducible final build evidence. |
+| `SEC-REL-001` | `PASS` | Version `0.1.2-rc.1`, commit `698816e15e4397dd2f5bba320b88ca5dd3e28830`, and annotated tag `mainnet-v0.1.2-rc.1` are frozen. |
+| `SEC-REL-002` | `PASS` | Source changes were inventoried; the source tree was clean at tag creation and the image came from that tag archive. |
+| `SEC-REL-004` | `PASS` | Content-addressed image ID and exported-image checksum are recorded in the finalization report. |
+| `SEC-REL-005` | `PASS` | Commit, source archive, locks, named browser artifacts, resolved base digest, build log, OCI labels, image ID and export checksum form a complete traceability chain. |
 | `SEC-SNAP-KEY-001` | `PASS` | Protected-file signer input removes snapshot private material from argv/environment; process, output, artifact, permission, compatibility, tamper, and trust tests pass. |
 
 The deferred Vite/esbuild major upgrade is not independently blocking while
@@ -262,25 +262,10 @@ another gate explicitly requires it.
 
 ## Critical Path
 
-Close blockers in this order:
-
-1. Execute Scenario B and final fault integrity
-   checks. Execute SIGKILL separately from partition tests.
-2. Complete remaining transaction/negative gates: exact 99/100 boundary,
-   multi-input PQ, legacy rejection, and cross-network replay rejection.
-3. Produce a real signed mainnet rehearsal snapshot; run all trust-negative
-   cases, empty-node restore, delta sync, fallback, and state equality.
-4. Continue the unaccelerated soak through activation, warmup, settlement, and
-   payout; validate reward persistence/reorg safety and Explorer display.
-5. Execute final A-E convergence after reward and snapshot paths exist.
-6. Complete packaged-browser clean-install and migration drills.
-7. Execute and record the operational checklist during RC validation without
-   treating documentation as runtime evidence.
-8. Freeze the RC source: inventory/resolve the working tree, choose immutable
-   version/tag, build pinned images, record digests, and archive traceable
-   evidence.
-9. Evaluate `MAINNET_RC_READY` mechanically. Begin public infrastructure work
-    only after it becomes `TRUE`.
+The software RC critical path is complete. `MAINNET_RC_READY` evaluates to
+`TRUE` with all 98 RC-blocking requirements at `PASS`. The remaining work is
+the separately gated public infrastructure and launch validation; it does not
+change the frozen software RC.
 
 ## Browser Wallet Gate
 
