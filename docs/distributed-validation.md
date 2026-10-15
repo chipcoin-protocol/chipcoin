@@ -32,7 +32,8 @@ docker compose cp node:/runtime/devnet.snapshot ./devnet.snapshot
 Optional signed snapshot:
 
 ```bash
-chipcoin snapshot-sign --snapshot-file ./devnet.snapshot --private-key-hex <ED25519_PRIVATE_KEY_HEX>
+chmod 600 /secure/snapshot-signing.key
+chipcoin snapshot-sign --snapshot-file ./devnet.snapshot --private-key-file /secure/snapshot-signing.key
 ```
 
 ### 2. Transfer the snapshot to node B

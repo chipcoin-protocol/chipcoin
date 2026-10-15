@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from chipcoin.consensus.epoch_settlement import RewardAttestation, RewardAttestationBundle, RewardSettlement, RewardSettlementEntry
 from chipcoin.consensus.models import Block, OutPoint
 from chipcoin.consensus.nodes import NodeRecord
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, snapshot_checksum, write_snapshot_file
@@ -20,9 +20,17 @@ from chipcoin.storage.native_rewards import StoredEpochSettlement, StoredRewardA
 from tests.helpers import signed_payment, wallet_key
 
 
+MAINNET_PARAMS = replace(
+    PRODUCTION_MAINNET_PARAMS,
+    genesis_bits=0x207FFFFF,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
+
+
 def _make_service(database_path: Path, *, start_time: int, params=None) -> NodeService:
     timestamps = iter(range(start_time, start_time + 50_000))
-    return NodeService.open_sqlite(database_path, params=params, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS if params is None else params, time_provider=lambda: next(timestamps))
 
 
 def _mine_block(block: Block) -> Block:

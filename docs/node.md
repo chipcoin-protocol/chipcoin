@@ -308,7 +308,8 @@ chipcoin --data /runtime/node.sqlite3 snapshot-export \
 Sign either `v1` or `v2` snapshot files:
 
 ```bash
-chipcoin snapshot-sign --snapshot-file /runtime/devnet.snapshot --private-key-hex <ED25519_PRIVATE_KEY_HEX>
+chmod 600 /secure/snapshot-signing.key
+chipcoin snapshot-sign --snapshot-file /runtime/devnet.snapshot --private-key-file /secure/snapshot-signing.key
 ```
 
 Import with signature enforcement:
@@ -915,6 +916,21 @@ Typical penalty events include:
 - repeated timeout or stall behavior
 - oversized `headers` / `inv` / `getdata` / `addr` messages
 - invalid blocks or transactions relayed by a peer
+
+Transport availability failures such as DNS resolution errors, connection
+refusal, network-unreachable errors, and pre-handshake timeouts use bounded
+connection retry backoff. They do not contribute to peer reputation or
+misbehavior score.
+
+Runtime lifecycle diagnostics distinguish the permanent outbound dialer from
+individual attempts and delayed peers:
+
+- `connect_loops`: permanent outbound connection-maintenance loops;
+- `active_connection_attempts`: endpoints currently being dialed;
+- `backed_off_peer_count`: endpoints waiting for their bounded retry deadline;
+- `next_reconnect_at`: earliest persisted retry deadline;
+- `reconnect_tasks`: compatibility field counting only short-lived tasks in
+  the `reconnect` task category; it does not include `connect_loops`.
 
 Operator surfaces:
 

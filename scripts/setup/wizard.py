@@ -28,7 +28,7 @@ from chipcoin.config import get_network_config  # noqa: E402
 from chipcoin.consensus.economics import CHCBITS_PER_CHC, register_reward_node_fee_chipbits, renew_reward_node_fee_chipbits  # noqa: E402
 from chipcoin.crypto.keys import parse_private_key_hex  # noqa: E402
 from chipcoin.node.service import NodeService  # noqa: E402
-from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_private_key  # noqa: E402
+from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_mldsa44_seed, wallet_key_from_private_key  # noqa: E402
 
 
 ENV_PATH = REPO_ROOT / ".env"
@@ -38,6 +38,8 @@ NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.snapshot")
 TESTNET_NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-testnet.sqlite3")
 TESTNET_NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-testnet.snapshot")
+MAINNET_NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node.sqlite3")
+MAINNET_NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-mainnet.snapshot")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
 REWARD_WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "reward-node-wallet.json")
 PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
@@ -51,6 +53,8 @@ PUBLIC_TESTNET_BOOTSTRAP_URL = "https://bootstrap.chipcoinprotocol.com"
 PUBLIC_TESTNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com/api/testnet"
 PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
 TESTNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:28081"
+PUBLIC_MAINNET_WALLET_API_ENDPOINT = "https://mainnet-api.chipcoinprotocol.com"
+MAINNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:8080"
 PUBLIC_IP_DETECT_URLS = (
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
@@ -159,6 +163,7 @@ def main() -> int:
     network = _ask_choice(
         "Which network do you want to use?",
         {
+            "mainnet": "Mainnet (ML-DSA-44 only)",
             "devnet": "Devnet",
             "testnet": "Public testnet candidate",
         },
@@ -185,7 +190,7 @@ def main() -> int:
         )
         miner_wallet_path = Path(WALLET_PATH)
         _prepare_wallet_path(miner_wallet_path)
-        miner_wallet_address, miner_wallet_private_key_hex, _miner_wallet_public_key_hex = _handle_wallet(wallet_mode, miner_wallet_path)
+        miner_wallet_address, miner_wallet_private_key_hex, _miner_wallet_public_key_hex = _handle_wallet(wallet_mode, miner_wallet_path, network=network)
 
     env_values = dict(DEFAULTS)
     _apply_network_defaults(env_values, network)
@@ -209,6 +214,7 @@ def main() -> int:
             reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex = _configure_reward_node(
                 env_values,
                 setup_mode=setup_mode,
+                network=network,
             )
     _preflight_validate(env_values, role=role)
     _prepare_runtime_files(env_values, role=role)
@@ -571,7 +577,7 @@ def _default_reward_registration_peer(env_values: dict[str, str]) -> str:
     return f"127.0.0.1:{env_values.get('NODE_P2P_BIND_PORT', '18444')}"
 
 
-def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tuple[Path, str, str, str]:
+def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str, network: str = "testnet") -> tuple[Path, str, str, str]:
     reward_wallet_mode = _ask_choice(
         "How should the reward-node wallet be handled?",
         {"generate": "Generate new wallet", "import": "Import existing private key"},
@@ -579,7 +585,7 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str) -> tu
     )
     reward_wallet_path = Path(REWARD_WALLET_PATH)
     _prepare_wallet_path(reward_wallet_path)
-    reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path)
+    reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path, network=network)
     env_values["REWARD_NODE_AUTO_NODE_ID"] = _ask_reward_node_id(_default_reward_node_id())
     default_declared_host = (
         env_values.get("NODE_PUBLIC_HOST", "").strip()
@@ -604,6 +610,26 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
     """Apply network-specific local paths and safe endpoint defaults."""
 
     env_values["CHIPCOIN_NETWORK"] = network
+    if network == "mainnet":
+        env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-mainnet"
+        env_values["NODE_DATA_PATH"] = MAINNET_NODE_DATA_PATH
+        env_values["NODE_SNAPSHOT_FILE"] = MAINNET_NODE_SNAPSHOT_PATH
+        env_values["NODE_BOOTSTRAP_MODE"] = "full"
+        env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = ""
+        env_values["NODE_SNAPSHOT_TRUST_MODE"] = "enforce"
+        env_values["NODE_P2P_BIND_PORT"] = "8333"
+        env_values["NODE_P2P_PUBLISH_HOST"] = "127.0.0.1"
+        env_values["NODE_PUBLIC_P2P_PORT"] = "8333"
+        env_values["NODE_HTTP_BIND_PORT"] = "8080"
+        env_values["NODE_HTTP_PUBLISH_HOST"] = "127.0.0.1"
+        env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
+        env_values["NODE_BOOTSTRAP_URL"] = ""
+        env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_MAINNET_WALLET_API_ENDPOINT
+        env_values["DEFAULT_EXPLORER_URL"] = "https://explorer.chipcoinprotocol.com"
+        env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_MAINNET_WALLET_API_ENDPOINT
+        env_values["MINING_MIN_INTERVAL_SECONDS"] = "10.0"
+        env_values["MINING_NONCE_BATCH_SIZE"] = "50000"
+        return
     if network == "devnet":
         env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-devnet"
         env_values["NODE_DATA_PATH"] = NODE_DATA_PATH
@@ -642,10 +668,14 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
 
 
 def _public_node_endpoint_for_network(network: str) -> str:
+    if network == "mainnet":
+        return MAINNET_LOCAL_NODE_ENDPOINT
     return PUBLIC_DEVNET_NODE_ENDPOINT if network == "devnet" else TESTNET_LOCAL_NODE_ENDPOINT
 
 
 def _wallet_endpoint_for_network(network: str) -> str:
+    if network == "mainnet":
+        return PUBLIC_MAINNET_WALLET_API_ENDPOINT
     return PUBLIC_DEVNET_NODE_ENDPOINT if network == "devnet" else PUBLIC_TESTNET_WALLET_API_ENDPOINT
 
 
@@ -823,30 +853,43 @@ def _prepare_wallet_path(wallet_path: Path) -> None:
             _die("Setup aborted because the wallet file would be overwritten.")
 
 
-def _handle_wallet(wallet_mode: str, wallet_path: Path) -> tuple[str, str, str]:
+def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testnet") -> tuple[str, str, str]:
+    require_pq = network == "mainnet"
     if wallet_mode == "generate":
-        wallet_key = generate_wallet_key()
+        wallet_key = generate_wallet_key(scheme="mldsa44" if require_pq else "secp256k1")
     else:
-        private_key_hex = getpass.getpass("Enter private key hex: ").strip()
+        private_key_hex = getpass.getpass("Enter ML-DSA seed hex: " if require_pq else "Enter private key hex: ").strip()
         if not private_key_hex:
-            _die("Private key must not be empty.")
+            _die("Key material must not be empty.")
         try:
-            wallet_key = wallet_key_from_private_key(parse_private_key_hex(private_key_hex))
+            wallet_key = (
+                wallet_key_from_mldsa44_seed(bytes.fromhex(private_key_hex))
+                if require_pq
+                else wallet_key_from_private_key(parse_private_key_hex(private_key_hex))
+            )
         except Exception as exc:  # noqa: BLE001
-            _die(f"Invalid private key: {exc}")
+            _die(f"Invalid wallet key material: {exc}")
 
     payload = {
-        "private_key_hex": wallet_key.private_key.hex(),
+        "scheme_id": wallet_key.scheme_id,
+        "scheme_name": wallet_key.scheme_name,
+        "address_kind": wallet_key.address_kind,
         "public_key_hex": wallet_key.public_key.hex(),
         "address": wallet_key.address,
         "compressed": wallet_key.compressed,
     }
+    secret_hex = wallet_key.private_key.hex()
+    if wallet_key.private_seed is not None:
+        payload["private_seed_hex"] = wallet_key.private_seed.hex()
+        secret_hex = wallet_key.private_seed.hex()
+    else:
+        payload["private_key_hex"] = secret_hex
     wallet_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     try:
         os.chmod(wallet_path, 0o600)
     except OSError:
         pass
-    return wallet_key.address, wallet_key.private_key.hex(), wallet_key.public_key.hex()
+    return wallet_key.address, secret_hex, wallet_key.public_key.hex()
 
 
 def _prepare_sqlite_file(path: Path, label: str) -> None:

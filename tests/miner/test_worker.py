@@ -35,7 +35,7 @@ class FakeTime:
 
 def _make_service(database_path: Path) -> NodeService:
     timestamps = iter(range(1_700_000_000, 1_700_100_000))
-    return NodeService.open_sqlite(database_path, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, network="devnet", time_provider=lambda: next(timestamps))
 
 
 def _mine_block(block: Block) -> Block:

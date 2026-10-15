@@ -19,7 +19,7 @@ The following monetary policy remains fixed for this track:
 
 - max supply: 11,000,000 CHC
 - base unit: 1 CHC = 100,000,000 chipbits
-- target block time: 5 minutes
+- mainnet target block time: 10 minutes
 - initial miner subsidy: 50 CHC per block
 - initial node reward budget: 50 CHC per 100-block epoch
 - halving interval: 111,000 blocks

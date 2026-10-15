@@ -28,7 +28,7 @@ from chipcoin.consensus.epoch_settlement import (
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.nodes import InMemoryNodeRegistryView, NodeRecord
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS
 from chipcoin.consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 from chipcoin.consensus.utxo import InMemoryUtxoView, UtxoEntry
 from chipcoin.consensus.validation import (
@@ -42,6 +42,16 @@ from chipcoin.consensus.validation import (
 )
 from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import signed_payment, wallet_key
+
+
+# Most validation tests exercise shared/testnet-compatible behavior and need an
+# intentionally easy PoW target. Mainnet-only policy has dedicated tests below.
+MAINNET_PARAMS = replace(
+    PRODUCTION_MAINNET_PARAMS,
+    genesis_bits=0x207FFFFF,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
 
 
 def _expect_raises(exc_type: type[BaseException], fn) -> None:

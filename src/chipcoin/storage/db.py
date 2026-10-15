@@ -113,8 +113,10 @@ SCHEMA_STATEMENTS = (
         node_id TEXT PRIMARY KEY,
         payout_address TEXT NOT NULL,
         owner_pubkey TEXT NOT NULL UNIQUE,
+        owner_signature_scheme_id INTEGER NOT NULL DEFAULT 0,
         registered_height INTEGER NOT NULL,
-        last_renewed_height INTEGER NOT NULL
+        last_renewed_height INTEGER NOT NULL,
+        node_signature_scheme_id INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -307,6 +309,8 @@ def initialize_database(path: Path, *, config: SQLiteRuntimeConfig | None = None
         _ensure_column(connection, table="node_registry", column="declared_host", definition="TEXT")
         _ensure_column(connection, table="node_registry", column="declared_port", definition="INTEGER")
         _ensure_column(connection, table="node_registry", column="reward_registration", definition="INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(connection, table="node_registry", column="owner_signature_scheme_id", definition="INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(connection, table="node_registry", column="node_signature_scheme_id", definition="INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, table="epoch_settlements", column="submission_mode", definition="TEXT NOT NULL DEFAULT 'manual'")
     return connection
 

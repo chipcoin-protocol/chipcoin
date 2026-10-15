@@ -8,12 +8,15 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from chipcoin.consensus.models import Block
 from chipcoin.consensus.params import DEVNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
+from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.node.runtime import NodeRuntime, RewardNodeAutomationConfig
 from chipcoin.node.service import NodeService
-from chipcoin.wallet.signer import TransactionSigner
+from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed
 from tests.helpers import wallet_key
 
 
@@ -73,19 +76,68 @@ def _register_reward_node(service: NodeService, *, wallet, node_id: str, declare
 
 
 def _write_wallet_file(path: Path, wallet) -> Path:
+    private_fields = (
+        {"private_seed_hex": wallet.private_seed.hex()}
+        if wallet.private_seed is not None
+        else {"private_key_hex": wallet.private_key.hex()}
+    )
     path.write_text(
         json.dumps(
             {
                 "address": wallet.address,
+                "address_kind": wallet.address_kind,
                 "compressed": wallet.compressed,
-                "private_key_hex": wallet.private_key.hex(),
                 "public_key_hex": wallet.public_key.hex(),
+                "scheme_id": wallet.scheme_id,
+                "scheme_name": wallet.scheme_name,
+                **private_fields,
             },
             sort_keys=True,
         ),
         encoding="utf-8",
     )
     return path
+
+
+def test_reward_node_runtime_loads_separate_mldsa44_owner_and_attestation_wallets() -> None:
+    with TemporaryDirectory() as tempdir:
+        owner = wallet_key_from_mldsa44_seed(bytes(range(32)))
+        attestation = wallet_key_from_mldsa44_seed(bytes(range(32, 64)))
+        owner_path = _write_wallet_file(Path(tempdir) / "owner.json", owner)
+        attestation_path = _write_wallet_file(Path(tempdir) / "attestation.json", attestation)
+
+        runtime = NodeRuntime(
+            service=_make_reward_service(Path(tempdir) / "node.sqlite3", start_time=1_700_049_000),
+            reward_automation=RewardNodeAutomationConfig(
+                node_id="reward-node-pq",
+                owner_wallet_path=owner_path,
+                attest_wallet_path=attestation_path,
+            ),
+        )
+
+        assert runtime._reward_owner_wallet.address == owner.address
+        assert runtime._reward_owner_wallet.scheme_id == SIG_SCHEME_ML_DSA_44
+        assert runtime._reward_attest_wallet.address == attestation.address
+        assert runtime._reward_attest_wallet.scheme_id == SIG_SCHEME_ML_DSA_44
+
+
+def test_reward_node_runtime_rejects_inconsistent_mldsa44_wallet_metadata() -> None:
+    with TemporaryDirectory() as tempdir:
+        owner = wallet_key_from_mldsa44_seed(bytes(range(32)))
+        wallet_path = _write_wallet_file(Path(tempdir) / "owner.json", owner)
+        payload = json.loads(wallet_path.read_text(encoding="utf-8"))
+        payload["address"] = wallet_key_from_mldsa44_seed(bytes(range(32, 64))).address
+        wallet_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="address does not match"):
+            NodeRuntime(
+                service=_make_reward_service(Path(tempdir) / "node.sqlite3", start_time=1_700_049_000),
+                reward_automation=RewardNodeAutomationConfig(
+                    node_id="reward-node-pq",
+                    owner_wallet_path=wallet_path,
+                    attest_wallet_path=wallet_path,
+                ),
+            )
 
 
 def test_reward_node_automation_auto_renews_for_next_epoch() -> None:

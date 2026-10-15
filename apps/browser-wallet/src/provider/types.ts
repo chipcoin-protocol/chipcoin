@@ -42,7 +42,7 @@ export interface ChipcoinSignMessageParams {
 
 export interface ChipcoinSignedLoginResponse {
   address: string;
-  signature_scheme: 0;
+  signature_scheme: 0 | 10;
   public_key: string;
   signature: string;
   message: string;

@@ -11,7 +11,12 @@ from typing import Callable
 
 from ..crypto.addresses import parse_address, pq_public_key_commitment, public_key_to_address
 from ..crypto.addresses import PQ_ADDRESS_PREFIX
-from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, get_signature_scheme, is_known_signature_scheme
+from ..crypto.pq import (
+    SIG_SCHEME_LEGACY_ECDSA,
+    SIG_SCHEME_ML_DSA_44,
+    get_signature_scheme,
+    is_known_signature_scheme,
+)
 from ..crypto.pq.mldsa import MLDsaBackendUnavailable
 from ..crypto.signatures import verify_digest
 from .epoch_settlement import (
@@ -264,6 +269,10 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
         if block.header.bits != context.expected_bits:
             raise ContextualValidationError("Block bits do not match expected difficulty target.")
 
+    # Coinbase bypasses the regular transaction loop below, but its miner and
+    # reward outputs must obey the same network activation/address policy.
+    _validate_transaction_outputs_for_activation(block.transactions[0], context)
+
     staged_view = context.utxo_view.clone()
     staged_registry = context.node_registry_view.clone()
     total_fees_chipbits = 0
@@ -392,6 +401,14 @@ def _validate_transaction_outputs_for_activation(transaction: Transaction, conte
     """Reject CHCQ outputs before activation."""
 
     for output in transaction.outputs:
+        if context.params.require_pq_standard_transactions:
+            try:
+                info = parse_address(output.recipient)
+            except ValueError as exc:
+                raise ContextualValidationError("Mainnet transaction output recipient is not a valid CHCQ address.") from exc
+            if info.kind != "pq" or info.scheme_id != SIG_SCHEME_ML_DSA_44:
+                raise ContextualValidationError("Mainnet transaction outputs must use ML-DSA-44 CHCQ addresses.")
+            continue
         if not output.recipient.startswith(PQ_ADDRESS_PREFIX):
             continue
         try:
@@ -415,6 +432,14 @@ def _validate_standard_input_signature(
         address_info = parse_address(previous_output.recipient)
     except ValueError as exc:
         raise ContextualValidationError("Referenced output recipient is not a valid Chipcoin address.") from exc
+
+    if context.params.require_pq_standard_transactions:
+        if transaction.version != PQ_TRANSACTION_VERSION:
+            raise ContextualValidationError("Mainnet standard transactions must use transaction version 2.")
+        if address_info.kind != "pq" or address_info.scheme_id != SIG_SCHEME_ML_DSA_44:
+            raise ContextualValidationError("Mainnet standard transaction inputs must spend ML-DSA-44 CHCQ outputs.")
+        if tx_input.sig_scheme_id != SIG_SCHEME_ML_DSA_44:
+            raise ContextualValidationError("Mainnet standard transaction inputs must use ML-DSA-44 signatures.")
 
     if transaction.version == 1:
         if address_info.kind != "legacy":
@@ -720,6 +745,26 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
     """Validate stateful node registry rules for register and renew actions."""
 
     owner_pubkey = bytes.fromhex(transaction.metadata["owner_pubkey_hex"])
+    owner_scheme_id = int(transaction.metadata.get("owner_signature_scheme_id", "0"))
+    if context.params.reward_node_signature_scheme_id:
+        required_scheme_id = context.params.reward_node_signature_scheme_id
+        if is_legacy_register_node_transaction(transaction) or is_legacy_renew_node_transaction(transaction):
+            raise ContextualValidationError("Legacy node registry transactions are disabled on mainnet.")
+        if owner_scheme_id != required_scheme_id:
+            raise ContextualValidationError("Mainnet reward-node owner signatures must use ML-DSA-44.")
+        if transaction.metadata.get("owner_signature_version") != "v2":
+            raise ContextualValidationError("Mainnet reward-node owner signatures must use the network-bound v2 format.")
+        if is_register_node_transaction(transaction):
+            try:
+                payout = parse_address(transaction.metadata["payout_address"])
+            except ValueError as exc:
+                raise ContextualValidationError("Mainnet reward-node payout address is invalid.") from exc
+            if payout.kind != "pq" or payout.scheme_id != required_scheme_id:
+                raise ContextualValidationError("Mainnet reward-node payouts must use ML-DSA-44 CHCQ addresses.")
+        if is_register_reward_node_transaction(transaction):
+            node_scheme_id = int(transaction.metadata.get("node_signature_scheme_id", "0"))
+            if node_scheme_id != required_scheme_id:
+                raise ContextualValidationError("Mainnet reward-node attestations must use ML-DSA-44.")
     if not special_node_transaction_signature_is_valid(transaction, network=context.network, height=context.height):
         raise ContextualValidationError("Special node transaction owner signature is invalid for this network.")
     fee_registry_count = (
@@ -773,6 +818,8 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
             raise ContextualValidationError("renew_reward_node transaction references an unknown node_id.")
         if record.owner_pubkey != owner_pubkey:
             raise ContextualValidationError("renew_reward_node transaction owner_pubkey does not match the registered node owner.")
+        if record.owner_signature_scheme_id != owner_scheme_id:
+            raise ContextualValidationError("renew_reward_node transaction signature scheme does not match the registered node owner.")
         if transaction.metadata.get("renewal_epoch") != str(context.height // context.params.epoch_length_blocks):
             raise ContextualValidationError("renew_reward_node transaction renewal_epoch does not match the block epoch.")
         expected_fee = renew_reward_node_fee_chipbits(
@@ -892,7 +939,19 @@ def _validate_reward_attestation_bundle_transaction_with_params(transaction: Tra
             signature = bytes.fromhex(attestation.signature_hex)
         except ValueError as exc:
             raise ContextualValidationError("reward_attestation_bundle signature_hex is invalid.") from exc
-        if not verify_digest(verifier.node_pubkey, reward_attestation_signature_digest(attestation), signature):
+        scheme_id = verifier.node_signature_scheme_id
+        if context.params.reward_node_signature_scheme_id and scheme_id != context.params.reward_node_signature_scheme_id:
+            raise ContextualValidationError("reward_attestation_bundle verifier does not use the required signature scheme.")
+        if scheme_id == SIG_SCHEME_LEGACY_ECDSA:
+            signature_valid = verify_digest(verifier.node_pubkey, reward_attestation_signature_digest(attestation), signature)
+        else:
+            scheme = get_signature_scheme(scheme_id)
+            signature_valid = (
+                scheme.signature_size is not None
+                and len(signature) == scheme.signature_size
+                and scheme.verify(verifier.node_pubkey, reward_attestation_signature_digest(attestation), signature)
+            )
+        if not signature_valid:
             raise ContextualValidationError("reward_attestation_bundle attestation signature is invalid.")
 
 

@@ -294,7 +294,8 @@ chipcoin --network testnet --data /runtime/node.sqlite3 snapshot-export --snapsh
 Signing works for both `v1` and `v2` snapshots:
 
 ```bash
-chipcoin snapshot-sign --snapshot-file /runtime/testnet.snapshot --private-key-hex <ED25519_PRIVATE_KEY_HEX>
+chmod 600 /secure/snapshot-signing.key
+chipcoin snapshot-sign --snapshot-file /runtime/testnet.snapshot --private-key-file /secure/snapshot-signing.key
 ```
 
 Signed snapshot import in strict mode:

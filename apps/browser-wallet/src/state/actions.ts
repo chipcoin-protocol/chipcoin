@@ -80,8 +80,8 @@ export type ProviderApprovalSummary =
     origin: string;
     domain: string;
     address: string;
-    network: "testnet";
-    scheme: 0;
+    network: "mainnet" | "testnet";
+    scheme: 0 | 10;
     issued_at: string;
     expires_at: string;
     statement: string;

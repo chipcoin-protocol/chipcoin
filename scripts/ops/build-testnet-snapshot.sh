@@ -10,7 +10,6 @@ SNAPSHOT_PUBLIC_BASE_URL="${SNAPSHOT_PUBLIC_BASE_URL:-https://chipcoinprotocol.c
 SNAPSHOT_SOURCE_NODE="${SNAPSHOT_SOURCE_NODE:-$(hostname -f 2>/dev/null || hostname)}"
 SNAPSHOT_REQUIRE_SYNCED="${SNAPSHOT_REQUIRE_SYNCED:-true}"
 SNAPSHOT_SIGNING_KEY_FILE="${SNAPSHOT_SIGNING_KEY_FILE:-}"
-SNAPSHOT_SIGNING_PRIVATE_KEY_HEX="${SNAPSHOT_SIGNING_PRIVATE_KEY_HEX:-}"
 SNAPSHOT_TRUST_MODE="${SNAPSHOT_TRUST_MODE:-}"
 
 die() {
@@ -70,18 +69,14 @@ metadata_path="$(mktemp)"
   > "$metadata_path"
 
 signer_pubkey=""
-if [[ -n "$SNAPSHOT_SIGNING_PRIVATE_KEY_HEX" || -n "$SNAPSHOT_SIGNING_KEY_FILE" ]]; then
-  if [[ -n "$SNAPSHOT_SIGNING_PRIVATE_KEY_HEX" && -n "$SNAPSHOT_SIGNING_KEY_FILE" ]]; then
-    die "Set only one of SNAPSHOT_SIGNING_PRIVATE_KEY_HEX or SNAPSHOT_SIGNING_KEY_FILE."
-  fi
-  if [[ -n "$SNAPSHOT_SIGNING_KEY_FILE" ]]; then
-    [[ -f "$SNAPSHOT_SIGNING_KEY_FILE" ]] || die "Signing key file not found: $SNAPSHOT_SIGNING_KEY_FILE"
-    SNAPSHOT_SIGNING_PRIVATE_KEY_HEX="$(tr -d '\n\r ' < "$SNAPSHOT_SIGNING_KEY_FILE")"
-  fi
-  [[ -n "$SNAPSHOT_SIGNING_PRIVATE_KEY_HEX" ]] || die "Snapshot signing private key is empty."
+if [[ -n "${SNAPSHOT_SIGNING_PRIVATE_KEY_HEX:-}" ]]; then
+  die "SNAPSHOT_SIGNING_PRIVATE_KEY_HEX is not supported; use SNAPSHOT_SIGNING_KEY_FILE."
+fi
+if [[ -n "$SNAPSHOT_SIGNING_KEY_FILE" ]]; then
+  [[ -f "$SNAPSHOT_SIGNING_KEY_FILE" ]] || die "Signing key file not found: $SNAPSHOT_SIGNING_KEY_FILE"
   sign_json="$("$CHIPCOIN_BIN" snapshot-sign \
     --snapshot-file "$snapshot_path" \
-    --private-key-hex "$SNAPSHOT_SIGNING_PRIVATE_KEY_HEX")"
+    --private-key-file "$SNAPSHOT_SIGNING_KEY_FILE")"
   signer_pubkey="$(
     SIGN_JSON="$sign_json" python3 - <<'PY'
 import json

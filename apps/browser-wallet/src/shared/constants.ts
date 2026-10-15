@@ -1,4 +1,4 @@
-export type SupportedNetworkId = "devnet" | "testnet";
+export type SupportedNetworkId = "mainnet" | "devnet" | "testnet";
 
 export interface SupportedNetworkConfig {
   id: SupportedNetworkId;
@@ -22,6 +22,16 @@ export const DEFAULT_NETWORK: SupportedNetworkId = "testnet";
 export const TESTNET_PQ_ACTIVATION_HEIGHT = 20_000;
 export const ENABLE_EXPERIMENTAL_BROWSER_MLDSA = true;
 export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
+  {
+    id: "mainnet",
+    label: "Mainnet",
+    defaultEndpointLabel: "Public Mainnet API",
+    defaultNodeApiBaseUrl: "https://mainnet-api.chipcoinprotocol.com",
+    localNodeApiBaseUrl: "http://127.0.0.1:28081",
+    description: "Production network. ML-DSA-44 wallets and CHCQ addresses are required from genesis.",
+    statusLabel: "production mainnet",
+    httpSafetyNote: "Use the wallet-safe public mainnet API or a trusted local node. Verify the connected network before signing.",
+  },
   {
     id: "devnet",
     label: "Devnet",

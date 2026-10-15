@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from chipcoin.consensus.economics import register_reward_node_fee_chipbits, subsidy_split_chipbits
 from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.nodes import NodeRecord
-from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS, TESTNET_PARAMS
+from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import serialize_transaction
@@ -29,9 +29,17 @@ from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import put_wallet_utxo, signed_payment, wallet_key
 
 
+MAINNET_PARAMS = replace(
+    PRODUCTION_MAINNET_PARAMS,
+    genesis_bits=0x207FFFFF,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
+
+
 def _make_service(database_path: Path) -> NodeService:
     timestamps = iter(range(1_700_000_000, 1_700_000_200))
-    return NodeService.open_sqlite(database_path, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS, time_provider=lambda: next(timestamps))
 
 
 def _mine_block(block: Block) -> Block:
@@ -534,20 +542,20 @@ def test_cli_snapshot_export_and_import() -> None:
         source_db = Path(tempdir) / "source.sqlite3"
         target_db = Path(tempdir) / "target.sqlite3"
         snapshot_path = Path(tempdir) / "chain.snapshot.json"
-        source = _make_service(source_db)
+        source = NodeService.open_sqlite(source_db, network="devnet")
         mined = _mine_block(source.build_candidate_block("CHCminer").block)
         source.apply_block(mined)
 
         export_code, export_payload = _run_cli(
-            ["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
+            ["--network", "devnet", "--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
         )
         import_code, import_stdout, import_stderr = _run_cli_with_stderr(
-            ["--data", str(target_db), "snapshot-import", "--snapshot-file", str(snapshot_path)]
+            ["--network", "devnet", "--data", str(target_db), "snapshot-import", "--snapshot-file", str(snapshot_path)]
         )
         import_payload = json.loads(import_stdout)
         warning_payload = json.loads(import_stderr)
 
-        imported_service = _make_service(target_db)
+        imported_service = NodeService.open_sqlite(target_db, network="devnet")
         assert export_code == 0
         assert import_code == 0
         assert export_payload["snapshot_block_hash"] == mined.block_hash()
@@ -563,27 +571,30 @@ def test_cli_snapshot_sign_and_enforce_import() -> None:
         source_db = Path(tempdir) / "source.sqlite3"
         target_db = Path(tempdir) / "target.sqlite3"
         snapshot_path = Path(tempdir) / "chain.snapshot.json"
-        source = _make_service(source_db)
+        source = NodeService.open_sqlite(source_db, network="devnet")
         mined = _mine_block(source.build_candidate_block("CHCminer").block)
         source.apply_block(mined)
         private_key_hex, public_key_hex = _ed25519_private_key_hex()
+        private_key_path = Path(tempdir) / "snapshot-signing.key"
+        private_key_path.write_text(private_key_hex + "\n", encoding="ascii")
+        private_key_path.chmod(0o600)
 
         export_code, export_payload = _run_cli(
-            ["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
+            ["--network", "devnet", "--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
         )
         sign_code, sign_payload = _run_cli(
             [
                 "snapshot-sign",
                 "--snapshot-file",
                 str(snapshot_path),
-                "--private-key-hex",
-                private_key_hex,
+                "--private-key-file",
+                str(private_key_path),
             ]
         )
         import_code, import_payload = _run_cli(
             [
                 "--network",
-                "mainnet",
+                "devnet",
                 "--data",
                 str(target_db),
                 "snapshot-import",
@@ -596,7 +607,7 @@ def test_cli_snapshot_sign_and_enforce_import() -> None:
             ]
         )
 
-        imported_service = _make_service(target_db)
+        imported_service = NodeService.open_sqlite(target_db, network="devnet")
         assert export_code == 0
         assert export_payload["snapshot_block_hash"] == mined.block_hash()
         assert sign_code == 0
@@ -608,20 +619,71 @@ def test_cli_snapshot_sign_and_enforce_import() -> None:
         assert imported_service.chain_tip().block_hash == mined.block_hash()
 
 
+@pytest.mark.parametrize("mode", [0o604, 0o640, 0o644])
+def test_cli_snapshot_sign_rejects_key_file_accessible_by_group_or_others(mode: int) -> None:
+    with TemporaryDirectory() as tempdir:
+        source_db = Path(tempdir) / "source.sqlite3"
+        snapshot_path = Path(tempdir) / "chain.snapshot"
+        private_key_path = Path(tempdir) / "snapshot-signing.key"
+        source = NodeService.open_sqlite(source_db, network="devnet")
+        source.apply_block(_mine_block(source.build_candidate_block("CHCminer").block))
+        private_key_hex, _ = _ed25519_private_key_hex()
+        private_key_path.write_text(private_key_hex + "\n", encoding="ascii")
+        private_key_path.chmod(mode)
+        _run_cli(
+            ["--network", "devnet", "--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
+        )
+
+        code, stdout, stderr = _run_cli_with_stderr(
+            ["snapshot-sign", "--snapshot-file", str(snapshot_path), "--private-key-file", str(private_key_path)]
+        )
+
+        assert code == 1
+        assert stdout == ""
+        assert json.loads(stderr) == {"error": "Snapshot signing key file must not be accessible by group or other users."}
+
+
+def test_cli_snapshot_sign_rejects_symlink_key_file() -> None:
+    with TemporaryDirectory() as tempdir:
+        source_db = Path(tempdir) / "source.sqlite3"
+        snapshot_path = Path(tempdir) / "chain.snapshot"
+        private_key_path = Path(tempdir) / "snapshot-signing.key"
+        symlink_path = Path(tempdir) / "snapshot-signing-link.key"
+        source = NodeService.open_sqlite(source_db, network="devnet")
+        source.apply_block(_mine_block(source.build_candidate_block("CHCminer").block))
+        private_key_hex, _ = _ed25519_private_key_hex()
+        private_key_path.write_text(private_key_hex + "\n", encoding="ascii")
+        private_key_path.chmod(0o600)
+        symlink_path.symlink_to(private_key_path)
+        _run_cli(
+            ["--network", "devnet", "--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)]
+        )
+
+        code, stdout, stderr = _run_cli_with_stderr(
+            ["snapshot-sign", "--snapshot-file", str(snapshot_path), "--private-key-file", str(symlink_path)]
+        )
+
+        assert code == 1
+        assert stdout == ""
+        assert json.loads(stderr) == {"error": "Snapshot signing key file could not be opened securely."}
+
+
 def test_cli_snapshot_import_warn_mode_emits_warning_for_unsigned_snapshot() -> None:
     with TemporaryDirectory() as tempdir:
         source_db = Path(tempdir) / "source.sqlite3"
         target_db = Path(tempdir) / "target.sqlite3"
         snapshot_path = Path(tempdir) / "chain.snapshot.json"
-        source = _make_service(source_db)
+        source = NodeService.open_sqlite(source_db, network="devnet")
         mined = _mine_block(source.build_candidate_block("CHCminer").block)
         source.apply_block(mined)
 
-        export_code, _ = _run_cli(["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)])
+        export_code, _ = _run_cli(["--network", "devnet", "--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)])
         import_code, stdout, stderr = _run_cli_with_stderr(
             [
                 "--data",
                 str(target_db),
+                "--network",
+                "devnet",
                 "snapshot-import",
                 "--snapshot-file",
                 str(snapshot_path),
@@ -644,19 +706,22 @@ def test_cli_snapshot_import_reads_trusted_keys_file() -> None:
         target_db = Path(tempdir) / "target.sqlite3"
         snapshot_path = Path(tempdir) / "chain.snapshot.json"
         keys_path = Path(tempdir) / "trusted-keys.json"
-        source = _make_service(source_db)
+        source = NodeService.open_sqlite(source_db, network="devnet")
         mined = _mine_block(source.build_candidate_block("CHCminer").block)
         source.apply_block(mined)
         private_key_hex, public_key_hex = _ed25519_private_key_hex()
+        private_key_path = Path(tempdir) / "snapshot-signing.key"
+        private_key_path.write_text(private_key_hex + "\n", encoding="ascii")
+        private_key_path.chmod(0o600)
 
-        _run_cli(["--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)])
+        _run_cli(["--network", "devnet", "--data", str(source_db), "snapshot-export", "--snapshot-file", str(snapshot_path)])
         _run_cli(
             [
                 "snapshot-sign",
                 "--snapshot-file",
                 str(snapshot_path),
-                "--private-key-hex",
-                private_key_hex,
+                "--private-key-file",
+                str(private_key_path),
             ]
         )
         keys_path.write_text(json.dumps({"trusted_keys": [public_key_hex]}), encoding="utf-8")
@@ -665,6 +730,8 @@ def test_cli_snapshot_import_reads_trusted_keys_file() -> None:
             [
                 "--data",
                 str(target_db),
+                "--network",
+                "devnet",
                 "snapshot-import",
                 "--snapshot-file",
                 str(snapshot_path),
@@ -2516,14 +2583,16 @@ def test_cli_wallet_shortcuts_match_utxos_and_balance() -> None:
 
 def test_cli_register_node_and_renew_node_flow() -> None:
     with TemporaryDirectory() as tempdir:
-        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        db_path = Path(tempdir) / "legacy-node-devnet.sqlite3"
         wallet_path = Path(tempdir) / "wallet.json"
-        service = _make_service(db_path)
+        service = NodeService.open_sqlite(db_path, network="devnet")
         owner = wallet_key(0)
         cli_module._save_wallet_key(wallet_path, owner)
 
         register_code, register_payload = _run_cli(
             [
+                "--network",
+                "devnet",
                 "--data",
                 str(db_path),
                 "register-node",
@@ -2535,8 +2604,8 @@ def test_cli_register_node_and_renew_node_flow() -> None:
                 owner.address,
             ]
         )
-        registry_before_code, registry_before_payload = _run_cli(["--data", str(db_path), "node-registry"])
-        winners_before_code, winners_before_payload = _run_cli(["--data", str(db_path), "next-winners"])
+        registry_before_code, registry_before_payload = _run_cli(["--network", "devnet", "--data", str(db_path), "node-registry"])
+        winners_before_code, winners_before_payload = _run_cli(["--network", "devnet", "--data", str(db_path), "next-winners"])
 
         assert register_code == 0
         assert register_payload["node_id"] == "node-a"
@@ -2549,10 +2618,12 @@ def test_cli_register_node_and_renew_node_flow() -> None:
 
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
 
-        registry_after_code, registry_after_payload = _run_cli(["--data", str(db_path), "node-registry"])
-        winners_after_code, winners_after_payload = _run_cli(["--data", str(db_path), "next-winners"])
+        registry_after_code, registry_after_payload = _run_cli(["--network", "devnet", "--data", str(db_path), "node-registry"])
+        winners_after_code, winners_after_payload = _run_cli(["--network", "devnet", "--data", str(db_path), "next-winners"])
         renew_code, renew_payload = _run_cli(
             [
+                "--network",
+                "devnet",
                 "--data",
                 str(db_path),
                 "renew-node",
@@ -2577,15 +2648,17 @@ def test_cli_register_node_and_renew_node_flow() -> None:
 
 def test_cli_register_node_rejects_duplicate_node_id() -> None:
     with TemporaryDirectory() as tempdir:
-        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        db_path = Path(tempdir) / "legacy-node-devnet.sqlite3"
         wallet_a_path = Path(tempdir) / "wallet-a.json"
         wallet_b_path = Path(tempdir) / "wallet-b.json"
-        service = _make_service(db_path)
+        service = NodeService.open_sqlite(db_path, network="devnet")
         cli_module._save_wallet_key(wallet_a_path, wallet_key(0))
         cli_module._save_wallet_key(wallet_b_path, wallet_key(1))
 
         first_code, _first_payload = _run_cli(
             [
+                "--network",
+                "devnet",
                 "--data",
                 str(db_path),
                 "register-node",
@@ -2600,6 +2673,8 @@ def test_cli_register_node_rejects_duplicate_node_id() -> None:
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
         second_code, _stdout, second_stderr = _run_cli_with_stderr(
             [
+                "--network",
+                "devnet",
                 "--data",
                 str(db_path),
                 "register-node",
@@ -2619,15 +2694,17 @@ def test_cli_register_node_rejects_duplicate_node_id() -> None:
 
 def test_cli_renew_node_rejects_wrong_owner() -> None:
     with TemporaryDirectory() as tempdir:
-        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        db_path = Path(tempdir) / "legacy-node-devnet.sqlite3"
         owner_path = Path(tempdir) / "owner.json"
         other_path = Path(tempdir) / "other.json"
-        service = _make_service(db_path)
+        service = NodeService.open_sqlite(db_path, network="devnet")
         cli_module._save_wallet_key(owner_path, wallet_key(0))
         cli_module._save_wallet_key(other_path, wallet_key(1))
 
         register_code, _register_payload = _run_cli(
             [
+                "--network",
+                "devnet",
                 "--data",
                 str(db_path),
                 "register-node",
@@ -2642,6 +2719,8 @@ def test_cli_renew_node_rejects_wrong_owner() -> None:
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
         renew_code, _stdout, renew_stderr = _run_cli_with_stderr(
             [
+                "--network",
+                "devnet",
                 "--data",
                 str(db_path),
                 "renew-node",
@@ -2740,18 +2819,20 @@ def test_cli_returns_readable_error_for_invalid_raw_tx() -> None:
 
 def test_cli_wallet_generate_address_build_and_send_local() -> None:
     with TemporaryDirectory() as tempdir:
-        db_path = Path(tempdir) / "chipcoin.sqlite3"
+        db_path = Path(tempdir) / "wallet-test.sqlite3"
         generated_wallet_path = Path(tempdir) / "generated-wallet.json"
         imported_wallet_path = Path(tempdir) / "imported-wallet.json"
-        service = _make_service(db_path)
+        service = NodeService.open_sqlite(db_path, network="devnet")
         owner = wallet_key(0)
 
         generate_code, generate_stdout, generate_stderr = _run_cli_with_stderr(
-            ["wallet-generate", "--wallet-file", str(generated_wallet_path)]
+            ["--network", "devnet", "wallet-generate", "--wallet-file", str(generated_wallet_path)]
         )
         generate_payload = json.loads(generate_stdout)
         import_code, import_stdout, import_stderr = _run_cli_with_stderr(
             [
+                "--network",
+                "devnet",
                 "wallet-import",
                 "--wallet-file",
                 str(imported_wallet_path),
@@ -2762,12 +2843,15 @@ def test_cli_wallet_generate_address_build_and_send_local() -> None:
         import_payload = json.loads(import_stdout)
         funding_outpoint = OutPoint(txid="22" * 32, index=0)
         put_wallet_utxo(service, funding_outpoint, value=125, owner=owner)
+        service.connection.commit()
 
-        address_code, address_payload = _run_cli(["wallet-address", "--wallet-file", str(imported_wallet_path)])
+        address_code, address_payload = _run_cli(["--network", "devnet", "wallet-address", "--wallet-file", str(imported_wallet_path)])
         build_code, build_payload = _run_cli(
             [
                 "--data",
                 str(db_path),
+                "--network",
+                "devnet",
                 "wallet-build",
                 "--wallet-file",
                 str(imported_wallet_path),
@@ -2783,6 +2867,8 @@ def test_cli_wallet_generate_address_build_and_send_local() -> None:
             [
                 "--data",
                 str(db_path),
+                "--network",
+                "devnet",
                 "wallet-send",
                 "--wallet-file",
                 str(imported_wallet_path),

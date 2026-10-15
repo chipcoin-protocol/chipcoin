@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import secrets
+import stat
 import sys
 import time
 from dataclasses import replace
@@ -586,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "snapshot-sign":
             payload = read_snapshot_payload(Path(args.snapshot_file))
-            private_key = parse_ed25519_private_key_hex(args.private_key_hex)
+            private_key = _load_snapshot_signing_private_key(Path(args.private_key_file))
             signed_payload = sign_snapshot_payload(payload, private_key=private_key)
             write_snapshot_file(Path(args.snapshot_file), signed_payload)
             signatures = signed_payload["metadata"].get("signatures", [])
@@ -600,13 +601,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "wallet-generate":
-            if args.scheme == "mldsa44":
+            scheme = args.scheme or ("mldsa44" if args.network == "mainnet" else "secp256k1")
+            if scheme == "mldsa44" and args.network != "mainnet":
                 _print_warning(
                     "Experimental testnet CHCQ wallet. Protect the signing device and backups carefully; "
                     "deterministic ML-DSA signing is not a substitute for hardware-isolated key storage. "
                     "Testnet coins have no monetary value."
                 )
-            wallet_key = generate_wallet_key(scheme=args.scheme)
+            wallet_key = generate_wallet_key(scheme=scheme)
             _save_wallet_key(Path(args.wallet_file), wallet_key)
             _warn_wallet_private_key_output("wallet-generate")
             _print_json(_format_wallet_private_key(wallet_key))
@@ -845,6 +847,36 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
+def _load_snapshot_signing_private_key(path: Path) -> bytes:
+    """Read a snapshot signing key without accepting secret material in argv."""
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("Snapshot signing key file could not be opened securely.") from exc
+    try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("Snapshot signing key input must be a regular file.")
+        if file_stat.st_uid != os.geteuid():
+            raise ValueError("Snapshot signing key file must be owned by the current user.")
+        if file_stat.st_mode & 0o077:
+            raise ValueError("Snapshot signing key file must not be accessible by group or other users.")
+        if not file_stat.st_mode & stat.S_IRUSR:
+            raise ValueError("Snapshot signing key file must be readable by its owner.")
+        encoded = os.read(descriptor, 4097)
+        if len(encoded) > 4096:
+            raise ValueError("Snapshot signing key file is unexpectedly large.")
+    finally:
+        os.close(descriptor)
+    try:
+        value = encoded.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise ValueError("Snapshot signing key file must contain ASCII hex.") from exc
+    return parse_ed25519_private_key_hex(value)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser."""
 
@@ -1070,11 +1102,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     snapshot_sign_parser = subparsers.add_parser("snapshot-sign")
     snapshot_sign_parser.add_argument("--snapshot-file", required=True)
-    snapshot_sign_parser.add_argument("--private-key-hex", required=True, help="Raw 32-byte Ed25519 private key hex.")
+    snapshot_sign_parser.add_argument(
+        "--private-key-file",
+        required=True,
+        help="Protected file containing one raw 32-byte Ed25519 private key in hex.",
+    )
 
     wallet_generate = subparsers.add_parser("wallet-generate")
     wallet_generate.add_argument("--wallet-file", required=True)
-    wallet_generate.add_argument("--scheme", choices=("secp256k1", "mldsa44"), default="secp256k1")
+    wallet_generate.add_argument("--scheme", choices=("secp256k1", "mldsa44"), default=None)
 
     wallet_import = subparsers.add_parser("wallet-import")
     wallet_import.add_argument("--wallet-file", required=True)

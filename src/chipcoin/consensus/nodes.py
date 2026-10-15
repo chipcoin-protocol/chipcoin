@@ -7,6 +7,7 @@ from typing import Iterable
 
 from ..crypto.addresses import is_valid_address
 from ..crypto.keys import parse_public_key_hex
+from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, get_signature_scheme
 from ..crypto.signatures import verify_digest
 from .epoch_settlement import REGISTER_REWARD_NODE_KIND, RENEW_REWARD_NODE_KIND
 from .hashes import double_sha256
@@ -35,6 +36,8 @@ class NodeRecord:
     declared_host: str | None = None
     declared_port: int | None = None
     reward_registration: bool = False
+    owner_signature_scheme_id: int = SIG_SCHEME_LEGACY_ECDSA
+    node_signature_scheme_id: int = SIG_SCHEME_LEGACY_ECDSA
 
 
 @dataclass(frozen=True)
@@ -281,7 +284,8 @@ def apply_special_node_transaction(
     """Apply a validated node special transaction to registry state."""
 
     if is_legacy_register_node_transaction(transaction):
-        owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+        owner_scheme_id = _metadata_scheme_id(transaction, "owner_signature_scheme_id")
+        owner_pubkey = _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], owner_scheme_id)
         registry_view.upsert(
             NodeRecord(
                 node_id=transaction.metadata["node_id"],
@@ -289,12 +293,15 @@ def apply_special_node_transaction(
                 owner_pubkey=owner_pubkey,
                 registered_height=height,
                 last_renewed_height=height,
+                owner_signature_scheme_id=owner_scheme_id,
             )
         )
         return
 
     if is_register_reward_node_transaction(transaction):
-        owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+        owner_scheme_id = _metadata_scheme_id(transaction, "owner_signature_scheme_id")
+        node_scheme_id = _metadata_scheme_id(transaction, "node_signature_scheme_id")
+        owner_pubkey = _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], owner_scheme_id)
         existing = registry_view.get_by_node_id(transaction.metadata["node_id"])
         registered_height = height if existing is None else existing.registered_height
         registry_view.upsert(
@@ -304,10 +311,12 @@ def apply_special_node_transaction(
                 owner_pubkey=owner_pubkey,
                 registered_height=registered_height,
                 last_renewed_height=height,
-                node_pubkey=parse_public_key_hex(transaction.metadata["node_pubkey_hex"]),
+                node_pubkey=_parse_scheme_public_key(transaction.metadata["node_pubkey_hex"], node_scheme_id),
                 declared_host=transaction.metadata["declared_host"],
                 declared_port=int(transaction.metadata["declared_port"]),
                 reward_registration=True,
+                owner_signature_scheme_id=owner_scheme_id,
+                node_signature_scheme_id=node_scheme_id,
             )
         )
         return
@@ -323,6 +332,8 @@ def apply_special_node_transaction(
                 owner_pubkey=record.owner_pubkey,
                 registered_height=record.registered_height,
                 last_renewed_height=height,
+                owner_signature_scheme_id=record.owner_signature_scheme_id,
+                node_signature_scheme_id=record.node_signature_scheme_id,
             )
         )
         return
@@ -342,6 +353,8 @@ def apply_special_node_transaction(
                 declared_host=transaction.metadata["declared_host"],
                 declared_port=int(transaction.metadata["declared_port"]),
                 reward_registration=record.reward_registration,
+                owner_signature_scheme_id=record.owner_signature_scheme_id,
+                node_signature_scheme_id=record.node_signature_scheme_id,
             )
         )
         return
@@ -385,7 +398,8 @@ def special_node_transaction_signature_is_valid(transaction: Transaction, *, net
     activation height, then require v2. mainnet requires v2 from genesis.
     """
 
-    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    owner_scheme_id = _metadata_scheme_id(transaction, "owner_signature_scheme_id")
+    owner_pubkey = _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], owner_scheme_id)
     owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
     required_version = special_node_signature_version_for_height(network=network, height=height)
     version = transaction.metadata.get("owner_signature_version", "")
@@ -395,32 +409,50 @@ def special_node_transaction_signature_is_valid(transaction: Transaction, *, net
         signature_network = transaction.metadata.get("owner_signature_network", "")
         if signature_network != network:
             return False
-        return verify_digest(
-            owner_pubkey,
-            special_node_transaction_signature_digest_v2(transaction, network=network),
-            owner_signature,
-        )
-    return verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature)
+        return _verify_scheme_signature(owner_scheme_id, owner_pubkey, special_node_transaction_signature_digest_v2(transaction, network=network), owner_signature)
+    return _verify_scheme_signature(owner_scheme_id, owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature)
 
 
 def special_node_transaction_signature_is_valid_stateless(transaction: Transaction) -> bool:
     """Return whether the owner signature is internally valid without active-network context."""
 
-    owner_pubkey = parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    owner_scheme_id = _metadata_scheme_id(transaction, "owner_signature_scheme_id")
+    owner_pubkey = _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], owner_scheme_id)
     owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
     version = transaction.metadata.get("owner_signature_version", "")
     if version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
         signature_network = transaction.metadata.get("owner_signature_network", "")
         if not signature_network:
             return False
-        return verify_digest(
-            owner_pubkey,
-            special_node_transaction_signature_digest_v2(transaction, network=signature_network),
-            owner_signature,
-        )
+        return _verify_scheme_signature(owner_scheme_id, owner_pubkey, special_node_transaction_signature_digest_v2(transaction, network=signature_network), owner_signature)
     if version:
         return False
-    return verify_digest(owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature)
+    return _verify_scheme_signature(owner_scheme_id, owner_pubkey, special_node_transaction_signature_digest(transaction), owner_signature)
+
+
+def _metadata_scheme_id(transaction: Transaction, key: str) -> int:
+    return int(transaction.metadata.get(key, str(SIG_SCHEME_LEGACY_ECDSA)))
+
+
+def _parse_scheme_public_key(value: str, scheme_id: int) -> bytes:
+    if scheme_id == SIG_SCHEME_LEGACY_ECDSA:
+        return parse_public_key_hex(value)
+    public_key = bytes.fromhex(value)
+    scheme = get_signature_scheme(scheme_id)
+    if not scheme.activated or not scheme.supports_verify:
+        raise ValueError("Signature scheme is not active for verification.")
+    if scheme.public_key_size is None or len(public_key) != scheme.public_key_size:
+        raise ValueError("Public key length does not match its signature scheme.")
+    return public_key
+
+
+def _verify_scheme_signature(scheme_id: int, public_key: bytes, digest: bytes, signature: bytes) -> bool:
+    if scheme_id == SIG_SCHEME_LEGACY_ECDSA:
+        return verify_digest(public_key, digest, signature)
+    scheme = get_signature_scheme(scheme_id)
+    if scheme.signature_size is None or len(signature) != scheme.signature_size:
+        return False
+    return scheme.verify(public_key, digest, signature)
 
 
 def _special_node_transaction_signature_payload_v1(transaction: Transaction) -> str:
@@ -484,7 +516,7 @@ def _validate_register_node_transaction(transaction: Transaction) -> None:
         raise ValueError("register_node transactions must declare a node_id.")
     if not payout_address or not is_valid_address(payout_address):
         raise ValueError("register_node transactions must declare a valid payout_address.")
-    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], _metadata_scheme_id(transaction, "owner_signature_scheme_id"))
     if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("register_node transaction owner signature is invalid.")
 
@@ -497,7 +529,7 @@ def _validate_renew_node_transaction(transaction: Transaction) -> None:
         raise ValueError("renew_node transactions must declare a node_id.")
     if not renewal_epoch:
         raise ValueError("renew_node transactions must declare renewal_epoch.")
-    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], _metadata_scheme_id(transaction, "owner_signature_scheme_id"))
     if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("renew_node transaction owner signature is invalid.")
 
@@ -516,11 +548,11 @@ def _validate_register_reward_node_transaction(transaction: Transaction) -> None
         raise ValueError("register_reward_node transactions must declare a valid payout_address.")
     if not node_pubkey_hex:
         raise ValueError("register_reward_node transactions must declare node_pubkey_hex.")
-    parse_public_key_hex(node_pubkey_hex)
+    _parse_scheme_public_key(node_pubkey_hex, _metadata_scheme_id(transaction, "node_signature_scheme_id"))
     _validate_declared_endpoint(declared_host, declared_port, kind=REGISTER_REWARD_NODE_KIND)
     if not registration_fee_chipbits or int(registration_fee_chipbits) < 0:
         raise ValueError("register_reward_node transactions must declare a non-negative registration_fee_chipbits.")
-    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], _metadata_scheme_id(transaction, "owner_signature_scheme_id"))
     if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("register_reward_node transaction owner signature is invalid.")
 
@@ -539,7 +571,7 @@ def _validate_renew_reward_node_transaction(transaction: Transaction) -> None:
     _validate_declared_endpoint(declared_host, declared_port, kind=RENEW_REWARD_NODE_KIND)
     if not renewal_fee_chipbits or int(renewal_fee_chipbits) < 0:
         raise ValueError("renew_reward_node transactions must declare a non-negative renewal_fee_chipbits.")
-    parse_public_key_hex(transaction.metadata["owner_pubkey_hex"])
+    _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], _metadata_scheme_id(transaction, "owner_signature_scheme_id"))
     if not special_node_transaction_signature_is_valid_stateless(transaction):
         raise ValueError("renew_reward_node transaction owner signature is invalid.")
 

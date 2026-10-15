@@ -12,7 +12,7 @@ from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.config import TESTNET_CONFIG
-from chipcoin.consensus.params import MAINNET_PARAMS, TESTNET_PARAMS
+from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_block, serialize_transaction
@@ -24,9 +24,17 @@ from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_se
 from ..helpers import put_wallet_utxo, signed_payment, wallet_key
 
 
+MAINNET_PARAMS = replace(
+    PRODUCTION_MAINNET_PARAMS,
+    genesis_bits=0x207FFFFF,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
+
+
 def _make_service(database_path: Path) -> NodeService:
     timestamps = iter(range(1_700_000_000, 1_700_000_400))
-    return NodeService.open_sqlite(database_path, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS, time_provider=lambda: next(timestamps))
 
 
 def _mine_block(block: Block) -> Block:

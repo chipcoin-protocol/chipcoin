@@ -1,0 +1,180 @@
+x-node: &node
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  entrypoint: ["/usr/local/bin/chipcoin-entrypoint", "node"]
+  environment: &node-environment
+    CHIPCOIN_NETWORK: mainnet
+    CHIPCOIN_RUNTIME_DIR: /runtime/mainnet
+    NODE_DATA_PATH: /runtime/mainnet/node.sqlite3
+    NODE_LOG_LEVEL: INFO
+    NODE_P2P_BIND_PORT: "8333"
+    NODE_HTTP_BIND_PORT: "8080"
+    NODE_BOOTSTRAP_MODE: full
+    NODE_BOOTSTRAP_MANIFEST_URLS: ""
+    NODE_BOOTSTRAP_URL: ""
+    BOOTSTRAP_URL: ""
+    BOOTSTRAP_ANNOUNCE_ENABLED: "false"
+    PEER_DISCOVERY_ENABLED: "false"
+    CONNECT_INTERVAL_SECONDS: "1"
+    SYNC_SCHEDULER_INTERVAL_SECONDS: "1"
+    MEMPOOL_RELAY_INTERVAL_SECONDS: "1"
+    REWARD_NODE_AUTO_POLL_INTERVAL_SECONDS: "5"
+  restart: unless-stopped
+  networks: [rehearsal]
+
+x-miner: &miner
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  entrypoint: ["/usr/local/bin/chipcoin-entrypoint", "miner"]
+  environment: &miner-environment
+    CHIPCOIN_NETWORK: mainnet
+    MINER_LOG_LEVEL: INFO
+    MINING_MIN_INTERVAL_SECONDS: "0"
+    MINING_POLLING_INTERVAL_SECONDS: "1"
+    MINING_REQUEST_TIMEOUT_SECONDS: "10"
+    MINING_NONCE_BATCH_SIZE: "250000"
+    MINING_WORKER_COUNT: "1"
+  restart: unless-stopped
+  networks: [rehearsal]
+
+services:
+  node-a:
+    <<: *node
+    environment:
+      <<: *node-environment
+      NODE_DIRECT_PEERS: node-b:8333,node-c:8333
+      REWARD_NODE_AUTO_NODE_ID: rehearsal-reward-a
+      REWARD_NODE_AUTO_OWNER_WALLET_FILE: /runtime/reward-owner-wallet.json
+      REWARD_NODE_AUTO_ATTEST_WALLET_FILE: /runtime/reward-attest-wallet.json
+      REWARD_NODE_AUTO_DECLARED_HOST: node-a
+      REWARD_NODE_AUTO_DECLARED_PORT: "8333"
+    volumes:
+      - type: bind
+        source: ${REHEARSAL_ROOT}/runtime/node-a
+        target: /runtime/mainnet
+      - type: bind
+        source: ${REHEARSAL_ROOT}/secrets/reward-a-owner.json
+        target: /runtime/reward-owner-wallet.json
+        read_only: true
+      - type: bind
+        source: ${REHEARSAL_ROOT}/secrets/reward-a-attest.json
+        target: /runtime/reward-attest-wallet.json
+        read_only: true
+      - type: bind
+        source: ../../scripts/mainnet-rehearsal-state.py
+        target: /app/scripts/mainnet-rehearsal-state.py
+        read_only: true
+    ports: ["127.0.0.1:${REHEARSAL_NODE_A_API_PORT:-38081}:8080"]
+
+  node-b:
+    <<: *node
+    environment:
+      <<: *node-environment
+      NODE_DIRECT_PEERS: node-a:8333,node-c:8333
+      REWARD_NODE_AUTO_NODE_ID: rehearsal-reward-b
+      REWARD_NODE_AUTO_OWNER_WALLET_FILE: /runtime/reward-owner-wallet.json
+      REWARD_NODE_AUTO_ATTEST_WALLET_FILE: /runtime/reward-attest-wallet.json
+      REWARD_NODE_AUTO_DECLARED_HOST: node-b
+      REWARD_NODE_AUTO_DECLARED_PORT: "8333"
+    volumes:
+      - type: bind
+        source: ${REHEARSAL_ROOT}/runtime/node-b
+        target: /runtime/mainnet
+      - type: bind
+        source: ${REHEARSAL_ROOT}/secrets/reward-b-owner.json
+        target: /runtime/reward-owner-wallet.json
+        read_only: true
+      - type: bind
+        source: ${REHEARSAL_ROOT}/secrets/reward-b-attest.json
+        target: /runtime/reward-attest-wallet.json
+        read_only: true
+      - type: bind
+        source: ../../scripts/mainnet-rehearsal-state.py
+        target: /app/scripts/mainnet-rehearsal-state.py
+        read_only: true
+    ports: ["127.0.0.1:${REHEARSAL_NODE_B_API_PORT:-38082}:8080"]
+
+  node-c:
+    <<: *node
+    environment:
+      <<: *node-environment
+      NODE_DIRECT_PEERS: node-a:8333,node-b:8333
+    volumes:
+      - type: bind
+        source: ${REHEARSAL_ROOT}/runtime/node-c
+        target: /runtime/mainnet
+      - type: bind
+        source: ../../scripts/mainnet-rehearsal-state.py
+        target: /app/scripts/mainnet-rehearsal-state.py
+        read_only: true
+    ports: ["127.0.0.1:${REHEARSAL_NODE_C_API_PORT:-38083}:8080"]
+
+  node-fullsync:
+    <<: *node
+    profiles: [recovery]
+    environment:
+      <<: *node-environment
+      NODE_DIRECT_PEERS: node-a:8333
+    volumes:
+      - type: bind
+        source: ${REHEARSAL_ROOT}/runtime/node-fullsync
+        target: /runtime/mainnet
+      - type: bind
+        source: ../../scripts/mainnet-rehearsal-state.py
+        target: /app/scripts/mainnet-rehearsal-state.py
+        read_only: true
+
+  node-snapshot:
+    <<: *node
+    profiles: [recovery]
+    environment:
+      <<: *node-environment
+      NODE_DIRECT_PEERS: node-a:8333
+      NODE_BOOTSTRAP_MODE: snapshot
+      NODE_SNAPSHOT_FILE: /snapshot/rehearsal.snapshot
+      NODE_SNAPSHOT_TRUST_MODE: enforce
+      NODE_SNAPSHOT_TRUSTED_KEYS_FILE: /snapshot/trusted-keys.txt
+    volumes:
+      - type: bind
+        source: ${REHEARSAL_ROOT}/runtime/node-snapshot
+        target: /runtime/mainnet
+      - type: bind
+        source: ${REHEARSAL_ROOT}/snapshot
+        target: /snapshot
+        read_only: true
+      - type: bind
+        source: ../../scripts/mainnet-rehearsal-state.py
+        target: /app/scripts/mainnet-rehearsal-state.py
+        read_only: true
+
+  miner-a:
+    <<: *miner
+    environment:
+      <<: *miner-environment
+      MINING_NODE_URLS: http://node-a:8080,http://node-c:8080
+      MINING_MINER_ID: rehearsal-miner-a
+    volumes:
+      - type: bind
+        source: ${REHEARSAL_ROOT}/secrets/miner-a.json
+        target: /runtime/miner-wallet.json
+        read_only: true
+    depends_on: [node-a, node-c]
+
+  miner-b:
+    <<: *miner
+    environment:
+      <<: *miner-environment
+      MINING_NODE_URLS: http://node-b:8080,http://node-c:8080
+      MINING_MINER_ID: rehearsal-miner-b
+    volumes:
+      - type: bind
+        source: ${REHEARSAL_ROOT}/secrets/miner-b.json
+        target: /runtime/miner-wallet.json
+        read_only: true
+    depends_on: [node-b, node-c]
+
+networks:
+  rehearsal:
+    internal: true

@@ -34,7 +34,7 @@ function installExtensionStorage(): void {
   };
 }
 
-function nodeStatus(network: "devnet" | "testnet"): NodeStatus {
+function nodeStatus(network: "mainnet" | "devnet" | "testnet"): NodeStatus {
   return {
     api_version: "1",
     network,
@@ -78,7 +78,7 @@ function nodeStatus(network: "devnet" | "testnet"): NodeStatus {
   };
 }
 
-function installFetch(network: "devnet" | "testnet"): void {
+function installFetch(network: "mainnet" | "devnet" | "testnet"): void {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/v1/health")) {
@@ -139,6 +139,28 @@ describe("browser wallet network support", () => {
 
     expect(state.expectedNetwork).toBe("testnet");
     expect(state.nodeApiBaseUrl).toBe("https://testnet-api.chipcoinprotocol.com");
+  });
+
+  it("supports a network-validated mainnet endpoint", async () => {
+    installFetch("mainnet");
+    const session = await import("../../src/background/session");
+
+    await session.createPqWallet("phase12-password");
+    const state = await session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet");
+
+    expect(state.expectedNetwork).toBe("mainnet");
+    expect(state.nodeApiBaseUrl).toBe("https://mainnet-api.chipcoinprotocol.com");
+    expect(state.address?.startsWith("CHCQ")).toBe(true);
+  });
+
+  it("refuses to select mainnet with a legacy wallet", async () => {
+    installFetch("mainnet");
+    const session = await import("../../src/background/session");
+
+    await session.createWallet("phase12-password");
+    await expect(
+      session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),
+    ).rejects.toThrow("Mainnet requires an ML-DSA-44 post-quantum wallet.");
   });
 
   it("rejects a node endpoint when the node reports the wrong network", async () => {

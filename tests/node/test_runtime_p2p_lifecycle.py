@@ -91,6 +91,10 @@ def test_runtime_limits_pending_inbound_handshakes_per_ip_before_session_creatio
             assert metrics["sessions_total"] == 2
             assert metrics["pending_handshakes"] == 2
             assert metrics["inbound_pending"] == 2
+            assert metrics["connect_loops"] == 0
+            assert metrics["active_connection_attempts"] == 0
+            assert metrics["backed_off_peer_count"] == 0
+            assert metrics["next_reconnect_at"] is None
             assert sum(writer.closed for writer in writers) == 3
             assert len(runtime._tasks) == 2
 

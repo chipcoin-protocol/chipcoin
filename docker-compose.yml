@@ -93,12 +93,20 @@ services:
       DIRECT_PEER: ${DIRECT_PEER-__CHIPCOIN_UNSET__}
       BOOTSTRAP_URL: ${BOOTSTRAP_URL-__CHIPCOIN_UNSET__}
     ports:
-      - "${NODE_P2P_BIND_PORT}:${NODE_P2P_BIND_PORT}"
+      - "${NODE_P2P_PUBLISH_HOST:-0.0.0.0}:${NODE_P2P_BIND_PORT}:${NODE_P2P_BIND_PORT}"
       - "${NODE_HTTP_PUBLISH_HOST:-127.0.0.1}:${NODE_HTTP_BIND_PORT}:${NODE_HTTP_BIND_PORT}"
     volumes:
       - type: bind
-        source: ${CHIPCOIN_RUNTIME_DIR}
+        source: ${CHIPCOIN_RUNTIME_HOST_DIR:-/var/lib/chipcoin}
         target: ${CHIPCOIN_RUNTIME_DIR}
+      - type: bind
+        source: ${REWARD_NODE_OWNER_WALLET_SOURCE:-/dev/null}
+        target: /runtime/reward-owner-wallet.json
+        read_only: true
+      - type: bind
+        source: ${REWARD_NODE_ATTEST_WALLET_SOURCE:-/dev/null}
+        target: /runtime/reward-attest-wallet.json
+        read_only: true
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import json, os, urllib.request; port=os.environ.get('NODE_HTTP_BIND_PORT','28081'); json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/v1/status', timeout=5))\""]
       interval: 30s

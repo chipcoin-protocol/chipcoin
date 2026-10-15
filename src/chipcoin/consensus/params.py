@@ -39,6 +39,8 @@ class ConsensusParams:
     legacy_target_block_time_seconds: int | None = None
     pq_support_activation_height: int | None = None
     reward_node_fee_recent_driver_activation_height: int = 0
+    require_pq_standard_transactions: bool = False
+    reward_node_signature_scheme_id: int = 0
 
 
 def target_block_time_seconds_for_height(height: int, params: ConsensusParams) -> int:
@@ -60,7 +62,7 @@ MAINNET_PARAMS = ConsensusParams(
     max_money_chipbits=11_000_000 * 100_000_000,
     target_block_time_seconds=600,
     difficulty_adjustment_window=1000,
-    genesis_bits=0x207FFFFF,
+    genesis_bits=0x1D1399AD,
     max_block_weight=4_000_000,
     max_block_sigops=80_000,
     epoch_length_blocks=100,
@@ -79,6 +81,8 @@ MAINNET_PARAMS = ConsensusParams(
     max_attestation_bundles_per_block=4,
     max_attestations_per_bundle=24,
     max_attestations_per_verifier_per_window=1,
+    require_pq_standard_transactions=True,
+    reward_node_signature_scheme_id=10,
 )
 
 

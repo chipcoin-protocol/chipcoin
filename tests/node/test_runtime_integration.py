@@ -22,7 +22,13 @@ from chipcoin.node.service import NodeService
 from tests.helpers import signed_payment, wallet_key
 
 
-TEST_PARAMS = replace(MAINNET_PARAMS, coinbase_maturity=0)
+TEST_PARAMS = replace(
+    MAINNET_PARAMS,
+    coinbase_maturity=0,
+    genesis_bits=0x207FFFFF,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
 
 
 def _local_socket_available() -> bool:
@@ -474,7 +480,7 @@ def test_runtime_sync_downloads_blocks_from_multiple_peers() -> None:
     asyncio.run(scenario())
 
 
-def test_runtime_applies_backoff_and_score_after_handshake_failures() -> None:
+def test_runtime_applies_bounded_backoff_without_penalty_after_pre_handshake_close() -> None:
     async def bad_peer(reader, writer):
         writer.close()
         await writer.wait_closed()
@@ -500,11 +506,12 @@ def test_runtime_applies_backoff_and_score_after_handshake_failures() -> None:
                         and peer.port == port
                         and peer.reconnect_attempts is not None
                         and peer.reconnect_attempts >= 1
-                        and peer.score is not None
-                        and peer.score < 0
+                        and peer.score in (None, 0)
                         and peer.backoff_until is not None
                         and peer.backoff_until > 0
                         and peer.protocol_error_class == "connection_closed"
+                        and peer.misbehavior_score in (None, 0)
+                        and peer.ban_until is None
                         for peer in service.list_peers()
                     )
                 )
@@ -512,6 +519,185 @@ def test_runtime_applies_backoff_and_score_after_handshake_failures() -> None:
                 await runtime.stop()
                 server.close()
                 await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_reconnects_when_temporarily_unreachable_peer_returns() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            port = _free_port()
+            target_service = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_010_000)
+            target_runtime = NodeRuntime(
+                service=target_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", port)],
+                connect_interval=0.05,
+                peer_retry_backoff_base_seconds=0.5,
+                peer_retry_backoff_max_seconds=1.0,
+            )
+            await target_runtime.start()
+            source_runtime = None
+            try:
+                await _wait_until(
+                    lambda: any((peer.reconnect_attempts or 0) >= 1 for peer in target_service.list_peers())
+                )
+                source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_020_000)
+                source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=port)
+                await source_runtime.start()
+                await _wait_until(lambda: target_runtime.connected_peer_count() >= 1, timeout=5.0)
+            finally:
+                if source_runtime is not None:
+                    await source_runtime.stop()
+                await target_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_reconnects_after_repeated_temporary_dns_failures(monkeypatch) -> None:
+    resolution_available = False
+    original_getaddrinfo = asyncio.BaseEventLoop.getaddrinfo
+
+    async def controlled_getaddrinfo(self, host, port, *args, **kwargs):
+        if host == "peer.test":
+            if not resolution_available:
+                raise socket.gaierror(-3, "Temporary failure in name resolution")
+            host = "127.0.0.1"
+        return await original_getaddrinfo(self, host, port, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio.BaseEventLoop, "getaddrinfo", controlled_getaddrinfo)
+
+    async def scenario() -> None:
+        nonlocal resolution_available
+        with TemporaryDirectory() as tempdir:
+            port = _free_port()
+            target_service = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_011_000)
+            target_runtime = NodeRuntime(
+                service=target_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("peer.test", port)],
+                connect_interval=0.02,
+                peer_retry_backoff_base_seconds=0.02,
+                peer_retry_backoff_max_seconds=0.05,
+            )
+            await target_runtime.start()
+            source_runtime = None
+            try:
+                await _wait_until(
+                    lambda: any((peer.reconnect_attempts or 0) >= 3 for peer in target_service.list_peers()),
+                    timeout=2.0,
+                )
+                failed_peer = next(peer for peer in target_service.list_peers() if peer.host == "peer.test")
+                assert failed_peer.protocol_error_class == "connection_failed"
+                assert failed_peer.score == 0
+                assert failed_peer.misbehavior_score in (None, 0)
+                assert failed_peer.ban_until is None
+
+                source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_021_000)
+                source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=port)
+                await source_runtime.start()
+                resolution_available = True
+                await _wait_until(lambda: target_runtime.connected_peer_count() >= 1, timeout=2.0)
+
+                recovered_peer = next(peer for peer in target_service.list_peers() if peer.host == "peer.test")
+                assert recovered_peer.handshake_complete is True
+                assert recovered_peer.reconnect_attempts == 0
+                assert recovered_peer.backoff_until == 0
+                assert recovered_peer.score is not None and recovered_peer.score >= 0
+                assert recovered_peer.misbehavior_score in (None, 0)
+            finally:
+                if source_runtime is not None:
+                    await source_runtime.stop()
+                await target_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_reconnects_after_established_peer_is_stopped_and_restored() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            port = _free_port()
+            source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_030_000)
+            target_service = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_040_000)
+            source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=port)
+            target_runtime = NodeRuntime(
+                service=target_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", port)],
+                connect_interval=0.05,
+                ping_interval=0.05,
+                peer_retry_backoff_base_seconds=0.5,
+                peer_retry_backoff_max_seconds=1.0,
+            )
+            await source_runtime.start()
+            await target_runtime.start()
+            try:
+                await _wait_until(lambda: target_runtime.connected_peer_count() >= 1)
+                await source_runtime.stop()
+                await _wait_until(lambda: target_runtime.connected_peer_count() == 0)
+                source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=port)
+                await source_runtime.start()
+                await _wait_until(lambda: target_runtime.connected_peer_count() >= 1, timeout=5.0)
+            finally:
+                await target_runtime.stop()
+                await source_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_recovers_multiple_outbound_peers_after_total_loss() -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            ports = [_free_port(), _free_port()]
+            sources = [
+                NodeRuntime(
+                    service=NodeService.open_sqlite(Path(tempdir) / f"source-{index}.sqlite3", params=TEST_PARAMS),
+                    listen_host="127.0.0.1",
+                    listen_port=port,
+                )
+                for index, port in enumerate(ports)
+            ]
+            target = NodeRuntime(
+                service=NodeService.open_sqlite(Path(tempdir) / "target.sqlite3", params=TEST_PARAMS),
+                listen_host="127.0.0.1",
+                listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", port) for port in ports],
+                connect_interval=0.05,
+                ping_interval=0.05,
+                peer_retry_backoff_base_seconds=0.5,
+                peer_retry_backoff_max_seconds=1.0,
+            )
+            for source in sources:
+                await source.start()
+            await target.start()
+            try:
+                await _wait_until(lambda: target.connected_peer_count() == 2)
+                for source in sources:
+                    await source.stop()
+                await _wait_until(lambda: target.connected_peer_count() == 0)
+                sources = [
+                    NodeRuntime(
+                        service=source.service,
+                        listen_host="127.0.0.1",
+                        listen_port=port,
+                    )
+                    for source, port in zip(sources, ports, strict=True)
+                ]
+                for source in sources:
+                    await source.start()
+                await _wait_until(lambda: target.connected_peer_count() >= 1, timeout=5.0)
+                assert target.runtime_memory_metrics()["tasks_by_category"]["connect"] == 1
+                assert target.runtime_memory_metrics()["reconnect_tasks"] == 0
+                assert target.runtime_memory_metrics()["connect_loops"] == 1
+                assert target.runtime_memory_metrics()["active_connection_attempts"] == 0
+                assert target.runtime_memory_metrics()["backed_off_peer_count"] <= 1
+            finally:
+                await target.stop()
+                for source in sources:
+                    await source.stop()
 
     asyncio.run(scenario())
 

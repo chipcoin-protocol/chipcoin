@@ -24,7 +24,8 @@ from ..config import get_network_config
 from ..consensus.epoch_settlement import RewardAttestation, attestation_identity, parse_reward_attestation_bundle_metadata
 from ..consensus.models import Transaction
 from ..consensus.nodes import current_epoch, reward_node_is_active
-from ..crypto.keys import parse_private_key_hex
+from ..crypto.keys import parse_private_key_hex, serialize_public_key_hex
+from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..interfaces.http_api import (
     HttpApiApp,
@@ -33,7 +34,7 @@ from ..interfaces.http_api import (
     load_allowed_origins_from_env,
 )
 from ..utils.logging import configure_logging
-from ..wallet.signer import TransactionSigner, wallet_key_from_private_key
+from ..wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed, wallet_key_from_private_key
 from .p2p.errors import (
     BlockRequestStalledError,
     DuplicateConnectionError,
@@ -125,13 +126,29 @@ def _parse_bool_env(raw: str | None, *, default: bool) -> bool:
 
 
 def _load_wallet_key(path: Path):
-    """Load one minimal wallet JSON file from disk."""
+    """Load and validate one canonical wallet JSON file from disk."""
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return wallet_key_from_private_key(
-        parse_private_key_hex(str(payload["private_key_hex"])),
-        compressed=bool(payload.get("compressed", True)),
-    )
+    scheme_id = int(payload.get("scheme_id", SIG_SCHEME_LEGACY_ECDSA))
+    if scheme_id == SIG_SCHEME_ML_DSA_44:
+        wallet_key = wallet_key_from_mldsa44_seed(bytes.fromhex(str(payload["private_seed_hex"])))
+        expected_public_key_hex = wallet_key.public_key.hex()
+    elif scheme_id == SIG_SCHEME_LEGACY_ECDSA:
+        wallet_key = wallet_key_from_private_key(
+            parse_private_key_hex(str(payload["private_key_hex"])),
+            compressed=bool(payload.get("compressed", True)),
+        )
+        expected_public_key_hex = serialize_public_key_hex(wallet_key.public_key)
+    else:
+        raise ValueError(f"Unsupported wallet signature scheme id: {scheme_id}")
+
+    stored_public_key_hex = payload.get("public_key_hex")
+    stored_address = payload.get("address")
+    if stored_public_key_hex is not None and stored_public_key_hex != expected_public_key_hex:
+        raise ValueError("Wallet file public key does not match its private key material.")
+    if stored_address is not None and stored_address != wallet_key.address:
+        raise ValueError("Wallet file address does not match its private key material.")
+    return wallet_key
 
 
 def load_reward_node_automation_config_from_env() -> RewardNodeAutomationConfig | None:
@@ -609,6 +626,8 @@ class NodeRuntime:
             return
         if record.owner_pubkey != self._reward_owner_wallet.public_key:
             raise ValueError(f"owner wallet does not match reward node owner for node_id={record.node_id}")
+        if record.owner_signature_scheme_id != self._reward_owner_wallet.scheme_id:
+            raise ValueError(f"owner wallet signature scheme does not match reward node registration for node_id={record.node_id}")
         if current_epoch(record.last_renewed_height, self.service.params) == current_epoch_index:
             return
         if self._has_staged_reward_renewal(current_epoch_index):
@@ -682,6 +701,8 @@ class NodeRuntime:
             return
         if record.node_pubkey != self._reward_attest_wallet.public_key:
             raise ValueError(f"attestation wallet does not match reward node node_pubkey for node_id={record.node_id}")
+        if record.node_signature_scheme_id != self._reward_attest_wallet.scheme_id:
+            raise ValueError(f"attestation wallet signature scheme does not match reward node registration for node_id={record.node_id}")
         recorded_identities = self._known_reward_attestation_identities(current_epoch_index)
         assignments = self._reward_assignments(current_epoch_index)
         selected_candidates_by_window: dict[int, str] = {}
@@ -1056,7 +1077,7 @@ class NodeRuntime:
                     remaining_dials -= 1
                 except Exception as exc:
                     self.logger.debug("outbound connect failed peer=%s:%s error=%s", peer.host, peer.port, exc)
-                    self._register_peer_failure(peer, error=exc, penalty=20)
+                    self._register_peer_failure(peer, error=exc)
                     remaining_dials -= 1
                 finally:
                     self._pending_outbound_peers.discard(peer)
@@ -2258,7 +2279,12 @@ class NodeRuntime:
             existing = self._known_peer_info(endpoint.host, endpoint.port)
             current_error = None if not session.state.errors else session.state.errors[-1]
             current_error_obj = None if not session.state.error_causes else session.state.error_causes[-1]
-            penalty = 0 if current_error is None else self._penalty_for_error(current_error_obj or current_error)
+            classified_error = current_error_obj or current_error
+            penalize_as_misbehavior = self._should_penalize_as_misbehavior(
+                classified_error,
+                handshake_complete=bool(session.state.handshake_complete),
+            )
+            penalty = 0 if current_error is None or not penalize_as_misbehavior else self._penalty_for_error(classified_error)
             outbound_pre_handshake = handle is not None and handle.outbound and not session.state.handshake_complete
             outbound_short_lived_error = (
                 handle is not None
@@ -2269,7 +2295,10 @@ class NodeRuntime:
                 and (asyncio.get_running_loop().time() - handle.opened_at) < self.min_stable_session_seconds
             )
             if outbound_pre_handshake or outbound_short_lived_error:
-                reconnect_attempts, backoff_until = self._next_backoff_state(existing)
+                reconnect_attempts, backoff_until = self._next_backoff_state(
+                    existing,
+                    allow_extended=penalize_as_misbehavior,
+                )
             else:
                 reconnect_attempts = None if existing is None else existing.reconnect_attempts
                 backoff_until = None if existing is None else existing.backoff_until
@@ -3299,16 +3328,22 @@ class NodeRuntime:
         return info.backoff_until > self.service.time_provider()
 
     def _register_peer_failure(self, peer: OutboundPeer, *, error: Exception | str, penalty: int | None = None) -> None:
-        """Persist a scored outbound failure with exponential reconnect backoff."""
+        """Persist an outbound failure with bounded connectivity or protocol backoff."""
 
         info = self._known_peer_info(peer.host, peer.port)
-        attempts, backoff_until = self._next_backoff_state(info)
+        classification = classify_peer_error(error)
+        penalize_as_misbehavior = self._should_penalize_as_misbehavior(error, handshake_complete=False)
+        attempts, backoff_until = self._next_backoff_state(info, allow_extended=penalize_as_misbehavior)
         now = self.service.time_provider()
         error_text = str(error)
-        classification = classify_peer_error(error)
         applied_penalty = self._penalty_for_error(error) if penalty is None else penalty
-        new_score = self._updated_peer_score(peer.host, peer.port, delta=-applied_penalty)
-        if self._should_penalize_as_misbehavior(error, handshake_complete=False):
+        current_score = 0 if info is None or info.score is None else info.score
+        new_score = (
+            self._updated_peer_score(peer.host, peer.port, delta=-applied_penalty)
+            if penalize_as_misbehavior
+            else current_score
+        )
+        if penalize_as_misbehavior:
             action = self._observe_peer_misbehavior(
                 host=peer.host,
                 port=peer.port,
@@ -3480,11 +3515,11 @@ class NodeRuntime:
                 return True
         return False
 
-    def _next_backoff_state(self, info) -> tuple[int, int]:
+    def _next_backoff_state(self, info, *, allow_extended: bool = True) -> tuple[int, int]:
         """Return reconnect attempts and absolute backoff deadline for one peer."""
 
         attempts = 1 if info is None or info.reconnect_attempts is None else info.reconnect_attempts + 1
-        if self._needs_extended_peer_backoff(info, attempts=attempts):
+        if allow_extended and self._needs_extended_peer_backoff(info, attempts=attempts):
             extended_steps = max(0, attempts - self._EXTENDED_BACKOFF_START_ATTEMPT)
             delay_seconds = min(
                 self._EXTENDED_BACKOFF_MAX_SECONDS,
@@ -3556,7 +3591,7 @@ class NodeRuntime:
 
         metrics = self.runtime_memory_metrics()
         self.logger.info(
-            "runtime memory metrics rss_mb=%s asyncio_tasks=%s sessions_total=%s sessions_handshaken=%s pending_handshakes=%s inbound_pending=%s outbound_pending=%s tracked_tasks=%s reconnect_tasks=%s peerbook_entries=%s aliases_total=%s queue_sizes=%s inbound_sessions=%s outbound_sessions=%s sessions_created=%s sessions_closed=%s pq_verify_count=%s pq_verify_failures=%s pq_verify_duration_seconds_total=%s pq_tx_accepted=%s pq_tx_rejected=%s pq_malformed=%s pq_relay=%s pq_mined=%s pq_orphan=%s",
+            "runtime memory metrics rss_mb=%s asyncio_tasks=%s sessions_total=%s sessions_handshaken=%s pending_handshakes=%s inbound_pending=%s outbound_pending=%s tracked_tasks=%s reconnect_tasks=%s connect_loops=%s active_connection_attempts=%s backed_off_peer_count=%s next_reconnect_at=%s peerbook_entries=%s aliases_total=%s queue_sizes=%s inbound_sessions=%s outbound_sessions=%s sessions_created=%s sessions_closed=%s pq_verify_count=%s pq_verify_failures=%s pq_verify_duration_seconds_total=%s pq_tx_accepted=%s pq_tx_rejected=%s pq_malformed=%s pq_relay=%s pq_mined=%s pq_orphan=%s",
             metrics["rss_mb"],
             metrics["asyncio_tasks"],
             metrics["sessions_total"],
@@ -3566,6 +3601,10 @@ class NodeRuntime:
             metrics["outbound_pending"],
             metrics["tracked_tasks"],
             metrics["reconnect_tasks"],
+            metrics["connect_loops"],
+            metrics["active_connection_attempts"],
+            metrics["backed_off_peer_count"],
+            metrics["next_reconnect_at"],
             metrics["peerbook_entries"],
             metrics["aliases_total"],
             metrics["queue_sizes"],
@@ -3594,6 +3633,9 @@ class NodeRuntime:
             for session in self._sessions
             if not session.state.closed and session.state.handshake_complete
         )
+        now = self.service.time_provider()
+        peers = self.service.list_peers()
+        task_counts = self._task_counts_by_category()
         return {
             "rss_mb": self._current_rss_mb(),
             "asyncio_tasks": self._asyncio_task_count(),
@@ -3603,9 +3645,20 @@ class NodeRuntime:
             "inbound_pending": self._pending_inbound_handshake_count(),
             "outbound_pending": self._pending_outbound_handshake_count(),
             "tracked_tasks": len(self._tasks),
-            "tasks_by_category": self._task_counts_by_category(),
-            "reconnect_tasks": self._task_counts_by_category().get("reconnect", 0),
-            "peerbook_entries": len(self.service.list_peers()),
+            "tasks_by_category": task_counts,
+            # Kept for compatibility: this counts only short-lived tasks in the
+            # reconnect category, not the permanent outbound connect loop.
+            "reconnect_tasks": task_counts.get("reconnect", 0),
+            "connect_loops": task_counts.get("connect", 0),
+            "active_connection_attempts": len(self._pending_outbound_peers),
+            "backed_off_peer_count": sum(
+                1 for peer in peers if peer.backoff_until is not None and peer.backoff_until > now
+            ),
+            "next_reconnect_at": min(
+                (peer.backoff_until for peer in peers if peer.backoff_until is not None and peer.backoff_until > now),
+                default=None,
+            ),
+            "peerbook_entries": len(peers),
             "aliases_total": self._peer_alias_count(),
             "queue_sizes": self._runtime_queue_sizes(),
             "inbound_sessions": self._active_inbound_session_count(),

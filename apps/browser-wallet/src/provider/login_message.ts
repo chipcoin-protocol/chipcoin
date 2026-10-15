@@ -1,8 +1,9 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { secp256k1 } from "@noble/curves/secp256k1";
 
-import { parseAddress, publicKeyHexToAddress } from "../crypto/addresses";
+import { parseAddress, publicKeyHexToAddress, publicKeyHexToPqAddress } from "../crypto/addresses";
 import { bytesToHex, hexToBytes } from "../crypto/keys";
+import { createExperimentalMlDsa44Backend } from "../crypto/mldsa44";
 
 export const SIGNED_LOGIN_TITLE = "Chipcoin Signed Login v1";
 export const LOGIN_SIGNING_DOMAIN = "chipcoin:web-auth:v1:testnet";
@@ -28,9 +29,9 @@ export interface ParsedLoginMessage {
   title: typeof SIGNED_LOGIN_TITLE;
   domain: string;
   origin: string;
-  network: "testnet";
+  network: "mainnet" | "testnet";
   address: string;
-  scheme: 0;
+  scheme: 0 | 10;
   nonce: string;
   issuedAt: string;
   expiresAt: string;
@@ -86,10 +87,14 @@ export function parseChipcoinSignedLoginMessage(message: string, now = Date.now(
   const expiresAt = requireText(values.get("Expires At"));
   const statement = requireText(values.get("Statement"));
 
-  if (network !== "testnet") {
+  if (network !== "mainnet" && network !== "testnet") {
     throw new Error("UNSUPPORTED_NETWORK");
   }
-  if (schemeRaw !== "0") {
+  if (schemeRaw !== "0" && schemeRaw !== "10") {
+    throw new Error("SCHEME_MISMATCH");
+  }
+  const scheme = Number(schemeRaw) as 0 | 10;
+  if (network === "mainnet" && scheme !== 10) {
     throw new Error("SCHEME_MISMATCH");
   }
   if (nonce.length > LOGIN_NONCE_MAX_LENGTH || statement.length > LOGIN_STATEMENT_MAX_LENGTH) {
@@ -106,7 +111,8 @@ export function parseChipcoinSignedLoginMessage(message: string, now = Date.now(
     throw new Error("ORIGIN_MISMATCH");
   }
   const info = parseAddress(address);
-  if (info.kind !== "legacy" || info.schemeId !== 0) {
+  if ((scheme === 0 && (info.kind !== "legacy" || info.schemeId !== 0))
+    || (scheme === 10 && (info.kind !== "pq" || info.schemeId !== 10))) {
     throw new Error("SCHEME_MISMATCH");
   }
   const issuedMs = parseIsoTimestamp(issuedAt);
@@ -124,7 +130,7 @@ export function parseChipcoinSignedLoginMessage(message: string, now = Date.now(
     origin: originUrl.origin,
     network,
     address,
-    scheme: 0,
+    scheme,
     nonce,
     issuedAt: new Date(issuedMs).toISOString(),
     expiresAt: new Date(expiresMs).toISOString(),
@@ -142,8 +148,8 @@ export function validateLoginOriginBinding(parsed: ParsedLoginMessage, requestin
   }
 }
 
-export function loginMessageDigest(message: string): Uint8Array {
-  const tagBytes = new TextEncoder().encode(`${LOGIN_SIGNING_DOMAIN}\0`);
+export function loginMessageDigest(message: string, network: "mainnet" | "testnet" = "testnet"): Uint8Array {
+  const tagBytes = new TextEncoder().encode(`chipcoin:web-auth:v1:${network}\0`);
   const messageBytes = new TextEncoder().encode(message);
   const payload = new Uint8Array(tagBytes.length + messageBytes.length);
   payload.set(tagBytes);
@@ -169,8 +175,34 @@ export function verifyLoginMessageSignature(publicKeyHex: string, signatureHex: 
   );
 }
 
+export async function signPqLoginMessage(pqSeedHex: string, message: string, network: "mainnet" | "testnet"): Promise<{
+  publicKeyHex: string;
+  signatureHex: string;
+}> {
+  const backend = createExperimentalMlDsa44Backend();
+  await backend.initialize();
+  const keyPair = await backend.generateKeyPair(hexToBytes(pqSeedHex));
+  const signature = await backend.signDigest(loginMessageDigest(message, network), keyPair.privateKey);
+  return { publicKeyHex: bytesToHex(keyPair.publicKey), signatureHex: bytesToHex(signature) };
+}
+
+export async function verifyPqLoginMessageSignature(
+  publicKeyHex: string,
+  signatureHex: string,
+  message: string,
+  network: "mainnet" | "testnet",
+): Promise<boolean> {
+  const backend = createExperimentalMlDsa44Backend();
+  await backend.initialize();
+  return backend.verifyDigest(loginMessageDigest(message, network), hexToBytes(signatureHex), hexToBytes(publicKeyHex));
+}
+
 export function assertPublicKeyMatchesAddress(publicKeyHex: string, address: string): void {
-  if (publicKeyHexToAddress(publicKeyHex) !== address) {
+  const info = parseAddress(address);
+  const derived = info.kind === "pq"
+    ? publicKeyHexToPqAddress(publicKeyHex, info.schemeId)
+    : publicKeyHexToAddress(publicKeyHex);
+  if (derived !== address) {
     throw new Error("ADDRESS_MISMATCH");
   }
 }

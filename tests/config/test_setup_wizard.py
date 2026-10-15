@@ -97,6 +97,41 @@ def test_testnet_network_defaults_use_public_testnet_bootstrap_and_snapshot() ->
     assert "/snapshots/devnet/" not in ",".join(env_values.values())
 
 
+def test_mainnet_defaults_use_isolated_full_sync_profile() -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+
+    wizard._apply_network_defaults(env_values, "mainnet")
+
+    assert env_values["CHIPCOIN_NETWORK"] == "mainnet"
+    assert env_values["COMPOSE_PROJECT_NAME"] == "chipcoin-mainnet"
+    assert env_values["NODE_DATA_PATH"] == "/var/lib/chipcoin/data/node.sqlite3"
+    assert env_values["NODE_BOOTSTRAP_MODE"] == "full"
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
+    assert env_values["NODE_P2P_BIND_PORT"] == "8333"
+    assert env_values["NODE_P2P_PUBLISH_HOST"] == "127.0.0.1"
+    assert env_values["NODE_HTTP_BIND_PORT"] == "8080"
+    assert env_values["DEFAULT_BOOTSTRAP_PEER"] == ""
+    assert env_values["DEFAULT_NODE_ENDPOINT"] == "https://mainnet-api.chipcoinprotocol.com"
+
+
+def test_mainnet_wallet_import_writes_canonical_pq_wallet(monkeypatch, tmp_path: Path) -> None:
+    wizard = load_wizard_module()
+    wallet_path = tmp_path / "mainnet-wallet.json"
+    monkeypatch.setattr(wizard.getpass, "getpass", lambda prompt="": "42" * 32)
+
+    address, secret_hex, _public_key_hex = wizard._handle_wallet("import", wallet_path, network="mainnet")
+    payload = __import__("json").loads(wallet_path.read_text(encoding="utf-8"))
+
+    assert address.startswith("CHCQ")
+    assert secret_hex == "42" * 32
+    assert payload["scheme_id"] == 10
+    assert payload["scheme_name"] == "mldsa44"
+    assert payload["address_kind"] == "pq"
+    assert payload["private_seed_hex"] == "42" * 32
+    assert "private_key_hex" not in payload
+
+
 def test_testnet_env_path_defaults_to_standard_env_file(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr("builtins.input", lambda prompt="": "")

@@ -1,15 +1,23 @@
 import hashlib
+from dataclasses import replace
 
 from chipcoin.consensus.models import OutPoint, TxOutput
 from chipcoin.consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
 from chipcoin.consensus.serialization import serialize_transaction
 from chipcoin.consensus.validation import ValidationContext, validate_transaction
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS
 from chipcoin.consensus.utxo import InMemoryUtxoView, UtxoEntry
 from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.wallet.selection import select_inputs
 from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed
 from tests.helpers import spend_candidates_for_wallet, wallet_key
+
+
+MAINNET_PARAMS = replace(
+    PRODUCTION_MAINNET_PARAMS,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
 
 
 def test_select_inputs_returns_change_amount() -> None:

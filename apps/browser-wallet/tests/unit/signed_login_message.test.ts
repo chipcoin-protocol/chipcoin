@@ -7,12 +7,15 @@ import {
   assertPublicKeyMatchesAddress,
   loginMessageDigest,
   parseChipcoinSignedLoginMessage,
+  signPqLoginMessage,
   signLoginMessage,
   validateLoginOriginBinding,
+  verifyPqLoginMessageSignature,
   verifyLoginMessageSignature,
 } from "../../src/provider/login_message";
-import { privateKeyHexToAddress } from "../../src/crypto/addresses";
-import { derivePublicKeyHex, hexToBytes } from "../../src/crypto/keys";
+import { privateKeyHexToAddress, publicKeyHexToPqAddress } from "../../src/crypto/addresses";
+import { bytesToHex, derivePublicKeyHex, hexToBytes } from "../../src/crypto/keys";
+import { createExperimentalMlDsa44Backend } from "../../src/crypto/mldsa44";
 import { transactionSignatureDigest } from "../../src/crypto/serialization";
 import type { TransactionModel } from "../../src/wallet/models";
 
@@ -90,8 +93,28 @@ describe("Chipcoin Signed Login v1", () => {
     }), Date.parse("2026-08-01T10:01:00.000Z"))).toThrow("INVALID_MESSAGE");
   });
 
-  it("rejects unsupported schemes and prevents CHC scheme 10 signing", () => {
+  it("rejects a scheme that does not match the address", () => {
     expect(() => parseChipcoinSignedLoginMessage(canonicalMessage({ Scheme: "10" }), Date.parse("2026-08-01T10:01:00.000Z"))).toThrow("SCHEME_MISMATCH");
+  });
+
+  it("signs and verifies a mainnet ML-DSA-44 login message", async () => {
+    const seedHex = "42".repeat(32);
+    const backend = createExperimentalMlDsa44Backend();
+    await backend.initialize();
+    const keyPair = await backend.generateKeyPair(hexToBytes(seedHex));
+    const publicKeyHex = bytesToHex(keyPair.publicKey);
+    const address = publicKeyHexToPqAddress(publicKeyHex);
+    const message = canonicalMessage({ Network: "mainnet", Address: address, Scheme: "10" });
+
+    const parsed = parseChipcoinSignedLoginMessage(message, Date.parse("2026-08-01T10:01:00.000Z"));
+    const signed = await signPqLoginMessage(seedHex, message, "mainnet");
+
+    expect(parsed.network).toBe("mainnet");
+    expect(parsed.scheme).toBe(10);
+    expect(signed.publicKeyHex).toBe(publicKeyHex);
+    expect(await verifyPqLoginMessageSignature(publicKeyHex, signed.signatureHex, message, "mainnet")).toBe(true);
+    expect(await verifyPqLoginMessageSignature(publicKeyHex, signed.signatureHex, message, "testnet")).toBe(false);
+    assertPublicKeyMatchesAddress(publicKeyHex, address);
   });
 
   it("signs and verifies over the login-message domain", () => {

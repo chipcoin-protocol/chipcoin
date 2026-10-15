@@ -6,8 +6,10 @@ import asyncio
 import json
 import logging
 
+import pytest
+
 from chipcoin.consensus.epoch_settlement import REWARD_ATTESTATION_BUNDLE_KIND, parse_reward_attestation_bundle_metadata
-from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
+from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxInput, TxOutput
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.pq_activation import PQ_SUPPORT_TESTNET_ACTIVATION_HEIGHT
@@ -28,8 +30,8 @@ from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.mining import transaction_weight_units
 from chipcoin.node.peers import PeerInfo, PeerManager
 from chipcoin.node.messages import AddrMessage, BlockMessage, GetBlocksMessage, GetDataMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector, MessageEnvelope, PeerAddress, TransactionMessage
-from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, InvalidTxError, ProtocolError
-from chipcoin.node.p2p.errors import HandshakeFailedError, TransportTimeoutError
+from chipcoin.node.p2p.errors import BlockRequestStalledError, DuplicateConnectionError, InvalidBlockError, InvalidTxError, ProtocolError, protocol_error_class
+from chipcoin.node.p2p.errors import HandshakeFailedError, MalformedMessageError, TransportTimeoutError
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer, SessionHandle
 from chipcoin.node.p2p.transport import PeerEndpoint
 from chipcoin.node.service import NodeService
@@ -40,9 +42,17 @@ from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_se
 from tests.helpers import put_wallet_utxo, signed_payment, spend_candidates_for_wallet, wallet_key
 
 
+MAINNET_PARAMS = replace(
+    PRODUCTION_MAINNET_PARAMS,
+    genesis_bits=0x207FFFFF,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
+
+
 def _make_service(database_path: Path) -> NodeService:
     timestamps = iter(range(1_700_000_000, 1_700_000_100))
-    return NodeService.open_sqlite(database_path, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS, time_provider=lambda: next(timestamps))
 
 
 def _make_service_with_params(database_path: Path, params) -> NodeService:
@@ -889,6 +899,80 @@ def test_runtime_transport_failures_do_not_accumulate_misbehavior_bans() -> None
         assert info.misbehavior_score in (None, 0)
         assert info.ban_until is None
         assert runtime._is_peer_currently_banned("203.0.113.20", 18444) is False
+
+
+def test_dns_resolution_failure_is_transport_failure_not_peer_misbehavior() -> None:
+    error = OSError(-3, "Temporary failure in name resolution")
+
+    assert protocol_error_class(error) == "connection_failed"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (OSError(-3, "Temporary failure in name resolution"), "connection_failed"),
+        (ConnectionRefusedError(111, "Connection refused"), "connection_failed"),
+        (OSError(101, "Network is unreachable"), "connection_failed"),
+        (TimeoutError("connect timed out before handshake"), "timeout"),
+    ],
+)
+def test_connectivity_errors_do_not_accumulate_peer_misbehavior(error: OSError, expected: str) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+        peer = OutboundPeer("peer.example", 18444)
+
+        runtime._register_peer_failure(peer, error=error)
+
+        info = next(item for item in service.list_peers() if item.host == peer.host)
+        assert info.protocol_error_class == expected
+        assert info.score == 0
+        assert info.misbehavior_score in (None, 0)
+        assert info.last_penalty_reason is None
+        assert info.ban_until is None
+
+
+def test_repeated_dns_failures_remain_on_bounded_connectivity_backoff() -> None:
+    with TemporaryDirectory() as tempdir:
+        now = 1_700_000_000
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            network="devnet",
+            time_provider=lambda: now,
+        )
+        runtime = NodeRuntime(
+            service=service,
+            listen_host="127.0.0.1",
+            listen_port=18445,
+            peer_retry_backoff_base_seconds=1,
+            peer_retry_backoff_max_seconds=30,
+        )
+        peer = OutboundPeer("peer.example", 18444)
+
+        for _ in range(60):
+            runtime._register_peer_failure(peer, error=OSError(-3, "Temporary failure in name resolution"))
+
+        info = next(item for item in service.list_peers() if item.host == peer.host)
+        assert info.reconnect_attempts == 60
+        assert info.backoff_until == now + 30
+        assert info.score == 0
+        assert info.misbehavior_score in (None, 0)
+        assert info.ban_until is None
+
+
+def test_actual_malformed_message_still_applies_peer_penalty() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=18445)
+        peer = OutboundPeer("peer.example", 18444)
+
+        runtime._register_peer_failure(peer, error=MalformedMessageError("malformed payload"))
+
+        info = next(item for item in service.list_peers() if item.host == peer.host)
+        assert info.protocol_error_class == "malformed_message"
+        assert info.score == -100
+        assert info.misbehavior_score == runtime._SEVERE_MISBEHAVIOR_DELTA
+        assert info.last_penalty_reason == "malformed_message"
 
 
 def test_runtime_sync_complete_log_reports_final_local_and_peer_target_heights(caplog) -> None:

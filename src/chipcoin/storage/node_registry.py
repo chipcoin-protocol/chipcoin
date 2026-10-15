@@ -25,7 +25,8 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
         row = self.connection.execute(
             """
             SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height,
-                   node_pubkey, declared_host, declared_port, reward_registration
+                   node_pubkey, declared_host, declared_port, reward_registration,
+                   owner_signature_scheme_id, node_signature_scheme_id
             FROM node_registry
             WHERE node_id = ?
             """,
@@ -43,13 +44,16 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
             declared_host=row["declared_host"],
             declared_port=None if row["declared_port"] is None else int(row["declared_port"]),
             reward_registration=bool(row["reward_registration"]),
+            owner_signature_scheme_id=int(row["owner_signature_scheme_id"]),
+            node_signature_scheme_id=int(row["node_signature_scheme_id"]),
         )
 
     def get_by_owner_pubkey(self, owner_pubkey: bytes) -> NodeRecord | None:
         row = self.connection.execute(
             """
             SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height,
-                   node_pubkey, declared_host, declared_port, reward_registration
+                   node_pubkey, declared_host, declared_port, reward_registration,
+                   owner_signature_scheme_id, node_signature_scheme_id
             FROM node_registry
             WHERE owner_pubkey = ?
             """,
@@ -67,6 +71,8 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
             declared_host=row["declared_host"],
             declared_port=None if row["declared_port"] is None else int(row["declared_port"]),
             reward_registration=bool(row["reward_registration"]),
+            owner_signature_scheme_id=int(row["owner_signature_scheme_id"]),
+            node_signature_scheme_id=int(row["node_signature_scheme_id"]),
         )
 
     def upsert(self, record: NodeRecord) -> None:
@@ -82,8 +88,10 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                     node_pubkey,
                     declared_host,
                     declared_port,
-                    reward_registration
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reward_registration,
+                    owner_signature_scheme_id,
+                    node_signature_scheme_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.node_id,
@@ -95,6 +103,8 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                     record.declared_host,
                     record.declared_port,
                     1 if record.reward_registration else 0,
+                    record.owner_signature_scheme_id,
+                    record.node_signature_scheme_id,
                 ),
             )
 
@@ -102,7 +112,8 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
         rows = self.connection.execute(
             """
             SELECT node_id, payout_address, owner_pubkey, registered_height, last_renewed_height,
-                   node_pubkey, declared_host, declared_port, reward_registration
+                   node_pubkey, declared_host, declared_port, reward_registration,
+                   owner_signature_scheme_id, node_signature_scheme_id
             FROM node_registry
             ORDER BY node_id
             """
@@ -118,6 +129,8 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                 declared_host=row["declared_host"],
                 declared_port=None if row["declared_port"] is None else int(row["declared_port"]),
                 reward_registration=bool(row["reward_registration"]),
+                owner_signature_scheme_id=int(row["owner_signature_scheme_id"]),
+                node_signature_scheme_id=int(row["node_signature_scheme_id"]),
             )
             for row in rows
         ]
@@ -136,8 +149,10 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                     node_pubkey,
                     declared_host,
                     declared_port,
-                    reward_registration
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reward_registration,
+                    owner_signature_scheme_id,
+                    node_signature_scheme_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -150,6 +165,8 @@ class SQLiteNodeRegistryRepository(NodeRegistryRepository):
                         record.declared_host,
                         record.declared_port,
                         1 if record.reward_registration else 0,
+                        record.owner_signature_scheme_id,
+                        record.node_signature_scheme_id,
                     )
                     for record in records
                 ],

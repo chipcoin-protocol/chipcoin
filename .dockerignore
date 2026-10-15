@@ -9,5 +9,14 @@ build/
 dist/
 .git/
 .gitignore
+.env
+.env.*
+wallets/
+run/
+secrets/
+**/wallets/
+**/secrets/
+*.wallet.json
+*private*.json
 *.sqlite3
 *.db

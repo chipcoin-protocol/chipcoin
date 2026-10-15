@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.validation import ContextualValidationError
 from chipcoin.node.messages import GetHeadersMessage, HeadersMessage
@@ -13,9 +13,17 @@ from chipcoin.node.sync import SyncManager
 from tests.helpers import signed_payment, wallet_key
 
 
+MAINNET_PARAMS = replace(
+    PRODUCTION_MAINNET_PARAMS,
+    genesis_bits=0x207FFFFF,
+    require_pq_standard_transactions=False,
+    reward_node_signature_scheme_id=0,
+)
+
+
 def _make_service(database_path: Path, *, start_time: int) -> NodeService:
     timestamps = iter(range(start_time, start_time + 500))
-    return NodeService.open_sqlite(database_path, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS, time_provider=lambda: next(timestamps))
 
 
 def _mine_block(block: Block) -> Block:
@@ -618,7 +626,11 @@ def test_sync_manager_stores_competing_same_height_block_without_activating_tip(
 def test_service_retargets_difficulty_every_thousand_blocks() -> None:
     with TemporaryDirectory() as tempdir:
         timestamps = iter(range(1_700_000_000, 1_700_010_500))
-        service = NodeService.open_sqlite(Path(tempdir) / "node.sqlite3", time_provider=lambda: next(timestamps))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "node.sqlite3",
+            params=MAINNET_PARAMS,
+            time_provider=lambda: next(timestamps),
+        )
         mined_timestamps = []
         for height in range(MAINNET_PARAMS.difficulty_adjustment_window):
             template = service.build_candidate_block("CHCminer-retarget")

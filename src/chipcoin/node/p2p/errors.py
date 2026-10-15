@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import errno
+import socket
+
 
 class P2PError(Exception):
     """Base class for typed P2P/runtime failures."""
@@ -92,6 +95,22 @@ def protocol_error_class(error: Exception | str | None) -> str | None:
         return "connection_closed"
     if isinstance(error, ConnectionFailedError):
         return "connection_failed"
+    if isinstance(error, socket.gaierror):
+        return "connection_failed"
+    if isinstance(error, (ConnectionRefusedError, ConnectionAbortedError)):
+        return "connection_failed"
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, OSError) and error.errno in {
+        errno.ECONNREFUSED,
+        errno.ECONNABORTED,
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+        errno.EHOSTDOWN,
+        errno.EHOSTUNREACH,
+        errno.ETIMEDOUT,
+    }:
+        return "connection_failed" if error.errno != errno.ETIMEDOUT else "timeout"
     if isinstance(error, str):
         lowered = error.lower()
     else:
@@ -106,7 +125,24 @@ def protocol_error_class(error: Exception | str | None) -> str | None:
         return "handshake_failed"
     if "timed out" in lowered or "ping" in lowered or "pong" in lowered:
         return "timeout"
-    if "connect call failed" in lowered or "connection refused" in lowered or "[errno 111]" in lowered:
+    if any(
+        marker in lowered
+        for marker in (
+            "connect call failed",
+            "connection refused",
+            "temporary failure in name resolution",
+            "name or service not known",
+            "nodename nor servname provided",
+            "network is unreachable",
+            "no route to host",
+            "host is down",
+            "[errno 111]",
+            "[errno 101]",
+            "[errno 113]",
+            "[errno -2]",
+            "[errno -3]",
+        )
+    ):
         return "connection_failed"
     if "invalid block" in lowered:
         return "invalid_block"

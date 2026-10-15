@@ -9,6 +9,7 @@ import { createExperimentalMlDsa44Backend, MLDSA44_SEED_BYTES, ML_DSA_44_SCHEME_
 import {
   assertPublicKeyMatchesAddress,
   parseChipcoinSignedLoginMessage,
+  signPqLoginMessage,
   signLoginMessage,
   validateLoginOriginBinding,
 } from "../provider/login_message";
@@ -272,6 +273,10 @@ export async function updateNodeEndpoint(
   await touchSession();
   const settings = await loadSettings();
   const network = getSupportedNetwork(expectedNetwork);
+  const walletRecord = await loadWalletRecord();
+  if (network.id === "mainnet" && walletRecord?.walletType !== "pq_seed") {
+    throw new Error("Mainnet requires an ML-DSA-44 post-quantum wallet.");
+  }
   const normalized = normalizeNodeEndpoint(nodeApiBaseUrl);
   const client = ChipcoinApiClient.fromBaseUrl(normalized);
   await validateClientNetwork(client, network.id);
@@ -285,7 +290,6 @@ export async function updateNodeEndpoint(
   if (await loadActiveSession()) {
     await scheduleAutoLock(nextSettings.autoLockMinutes);
   }
-  const walletRecord = await loadWalletRecord();
   if (walletRecord) {
     await reconcileSubmittedTransactions(nextSettings, walletRecord.address, { forceCheckAll: true });
     await refreshWalletDataCache(nextSettings, walletRecord.address, { includeHistory: false });
@@ -365,6 +369,9 @@ export async function submitTransaction(args: {
   }
   await touchSession();
   const settings = await loadSettings();
+  if (settings.expectedNetwork === "mainnet" && session.walletType !== "pq_seed") {
+    throw new Error("Mainnet requires an ML-DSA-44 post-quantum wallet.");
+  }
   const client = ChipcoinApiClient.fromBaseUrl(settings.nodeApiBaseUrl);
   let built: ReturnType<typeof buildSignedPaymentTransaction> | null = null;
 
@@ -483,21 +490,37 @@ export async function signProviderLoginMessage(args: {
   if (!session) {
     throw new Error("WALLET_LOCKED");
   }
-  if (session.walletType === "pq_seed") {
-    throw new Error("PQ_PROVIDER_LOGIN_UNSUPPORTED");
-  }
   const settings = await loadSettings();
-  if (settings.expectedNetwork !== "testnet") {
-    throw new Error("UNSUPPORTED_NETWORK");
-  }
 
   const parsed = parseChipcoinSignedLoginMessage(args.message);
+  if (parsed.network !== settings.expectedNetwork) {
+    throw new Error("UNSUPPORTED_NETWORK");
+  }
   validateLoginOriginBinding(parsed, args.origin, args.domain);
   if (parsed.address !== session.address || parsed.address !== walletRecord.address) {
     throw new Error("ADDRESS_MISMATCH");
   }
+  if ((session.walletType === "pq_seed") !== (parsed.scheme === 10)) {
+    throw new Error("SCHEME_MISMATCH");
+  }
   assertPublicKeyMatchesAddress(session.publicKeyHex, parsed.address);
   await touchSession();
+  if (session.walletType === "pq_seed") {
+    if (!session.pqSeedHex) {
+      throw new Error("SIGNING_FAILED");
+    }
+    const signed = await signPqLoginMessage(session.pqSeedHex, args.message, parsed.network);
+    if (signed.publicKeyHex !== session.publicKeyHex) {
+      throw new Error("ADDRESS_MISMATCH");
+    }
+    return {
+      address: session.address,
+      signature_scheme: 10,
+      public_key: signed.publicKeyHex,
+      signature: signed.signatureHex,
+      message: args.message,
+    };
+  }
   return {
     address: session.address,
     signature_scheme: 0,

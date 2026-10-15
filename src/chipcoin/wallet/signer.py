@@ -15,7 +15,7 @@ from ..consensus.nodes import (
 )
 from ..consensus.validation import transaction_signature_digest
 from ..crypto.addresses import is_valid_address, public_key_to_address, public_key_to_pq_address
-from ..crypto.keys import derive_public_key, generate_private_key, serialize_public_key_hex
+from ..crypto.keys import derive_public_key, generate_private_key
 from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44, get_signature_scheme
 from ..crypto.pq.mldsa import ML_DSA_SEED_SIZE
 from ..crypto.signatures import sign_digest
@@ -180,7 +180,8 @@ class TransactionSigner:
             "kind": "register_node",
             "node_id": node_id,
             "payout_address": payout_address,
-            "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
+            "owner_pubkey_hex": self.wallet_key.public_key.hex(),
+            "owner_signature_scheme_id": str(self.wallet_key.scheme_id),
             "owner_signature_hex": "",
         }
         return self._sign_special_node_metadata(metadata, network=network, height=height)
@@ -201,7 +202,8 @@ class TransactionSigner:
             "kind": "renew_node",
             "node_id": node_id,
             "renewal_epoch": str(renewal_epoch),
-            "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
+            "owner_pubkey_hex": self.wallet_key.public_key.hex(),
+            "owner_signature_scheme_id": str(self.wallet_key.scheme_id),
             "owner_signature_hex": "",
         }
         return self._sign_special_node_metadata(metadata, network=network, height=height)
@@ -212,6 +214,7 @@ class TransactionSigner:
         node_id: str,
         payout_address: str,
         node_public_key_hex: str,
+        node_signature_scheme_id: int | None = None,
         declared_host: str,
         declared_port: int,
         registration_fee_chipbits: int,
@@ -226,15 +229,24 @@ class TransactionSigner:
             raise ValueError("Payout address must be a valid CHC address.")
         if not node_public_key_hex:
             raise ValueError("Node public key hex must not be empty.")
+        if node_signature_scheme_id is None:
+            node_signature_scheme_id = self.wallet_key.scheme_id
+        node_scheme = get_signature_scheme(node_signature_scheme_id)
+        node_public_key = bytes.fromhex(node_public_key_hex)
+        if node_signature_scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+            if node_scheme.public_key_size is None or len(node_public_key) != node_scheme.public_key_size:
+                raise ValueError("Node public key length does not match its signature scheme.")
         metadata = {
             "kind": "register_reward_node",
             "node_id": node_id,
             "payout_address": payout_address,
             "node_pubkey_hex": node_public_key_hex,
+            "node_signature_scheme_id": str(node_signature_scheme_id),
             "declared_host": declared_host,
             "declared_port": str(declared_port),
             "registration_fee_chipbits": str(registration_fee_chipbits),
-            "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
+            "owner_pubkey_hex": self.wallet_key.public_key.hex(),
+            "owner_signature_scheme_id": str(self.wallet_key.scheme_id),
             "owner_signature_hex": "",
         }
         return self._sign_special_node_metadata(metadata, network=network, height=height)
@@ -261,7 +273,8 @@ class TransactionSigner:
             "declared_host": declared_host,
             "declared_port": str(declared_port),
             "renewal_fee_chipbits": str(renewal_fee_chipbits),
-            "owner_pubkey_hex": serialize_public_key_hex(self.wallet_key.public_key),
+            "owner_pubkey_hex": self.wallet_key.public_key.hex(),
+            "owner_signature_scheme_id": str(self.wallet_key.scheme_id),
             "owner_signature_hex": "",
         }
         return self._sign_special_node_metadata(metadata, network=network, height=height)
