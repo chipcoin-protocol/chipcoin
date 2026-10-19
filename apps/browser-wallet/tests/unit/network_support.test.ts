@@ -38,9 +38,11 @@ function nodeStatus(network: "mainnet" | "devnet" | "testnet"): NodeStatus {
   return {
     api_version: "1",
     network,
-    network_magic_hex: "00",
+    network_magic_hex: network === "mainnet" ? "c0897c0d" : network === "testnet" ? "fab4c0de" : "fac3b6da",
     chain_id: `chipcoin-${network}-1`,
-    genesis_hash: null,
+    genesis_hash: network === "mainnet"
+      ? "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+      : null,
     height: network === "testnet" ? 1801 : 6539,
     tip_hash: network === "testnet"
       ? "00002087b2dfc6ee2d89c013e9a78f8b26454f9372882f2d61de604b04522847"
@@ -80,14 +82,21 @@ function nodeStatus(network: "mainnet" | "devnet" | "testnet"): NodeStatus {
   };
 }
 
-function installFetch(network: "mainnet" | "devnet" | "testnet"): void {
+function installFetch(
+  network: "mainnet" | "devnet" | "testnet",
+  genesisHash?: string | null,
+  networkMagic?: string,
+): void {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/v1/health")) {
       return new Response(JSON.stringify({ status: "ok", api_version: "1", network }), { status: 200 });
     }
     if (url.endsWith("/v1/status")) {
-      return new Response(JSON.stringify(nodeStatus(network)), { status: 200 });
+      const status = nodeStatus(network);
+      if (genesisHash !== undefined) status.genesis_hash = genesisHash;
+      if (networkMagic !== undefined) status.network_magic_hex = networkMagic;
+      return new Response(JSON.stringify(status), { status: 200 });
     }
     if (url.includes("/v1/address/") && url.endsWith("/utxos")) {
       return new Response(JSON.stringify([]), { status: 200 });
@@ -143,14 +152,34 @@ describe("browser wallet network support", () => {
     expect(state.nodeApiBaseUrl).toBe("https://testnet-api.chipcoinprotocol.com");
   });
 
-  it("fails closed while the public mainnet genesis is pending", async () => {
+  it("accepts mainnet only when the canonical genesis identity matches", async () => {
     installFetch("mainnet");
     const session = await import("../../src/background/session");
 
     await session.createPqWallet("phase12-password");
     await expect(
       session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),
-    ).rejects.toThrow("Public mainnet genesis is not finalized.");
+    ).resolves.toMatchObject({ expectedNetwork: "mainnet" });
+  });
+
+  it("rejects a mainnet endpoint with a different genesis", async () => {
+    installFetch("mainnet", "ff".repeat(32));
+    const session = await import("../../src/background/session");
+
+    await session.createPqWallet("phase12-password");
+    await expect(
+      session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),
+    ).rejects.toThrow("Wrong canonical genesis hash.");
+  });
+
+  it("rejects a mainnet endpoint with a different network magic", async () => {
+    installFetch("mainnet", undefined, "fab4c0de");
+    const session = await import("../../src/background/session");
+
+    await session.createPqWallet("phase12-password");
+    await expect(
+      session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),
+    ).rejects.toThrow("Wrong network magic.");
   });
 
   it("refuses to select mainnet with a legacy wallet", async () => {

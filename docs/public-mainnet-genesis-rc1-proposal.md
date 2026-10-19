@@ -1,20 +1,20 @@
 # Public Mainnet Genesis and RC1 Proposal
 
-Date: 2026-10-19. Status: **proposal only; genesis freeze and deployment are
-not authorized**. MemPalace was consulted; it contains no later approved
-timestamp or launch-date decision. The final consensus audit is
+Date: 2026-10-19. Status: **approved genesis candidate integrated locally;
+source freeze and deployment are not yet authorized**. MemPalace was consulted.
+The final consensus audit is
 `docs/public-mainnet-final-consensus-audit-rc1-preparation.md`.
 
 ## Candidate identity
 
-| Field | Proposed value |
+| Field | Approved candidate value |
 | --- | --- |
 | Network profile | `mainnet` |
 | Chain ID | `chipcoin-mainnet-1` |
 | P2P magic | `c0897c0d`, first four bytes of SHA-256 of `chipcoin:p2p-magic:chipcoin-mainnet-1` |
 | Header version | 1 |
 | Previous hash | 32 zero bytes |
-| Timestamp candidate | `2026-10-19T08:00:00Z` / `1792396800` |
+| Approved candidate timestamp | `2026-10-20T18:00:00Z` / `1792519200` |
 | Initial bits | `0x1d1399ad` / `487823789` |
 | Genesis transaction version | 1 |
 | Genesis metadata | sorted keys `chain_id`, `coinbase=true`, `genesis_message`, `height=0` |
@@ -22,34 +22,43 @@ timestamp or launch-date decision. The final consensus audit is
 | Inputs / outputs | 0 / 0 |
 | Genesis reward / spendable supply | 0 / 0 chipbits |
 | TXID / Merkle root | `6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77` |
-| Nonce | `358646568` |
-| Candidate block hash | `000000049b99a576c7f281945b3a1faad26161bd828ee6a81e3772b2844565ce` |
-| Serialized block SHA-256 | `2a107f6aa36e1ff424aa3247dc4a1171069c890c79b1ef2dcf7af379bd2b045e` |
+| Nonce | `468059814` |
+| Candidate block hash | `00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d` |
+| Serialized block SHA-256 | `4ecbeda4c457a50052d5999fe3ac7d851a0d602769e123ea8200e151e55f8255` |
 
 Candidate artifacts and `SHA256SUMS` are in
-`/tmp/public-mainnet-genesis-proposal-20261019T080000Z/`. All three file
-checksums pass. The artifact directory is explicitly a candidate workspace;
-it is not an embedded, signed, or published identity.
+`/tmp/chipcoin-public-mainnet-genesis-candidate-20261020T180000Z/`; their
+checksums and verification report hashes are recorded in
+`docs/releases/public-mainnet-rc1-genesis-provenance.json`. This provenance is
+not a signed release manifest or published identity.
 
-The timestamp is not inherited from TEST-ONLY. It was selected as a candidate
-for this work session and the artifact finished at 08:24 UTC, about 24 minutes
-later. It is valid as a serialization and PoW candidate, but is **not approved
-and not recommended for freeze without an approved launch schedule**. The
-first retarget at candidate height 1000 uses the elapsed
-time from genesis to block 999 against a 600,000-second target and clamps the
-adjustment to 1/4..4. A long private delay therefore changes the first retarget.
-The founder must choose one of two explicit launch policies:
+The timestamp is not inherited from TEST-ONLY. It was approved for this
+candidate and independently checked on Tobia and Chipcom. The candidate is
+integrated in this local worktree; source freeze and public launch remain
+pending. The first retarget at candidate height 1000 uses the
+elapsed time from genesis to block 999 against a 600,000-second target and
+clamps the adjustment to 1/4..4, then caps the target at `genesis_bits`. Since
+mainnet starts at that cap, a delay before block 1 cannot make the target
+easier than its initial value, though it may prevent an isolated run's faster
+timestamps from making the target fractionally harder. The approved timestamp
+is `2026-10-20T18:00:00Z`; the source freeze and launch remain separate decisions.
 
-1. freeze the timestamp close to the start of the continuously maintained
-   canonical chain, accepting that its pre-public blocks are public-mainnet
-   history; or
-2. complete pre-freeze validation with disposable candidates, then approve and
-   mine the definitive genesis close to public exposure, followed by a tightly
-   scheduled final identity/runtime validation.
+1. select an earlier timestamp that allows the isolated final-genesis gate
+   run, explicitly accepting and calculating its idle-to-public-start retarget
+   effect; or
+2. select a timestamp close to public exposure, accepting that the nominal
+   8.3-day run through payout maturity may extend beyond November 7.
 
-The second policy avoids an old timestamp and pre-public economic history, but
-requires final identity-dependent tests in the launch window. This report
-recommends policy 2. A candidate hash does not authorize either policy.
+The isolated validation chain is never transferred to the public network.
+The formal policy is `docs/releases/rc1-isolated-final-genesis-validation-policy.md`.
+
+For the approved candidate timestamp, a public first block at
+2026-11-01T00:00:00Z and 999 intervals averaging 600 seconds, the first
+retarget span projects to 1,571,400 seconds (2.619x target); for a
+2026-11-07T00:00:00Z first block it projects to 2,089,800 seconds (3.483x).
+Both are within the existing 4x clamp; because they exceed target and the
+target is capped at `genesis_bits`, the first public retarget remains at the
+initial target. These are projections, not a mined result or consensus change.
 
 ## Canonical construction
 
@@ -62,18 +71,19 @@ Merkle hashes. The block hash is double-SHA256 of the header, interpreted
 big-endian for target comparison. The lowest valid uint32 nonce is selected in
 ordered batches, so worker count cannot change the result.
 
-The approved final run is:
+The approved candidate was generated with:
 
 ```bash
 .venv/bin/python scripts/build-public-mainnet-genesis.py \
-  --timestamp APPROVED_UNIX_TIMESTAMP \
+  --timestamp 1792519200 \
   --workers 2 \
   --output-dir /secure/genesis-primary \
   --acknowledge-founder-approved-timestamp
 ```
 
-Repeat from a clean checkout and preferably another host with a different
-worker count, then run:
+Do not regenerate or change the candidate. Its recorded artifacts were
+reproduced on Chipcom for structure, serialization and PoW; the full lowest-
+nonce scan was completed locally on Tobia. For audit replay, run:
 
 ```bash
 .venv/bin/python scripts/verify-public-mainnet-genesis-independent.py \
@@ -82,8 +92,8 @@ sha256sum -c /secure/genesis-primary/SHA256SUMS
 diff -ru /secure/genesis-primary /secure/genesis-secondary
 ```
 
-The candidate was mined by the canonical builder with 2 workers in about 24
-minutes. The independent verifier imports no Chipcoin module. It reparses
+The candidate was built by the canonical builder with 2 workers. The
+independent verifier imports no Chipcoin module. It reparses
 bytes with the standard library and independently checks header/transaction
 fields, metadata, TXID, Merkle root, PoW, block hash, zero supply, manifest and
 checksums. `--verify-lowest-nonce` independently scans every lower nonce with
@@ -96,13 +106,13 @@ from the genesis timestamp.
 
 ## Identity consumers
 
-The reviewed block hex/hash must be embedded in `consensus/genesis.py` and
-flow through `config.py`. Full node startup installs or verifies it against an
+The reviewed block hex/hash is embedded in `consensus/genesis.py` and flows
+through `config.py`. Full node startup installs or verifies it against an
 empty/existing DB; P2P handshakes bind chain ID and genesis; snapshots bind
-network/chain/genesis; API status exposes all three. Miner startup verifies API
-network, chain and genesis. CLI/reward signing binds chain ID and checks API
-identity. Browser wallet `canonicalGenesisHash` must replace `null` and remain
-fail-closed. The authoritative Chipcoin Central Explorer must pin the same
+network/chain/genesis; API status exposes network magic, chain ID and genesis.
+Miner startup verifies all three. CLI/reward signing binds chain ID and checks
+API identity. Browser wallet pins network magic and `canonicalGenesisHash` and
+remains fail-closed. The authoritative Chipcoin Central Explorer must pin the same
 identity. Docker image labels, RC manifest, chipcom environment, bootstrap/seed
 announcements, snapshot trust manifest and monitoring probes must carry the
 same hash. No TEST-ONLY constant, image, wallet, port, database or snapshot may
@@ -132,10 +142,11 @@ frozen RC artifacts. The Docker recipe is not yet reproducible: its
 `python:3.11-slim` base and `apt-get update` inputs are mutable and no image
 digest has been selected.
 
-After timestamp approval: independently reproduce genesis including a full
-lower-nonce scan; review and embed only the generated block/hash; pin all
-identity consumers; obtain a clean source commit; build from locked inputs and
-record immutable artifact digests; then execute
+The approved candidate has already been independently reproduced, including a
+full lower-nonce scan on Tobia and structural/PoW validation on Chipcom. The
+remaining freeze process is to review and embed only these verified bytes, pin
+all identity consumers, obtain a clean source commit, build from locked inputs,
+record immutable artifact digests, and then execute
 `docs/public-mainnet-rc1-gate-execution-plan.md`. The release matrix contains
 98 `NOT_RUN` records with descriptions, dependencies and evidence references.
 It is not an automatic 98-gate runner: the final per-gate runtime commands,

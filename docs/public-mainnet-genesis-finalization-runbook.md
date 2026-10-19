@@ -47,13 +47,22 @@ compact target and PoW, and asserts no inputs, outputs or initial supply.
 
 ## Freeze And Incorporation
 
-1. Review and approve timestamp, nonce, block hash, block hex and all checksums.
-2. Replace only the pending canonical constants in
-   `src/chipcoin/consensus/genesis.py` with the reviewed block hex/hash.
-3. Replace pending values in the public genesis manifest and configure the
-   exact hash in node, miner, wallet, reward tooling and Explorer artifacts.
-4. Run the complete 98-gate matrix from `public-mainnet-rc-revalidation.json`.
-5. Produce immutable artifacts and a new RC only after all mandatory tests pass.
+The founder-approved candidate is integrated in the isolated RC1 worktree. Its
+timestamp is `2026-10-20T18:00:00Z`, nonce `468059814`, and block hash
+`00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d`.
+Before source freeze, review the integration diff against
+`docs/releases/public-mainnet-rc1-genesis-provenance.json` and rerun only the
+targeted identity checks. Do not regenerate or change the candidate values.
+
+1. Confirm the integration diff and provenance checksums on the primary host.
+2. Reproduce the light byte/field/PoW verification on the independent host and
+   compare its report and artifact checksums.
+3. Update the RC gate execution identity only after the final source commit is
+   known; preserve all gate statuses as NOT_RUN until valid evidence exists.
+4. Create the source-freeze commit only after explicit owner confirmation,
+   then build immutable artifacts from a clean checkout of that commit.
+5. Create a new RC tag only after explicit owner confirmation. Never move or
+   overwrite `mainnet-v0.1.2-rc.1`.
 
 Any mismatch stops finalization. Never select another nonce, timestamp or hash
 to make two outputs agree, and never publish a TEST-ONLY rehearsal identity.

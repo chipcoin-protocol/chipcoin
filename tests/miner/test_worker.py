@@ -216,6 +216,41 @@ def test_miner_worker_rejects_template_with_missing_chain_identity() -> None:
             worker._acquire_template()
 
 
+def test_mainnet_miner_rejects_configured_genesis_override() -> None:
+    with pytest.raises(MiningApiError, match="canonical network identity"):
+        MinerWorker(
+            MinerWorkerConfig(
+                network="mainnet",
+                payout_address=wallet_key(0).address,
+                node_urls=("memory://node",),
+                miner_id="worker-mainnet",
+                expected_genesis_hash="ff" * 32,
+            )
+        )
+
+
+def test_miner_rejects_wrong_network_magic() -> None:
+    worker = MinerWorker(
+        MinerWorkerConfig(
+            network="devnet",
+            payout_address=wallet_key(0).address,
+            node_urls=("memory://node",),
+            miner_id="worker-devnet",
+        )
+    )
+    from chipcoin.config import DEVNET_CONFIG
+
+    with pytest.raises(MiningApiError, match="network magic mismatch"):
+        worker._verify_node_identity(
+            {
+                "network": "devnet",
+                "network_magic_hex": "00" * 4,
+                "chain_id": DEVNET_CONFIG.chain_id,
+                "genesis_hash": None,
+            }
+        )
+
+
 def test_miner_worker_diagnostics_reports_worker_count() -> None:
     worker = MinerWorker(
         MinerWorkerConfig(

@@ -3,7 +3,7 @@
 import pytest
 
 from chipcoin.config import DEVNET_CONFIG, MAINNET_CONFIG, MAINNET_TEST_ONLY_CONFIG, TESTNET_CONFIG, require_finalized_public_mainnet
-from chipcoin.consensus.genesis import GenesisNotFinalizedError
+from chipcoin.consensus.genesis import CANONICAL_GENESIS_HASH
 from chipcoin.consensus.network_identity import (
     PUBLIC_MAINNET_CHAIN_ID,
     PUBLIC_MAINNET_P2P_MAGIC,
@@ -33,9 +33,11 @@ def test_accelerated_rehearsal_identity_is_distinct() -> None:
     assert MAINNET_CONFIG.params.genesis_bits == 0x1D1399AD
 
 
-def test_public_mainnet_startup_is_fail_closed_while_genesis_is_pending() -> None:
-    with pytest.raises(GenesisNotFinalizedError, match="pending founder-approved timestamp"):
-        require_finalized_public_mainnet("mainnet")
+def test_public_mainnet_startup_uses_approved_canonical_genesis() -> None:
+    assert MAINNET_CONFIG.canonical_genesis_hash == CANONICAL_GENESIS_HASH
+    assert MAINNET_CONFIG.canonical_genesis_timestamp == 1_792_519_200
+    assert MAINNET_CONFIG.genesis_finalized is True
+    require_finalized_public_mainnet("mainnet")
 
     require_finalized_public_mainnet("testnet")
 

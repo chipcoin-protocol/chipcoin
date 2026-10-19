@@ -63,10 +63,10 @@ def entry(gate: dict[str, Any]) -> dict[str, Any]:
     gate_id = gate["id"]
     gate_class = gate["revalidation_class"]
     if gate_id == "CONS-CFG-001":
-        mode = "BLOCKED_FINAL_GENESIS"
+        mode = "BLOCKED_SOURCE_FREEZE"
         command = None
         cwd = "."
-        blocker = "canonical genesis bytes/hash are intentionally pending"
+        blocker = "requires the approved canonical genesis in a clean frozen source revision"
     elif gate_id == "BW-SEC-001":
         mode = "BLOCKED_RUNTIME_DEPENDENCIES"
         command = None

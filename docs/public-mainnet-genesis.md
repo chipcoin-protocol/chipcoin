@@ -1,7 +1,7 @@
 # Chipcoin Public Mainnet Genesis Specification
 
-Status: implementation pending founder-approved timestamp and final genesis
-finalization.
+Status: founder-approved genesis candidate integrated locally; source freeze,
+release artifacts, Explorer pinning, and public launch remain pending.
 
 ## Canonical Identity
 
@@ -12,9 +12,11 @@ finalization.
 - Previous block hash: 32 zero bytes
 - Header version: `1`
 - Initial compact target: `0x1d1399ad`
-- Timestamp: `PENDING_APPROVAL`
-- Nonce: `PENDING_FINALIZATION`
-- Genesis hash: `PENDING_FINALIZATION`
+- Timestamp: `2026-10-20T18:00:00Z` (`1792519200`)
+- Nonce: `468059814` (lowest valid nonce, independently verified on Tobia)
+- Genesis hash: `00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d`
+- TXID / Merkle root: `6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77`
+- Serialized block SHA-256: `4ecbeda4c457a50052d5999fe3ac7d851a0d602769e123ea8200e151e55f8255`
 
 The public magic is distinct from rehearsal (`f9beb4d9`), testnet
 (`fab4c0de`), and devnet (`fac3b6da`). The chain ID, magic, and canonical
@@ -88,8 +90,9 @@ node startup path derives timestamp, nonce, or genesis content at runtime.
 
 ## Enforcement
 
-Until the canonical block and hash are embedded, production `mainnet` node,
-HTTP, and miner CLI entrypoints fail closed. After finalization:
+The candidate is embedded in this local worktree, but no source freeze, public
+artifact, Explorer deployment, or mainnet launch has occurred. In the frozen
+release:
 
 1. an empty database installs the embedded genesis atomically;
 2. an existing database must contain the same height-zero hash and chain ID;
@@ -99,6 +102,8 @@ HTTP, and miner CLI entrypoints fail closed. After finalization:
 5. snapshots require matching network, chain ID, and embedded genesis;
 6. APIs expose chain ID and genesis hash for wallet, miner, reward, and
    Explorer identity checks.
+7. Wallet and miner endpoint validation also requires the configured network
+   magic; the mining API publishes that field alongside chain ID and genesis.
 
 The rehearsal remains a separate historical chain. Its databases, wallet
 material, snapshots, peerbooks, and Docker volumes are never valid bootstrap

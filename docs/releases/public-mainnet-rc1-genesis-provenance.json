@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "status": "APPROVED_FOR_INTEGRATION_NOT_SOURCE_FROZEN",
+  "network": "mainnet",
+  "chain_id": "chipcoin-mainnet-1",
+  "p2p_magic_hex": "c0897c0d",
+  "source": {
+    "genesis_generation_commit": "9797a3564d7a2a9b1ef1078287ee18bdc2575299",
+    "genesis_generation_tree": "cdfbf4854a64c82025952022fd33bb6a56dc5131",
+    "source_freeze_commit": null,
+    "existing_tag_to_preserve": "mainnet-v0.1.2-rc.1"
+  },
+  "genesis": {
+    "timestamp_utc": "2026-10-20T18:00:00Z",
+    "timestamp_unix": 1792519200,
+    "height": 0,
+    "header_version": 1,
+    "previous_block_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "bits_hex": "0x1d1399ad",
+    "bits": 487823789,
+    "nonce": 468059814,
+    "block_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d",
+    "transaction_id": "6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77",
+    "merkle_root": "6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77",
+    "message": "Die Welt ist alles, was der Fall ist.",
+    "message_encoding": "UTF-8",
+    "message_utf8_bytes": 37,
+    "reward_chipbits": 0,
+    "spendable_outputs": 0,
+    "serialized_block_sha256": "4ecbeda4c457a50052d5999fe3ac7d851a0d602769e123ea8200e151e55f8255",
+    "block_hex_file_sha256": "b08c66279d554bf57b6bac670ee7e6f889011ea371796ce5ded0423e7f5102be",
+    "genesis_manifest_sha256": "a2f90dc0ea299bc0f2b0969db855dddc86e65d45f900eb6ac92af601f0392b88",
+    "genesis_constants_sha256": "1af2ad99efa5e9d4e1cc8125b503dce49fdfc1de9627d26719becd277b9292f3"
+  },
+  "consensus": {
+    "params_sha256": "803b93d68d7622a277960c958e031a82b591fce3ae2d1779d2bbcb6ee571d831",
+    "economics_changed": false
+  },
+  "tooling": {
+    "builder": "scripts/build-public-mainnet-genesis.py",
+    "builder_sha256": "caefd1c1d39f550d517072c91074c781b21854f5a3f05d37385f3152d4361fb8",
+    "independent_verifier": "scripts/verify-public-mainnet-genesis-independent.py",
+    "independent_verifier_sha256": "242d788cda4d8017598c04738dac57cf6281fba52e53fec2a9138526bded26a0"
+  },
+  "verification": {
+    "tobia": {
+      "result": "PASS",
+      "lowest_valid_nonce_verified": true,
+      "report_sha256": "203238f12529a6f13cd6cc0721b2ab08358282f128993ca0901277afcc1bb709"
+    },
+    "chipcom": {
+      "result": "PASS",
+      "lowest_valid_nonce_verified": false,
+      "report_sha256": "ebfb2539a03eb7ee1101b1bdb1e0446b44f653b00e15a3552673a5861500df83"
+    },
+    "artifact_directories_byte_identical": true
+  },
+  "release_artifacts": {
+    "built": false,
+    "image_digest": null,
+    "browser_bundle_checksums": null,
+    "explorer_repository_integrated": false
+  },
+  "freeze": {
+    "commit_created": false,
+    "tag_created": false,
+    "public_deployment_performed": false
+  }
+}

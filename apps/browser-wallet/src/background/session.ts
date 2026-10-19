@@ -902,6 +902,9 @@ async function validateClientNetwork(client: ChipcoinApiClient, expectedNetwork:
   if (status.chain_id !== expected.chainId) {
     throw new Error(`Wrong chain id. Expected ${expected.chainId}, got ${status.chain_id}.`);
   }
+  if (status.network_magic_hex !== expected.networkMagicHex) {
+    throw new Error(`Wrong network magic. Expected ${expected.networkMagicHex}, got ${status.network_magic_hex}.`);
+  }
   if (expectedNetwork === "mainnet" && expected.canonicalGenesisHash === null) {
     throw new Error("Public mainnet genesis is not finalized.");
   }

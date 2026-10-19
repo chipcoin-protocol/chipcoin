@@ -10,7 +10,9 @@ from pathlib import Path
 import os
 
 from .consensus.genesis import (
+    CANONICAL_GENESIS_BLOCK_HEX,
     CANONICAL_GENESIS_HASH,
+    CANONICAL_GENESIS_TIMESTAMP,
     TEST_ONLY_GENESIS_HASH,
     TEST_ONLY_GENESIS_TIMESTAMP,
     GenesisNotFinalizedError,
@@ -60,6 +62,7 @@ MAINNET_CONFIG = NetworkConfig(
     params=MAINNET_PARAMS,
     chain_id=PUBLIC_MAINNET_CHAIN_ID,
     canonical_genesis_hash=CANONICAL_GENESIS_HASH,
+    canonical_genesis_timestamp=CANONICAL_GENESIS_TIMESTAMP,
     genesis_finalized=CANONICAL_GENESIS_HASH is not None,
 )
 
@@ -118,10 +121,15 @@ def require_finalized_public_mainnet(name: str) -> None:
 
     config = get_network_config(name)
     if name == "mainnet" and (
-        not config.genesis_finalized or config.canonical_genesis_hash is None
+        not config.genesis_finalized
+        or CANONICAL_GENESIS_BLOCK_HEX is None
+        or config.chain_id != PUBLIC_MAINNET_CHAIN_ID
+        or config.magic != PUBLIC_MAINNET_P2P_MAGIC
+        or config.canonical_genesis_hash != CANONICAL_GENESIS_HASH
+        or config.canonical_genesis_timestamp != CANONICAL_GENESIS_TIMESTAMP
     ):
         raise GenesisNotFinalizedError(
-            "public mainnet genesis is pending founder-approved timestamp and canonical finalization"
+            "public mainnet configuration does not match the embedded canonical identity"
         )
 
 

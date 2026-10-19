@@ -1,4 +1,4 @@
-"""Frozen invariants for the pending public-mainnet genesis design."""
+"""Frozen invariants for the approved public-mainnet genesis candidate."""
 
 from __future__ import annotations
 
@@ -8,6 +8,9 @@ import pytest
 
 from chipcoin.consensus.economics import subsidy_split_chipbits, total_subsidy_through_height
 from chipcoin.consensus.genesis import (
+    CANONICAL_GENESIS_BLOCK_HEX,
+    CANONICAL_GENESIS_HASH,
+    CANONICAL_GENESIS_TIMESTAMP,
     GENESIS_MESSAGE,
     GENESIS_MESSAGE_BYTES,
     build_genesis_block,
@@ -22,9 +25,13 @@ from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.consensus.network_identity import MAINNET_TEST_ONLY_CHAIN_ID
 from chipcoin.consensus.params import MAINNET_TEST_ONLY_PARAMS
 from chipcoin.consensus.serialization import serialize_block
+from chipcoin.consensus.genesis import canonical_genesis_block
 
 
 EASY_BITS = 0x207FFFFF
+PUBLIC_BITS = 0x1D1399AD
+PUBLIC_GENESIS_HASH = "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+PUBLIC_GENESIS_TXID = "6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77"
 
 
 def test_wittgenstein_message_is_exact_utf8_and_committed() -> None:
@@ -42,6 +49,24 @@ def test_wittgenstein_message_is_exact_utf8_and_committed() -> None:
     altered = replace(transaction, metadata={**transaction.metadata, "genesis_message": GENESIS_MESSAGE + " "})
     assert altered.txid() != transaction.txid()
     assert merkle_root([altered.txid()]) != merkle_root([transaction.txid()])
+
+
+def test_approved_public_genesis_is_embedded_and_verified() -> None:
+    block = canonical_genesis_block()
+    verify_genesis(block, bits=PUBLIC_BITS, expected_hash=PUBLIC_GENESIS_HASH)
+
+    assert CANONICAL_GENESIS_HASH == PUBLIC_GENESIS_HASH
+    assert CANONICAL_GENESIS_TIMESTAMP == 1_792_519_200
+    assert serialize_block(block).hex() == CANONICAL_GENESIS_BLOCK_HEX
+    assert block.header.timestamp == CANONICAL_GENESIS_TIMESTAMP
+    assert block.header.nonce == 468_059_814
+    assert block.header.bits == PUBLIC_BITS
+    assert block.header.merkle_root == PUBLIC_GENESIS_TXID
+    assert block.transactions[0].txid() == PUBLIC_GENESIS_TXID
+    assert block.transactions[0].outputs == ()
+    manifest = genesis_manifest(block).as_dict()
+    assert manifest["serialized_block_sha256"] == "4ecbeda4c457a50052d5999fe3ac7d851a0d602769e123ea8200e151e55f8255"
+    assert manifest["initial_spendable_supply_chipbits"] == 0
 
 
 def test_genesis_is_deterministic_output_free_and_reproducible() -> None:

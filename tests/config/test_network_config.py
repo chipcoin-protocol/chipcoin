@@ -62,6 +62,25 @@ def test_mainnet_test_only_changes_only_approved_test_only_parameters() -> None:
     assert MAINNET_PARAMS.funded_reward_node_activation_height == 0
 
 
+def test_public_mainnet_configuration_is_bound_to_canonical_identity() -> None:
+    from chipcoin.consensus.genesis import CANONICAL_GENESIS_HASH, CANONICAL_GENESIS_TIMESTAMP
+
+    assert MAINNET_CONFIG.chain_id == "chipcoin-mainnet-1"
+    assert MAINNET_CONFIG.magic.hex() == "c0897c0d"
+    assert MAINNET_CONFIG.canonical_genesis_hash == CANONICAL_GENESIS_HASH
+    assert MAINNET_CONFIG.canonical_genesis_timestamp == CANONICAL_GENESIS_TIMESTAMP
+    assert MAINNET_CONFIG.genesis_finalized is True
+    require_startable_network("mainnet")
+
+
+def test_public_mainnet_rejects_runtime_identity_override(monkeypatch) -> None:
+    from dataclasses import replace
+
+    monkeypatch.setitem(NETWORK_CONFIGS, "mainnet", replace(MAINNET_CONFIG, canonical_genesis_hash="ff" * 32))
+    with pytest.raises(GenesisNotFinalizedError, match="canonical identity"):
+        require_startable_network("mainnet")
+
+
 def _install_startable_test_only_config(monkeypatch, tmp_path):
     config = replace(
         MAINNET_TEST_ONLY_CONFIG,

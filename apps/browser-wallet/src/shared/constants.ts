@@ -10,6 +10,7 @@ export interface SupportedNetworkConfig {
   statusLabel: string;
   httpSafetyNote: string;
   chainId: string;
+  networkMagicHex: string;
   canonicalGenesisHash: string | null;
 }
 
@@ -34,7 +35,8 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     statusLabel: "production mainnet",
     httpSafetyNote: "Use the wallet-safe public mainnet API or a trusted local node. Verify the connected network before signing.",
     chainId: "chipcoin-mainnet-1",
-    canonicalGenesisHash: null,
+    networkMagicHex: "c0897c0d",
+    canonicalGenesisHash: "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d",
   },
   {
     id: "devnet",
@@ -45,6 +47,7 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     statusLabel: "legacy devnet",
     httpSafetyNote: "Public devnet endpoint is provided for convenience and may change.",
     chainId: "chipcoin-devnet-1",
+    networkMagicHex: "fac3b6da",
     canonicalGenesisHash: null,
   },
   {
@@ -57,6 +60,7 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     statusLabel: "public testnet candidate",
     httpSafetyNote: "The public testnet API only allows wallet-safe reads and transaction submit. Keep raw node HTTP local/private and do not use the readonly explorer API for wallet submissions.",
     chainId: "chipcoin-testnet-1",
+    networkMagicHex: "fab4c0de",
     canonicalGenesisHash: null,
   },
 ] as const;

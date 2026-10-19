@@ -51,7 +51,9 @@ function status(network: "mainnet" | "testnet"): NodeStatus {
     network,
     network_magic_hex: network === "mainnet" ? "c0897c0d" : "fab4c0de",
     chain_id: network === "mainnet" ? "chipcoin-mainnet-1" : "chipcoin-testnet-1",
-    genesis_hash: null,
+    genesis_hash: network === "mainnet"
+      ? "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+      : null,
     height: 100,
     tip_hash: network === "mainnet" ? "11".repeat(32) : "22".repeat(32),
     current_bits: 0,
@@ -221,8 +223,8 @@ describe("mainnet/testnet wallet and login isolation", () => {
 
     await expect(
       session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),
-    ).rejects.toThrow("Public mainnet genesis is not finalized.");
-    await expect(loadSettings()).resolves.toMatchObject({ expectedNetwork: "testnet" });
+    ).resolves.toMatchObject({ expectedNetwork: "mainnet" });
+    await expect(loadSettings()).resolves.toMatchObject({ expectedNetwork: "mainnet" });
   });
 
   it("rejects the same browser-signed PQ transaction signature in the other network domain", async () => {

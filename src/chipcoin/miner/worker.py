@@ -133,7 +133,14 @@ class MinerWorker:
         if config.worker_count < 1:
             raise ValueError("worker_count must be at least 1.")
         network_config = get_network_config(config.network)
+        if config.network == "mainnet" and (
+            config.expected_chain_id not in {None, network_config.chain_id}
+            or config.expected_genesis_hash not in {None, network_config.canonical_genesis_hash}
+            or network_config.canonical_genesis_hash is None
+        ):
+            raise MiningApiError("configured mainnet identity does not match canonical network identity")
         self.expected_chain_id = config.expected_chain_id or network_config.chain_id
+        self.expected_network_magic = network_config.magic.hex()
         self.expected_genesis_hash = (
             config.expected_genesis_hash
             if config.expected_genesis_hash is not None
@@ -402,6 +409,8 @@ class MinerWorker:
 
         if payload.get("network") != self.config.network:
             raise MiningApiError("mining endpoint network identity mismatch")
+        if payload.get("network_magic_hex") != self.expected_network_magic:
+            raise MiningApiError("mining endpoint network magic mismatch")
         if payload.get("chain_id") != self.expected_chain_id:
             raise MiningApiError("mining endpoint chain identity mismatch")
         if payload.get("genesis_hash") != self.expected_genesis_hash:

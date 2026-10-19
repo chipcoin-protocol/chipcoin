@@ -412,6 +412,7 @@ class NodeService:
             canonical_genesis=(
                 canonical_genesis_block(network=network)
                 if get_network_config(network).genesis_finalized
+                and resolved_params == get_network_config(network).params
                 else None
             ),
         )
@@ -700,6 +701,7 @@ class NodeService:
         snapshot_anchor = self.snapshot_anchor()
         return {
             "network": self.network,
+            "network_magic_hex": get_network_config(self.network).magic.hex(),
             "chain_id": get_network_config(self.network).chain_id,
             "genesis_hash": get_network_config(self.network).canonical_genesis_hash,
             "best_tip_hash": best_tip_hash,
@@ -760,6 +762,7 @@ class NodeService:
             "template_id": template_id,
             "template_mode": template_mode,
             "network": self.network,
+            "network_magic_hex": get_network_config(self.network).magic.hex(),
             "chain_id": get_network_config(self.network).chain_id,
             "genesis_hash": get_network_config(self.network).canonical_genesis_hash,
             "previous_block_hash": record.previous_block_hash,

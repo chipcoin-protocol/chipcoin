@@ -73,6 +73,11 @@ npm run package:firefox:sources
 - The Firefox release manifest intentionally limits host permissions to the public Chipcoin wallet APIs and local node endpoints. Arbitrary remote node APIs are not supported by the official Mozilla package unless they are added to the manifest and reviewed.
 - Current `web-ext lint` may report `UNSAFE_VAR_ASSIGNMENT` warnings from React's bundled DOM runtime in `assets/messages-*.js`. The wallet source does not use `dangerouslySetInnerHTML`, direct `innerHTML`, `eval`, or dynamic code generation.
 
+Release tooling security boundary:
+- `npm audit` currently reports GHSA-86w9-cpqp-85rv / CVE-2026-85393 through the development-only chain `web-ext@10.8.0` -> `@devicefarmer/adbkit@3.3.9` -> `node-forge@1.4.0`. The advisory concerns RSA PKCS#1 v1.5 verification; no fixed `node-forge` release is currently available. Keep this finding visible in audit output.
+- These packages are absent from the production dependency tree and browser bundles. The repository's release flow invokes `web-ext` only for `lint` and `sign`; it must not use `web-ext run`, Android targets, or ADB functionality.
+- Release invocations go through `scripts/web-ext-release.sh`, which allows only `lint`/`sign`, rejects Android/ADB options, and removes ambient ADB environment variables. This narrows exposure but does not repair the vulnerable transitive package; rerun `npm audit` and reassess when upstream publishes a fix.
+
 Connect to a node:
 - Open `Settings`
 - The first-run fallback default comes from `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT` in the repo `.env`

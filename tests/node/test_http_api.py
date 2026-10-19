@@ -13,7 +13,7 @@ from chipcoin.consensus.genesis import mine_genesis
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
-from chipcoin.config import TESTNET_CONFIG
+from chipcoin.config import MAINNET_CONFIG, TESTNET_CONFIG
 from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.pow import verify_proof_of_work
@@ -140,12 +140,13 @@ def test_http_api_health_status_and_tip() -> None:
         tip_status, _, tip_body = _call_wsgi(app, method="GET", path="/v1/tip")
 
         assert health_status == "200 OK"
-        assert health_body == {"status": "ok", "api_version": "v1", "network": "mainnet", "chain_id": "chipcoin-mainnet-1", "genesis_hash": None}
+        assert health_body == {"status": "ok", "api_version": "v1", "network": "mainnet", "chain_id": "chipcoin-mainnet-1", "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"}
         assert status_status == "200 OK"
         assert status_body["api_version"] == "v1"
         assert status_body["network"] == "mainnet"
+        assert status_body["network_magic_hex"] == MAINNET_CONFIG.magic.hex()
         assert status_body["chain_id"] == "chipcoin-mainnet-1"
-        assert status_body["genesis_hash"] is None
+        assert status_body["genesis_hash"] == "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
         assert status_body["sync"]["mode"] == "idle"
         assert status_body["supply"]["minted_supply_chipbits"] == 0
         assert status_body["supply"]["scheduled_supply_chipbits"] == 0
@@ -403,6 +404,7 @@ def test_http_api_exposes_mining_status_and_template() -> None:
         assert template_code == "200 OK"
         assert template_body["template_id"]
         assert template_body["height"] == 0
+        assert template_body["network_magic_hex"] == MAINNET_CONFIG.magic.hex()
         assert template_body["previous_block_hash"] == "00" * 32
         assert template_body["payout_address"] == wallet_key(0).address
 

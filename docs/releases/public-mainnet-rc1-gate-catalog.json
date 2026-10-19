@@ -3,14 +3,13 @@
   "counts": {
     "AUTOMATED_PRE_FREEZE": 20,
     "BLOCKED_FINAL_CHAIN": 63,
-    "BLOCKED_FINAL_GENESIS": 1,
     "BLOCKED_RUNTIME_DEPENDENCIES": 1,
-    "BLOCKED_SOURCE_FREEZE": 5,
+    "BLOCKED_SOURCE_FREEZE": 6,
     "MANUAL_ATTESTATION": 8
   },
   "gates": [
     {
-      "blocker": "canonical genesis bytes/hash are intentionally pending",
+      "blocker": "requires the approved canonical genesis in a clean frozen source revision",
       "category": "consensus_config",
       "command": null,
       "cwd": ".",
@@ -39,7 +38,7 @@
         ],
         "test_only_evidence_forbidden": true
       },
-      "execution_mode": "BLOCKED_FINAL_GENESIS",
+      "execution_mode": "BLOCKED_SOURCE_FREEZE",
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",

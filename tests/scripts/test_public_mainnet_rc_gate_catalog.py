@@ -19,6 +19,9 @@ def test_catalog_covers_all_canonical_gates() -> None:
     assert {gate["id"] for gate in gates} == {gate["id"] for gate in matrix["requirements"]}
     assert all(gate["required_evidence_refs"] for gate in gates)
     assert all(gate["pass_criteria"] and gate["fail_criteria"] for gate in gates)
+    genesis_gate = next(gate for gate in gates if gate["id"] == "CONS-CFG-001")
+    assert genesis_gate["execution_mode"] == "BLOCKED_SOURCE_FREEZE"
+    assert "frozen source revision" in genesis_gate["blocker"]
 
 
 def test_automated_entries_have_commands_and_manual_entries_do_not_auto_pass() -> None:
