@@ -1056,6 +1056,7 @@ run_miner() {
 
   local -a node_args=()
   local -a miner_id_args=()
+  local -a max_accepted_blocks_args=()
   local node_url
   IFS=',' read -ra configured_node_urls <<< "${MINING_NODE_URLS}"
   for node_url in "${configured_node_urls[@]}"; do
@@ -1065,6 +1066,9 @@ run_miner() {
   [[ "${#node_args[@]}" -gt 0 ]] || die "MINING_NODE_URLS must contain at least one HTTP endpoint."
   if [[ -n "${MINING_MINER_ID:-}" ]]; then
     miner_id_args=(--miner-id "${MINING_MINER_ID}")
+  fi
+  if [[ -n "${MINING_MAX_ACCEPTED_BLOCKS:-}" ]]; then
+    max_accepted_blocks_args=(--max-accepted-blocks "${MINING_MAX_ACCEPTED_BLOCKS}")
   fi
 
   exec chipcoin \
@@ -1079,6 +1083,7 @@ run_miner() {
     --worker-count "${MINING_WORKER_COUNT:-1}" \
     --template-refresh-skew-seconds "${MINING_TEMPLATE_REFRESH_SKEW_SECONDS:-1}" \
     --mining-min-interval-seconds "${MINING_MIN_INTERVAL_SECONDS}" \
+    "${max_accepted_blocks_args[@]}" \
     "${miner_id_args[@]}"
 }
 

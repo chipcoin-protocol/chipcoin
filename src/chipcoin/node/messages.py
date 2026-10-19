@@ -46,6 +46,8 @@ class VersionMessage:
     start_height: int
     user_agent: str
     relay: bool = True
+    chain_id: str = ""
+    genesis_hash: str = ""
 
 
 @dataclass(frozen=True)

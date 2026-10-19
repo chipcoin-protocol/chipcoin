@@ -20,6 +20,8 @@ def _regular_miner_subsidy_chipbits(height: int, params: ConsensusParams) -> int
     if height < 0:
         raise ValueError("Block height cannot be negative.")
 
+    if height == 0 and params.genesis_miner_subsidy_chipbits is not None:
+        return params.genesis_miner_subsidy_chipbits
     halvings = height // params.halving_interval
     subsidy_chipbits = params.initial_miner_subsidy_chipbits >> halvings
     return max(subsidy_chipbits, 0)
@@ -30,7 +32,8 @@ def _regular_node_epoch_reward_chipbits(height: int, params: ConsensusParams) ->
 
     if height < 0:
         raise ValueError("Block height cannot be negative.")
-
+    if height == 0 and params.genesis_node_epoch_reward_chipbits is not None:
+        return params.genesis_node_epoch_reward_chipbits
     halvings = height // params.halving_interval
     reward_chipbits = params.initial_node_epoch_reward_chipbits >> halvings
     return max(reward_chipbits, 0)
@@ -140,9 +143,9 @@ def _uncapped_subsidy_totals_through_height(height: int, params: ConsensusParams
     if height < 0:
         return 0, 0
 
-    miner_total = 0
-    node_total = 0
-    current_height = 0
+    miner_total = _regular_miner_subsidy_chipbits(0, params)
+    node_total = _scheduled_node_epoch_reward_chipbits(0, params)
+    current_height = 1
     while current_height <= height:
         halving = current_height // params.halving_interval
         miner_subsidy = params.initial_miner_subsidy_chipbits >> halving

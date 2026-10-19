@@ -9,6 +9,7 @@ from typing import Mapping, Sequence
 
 from .hashes import double_sha256
 from .models import Transaction
+from .network_identity import chain_id_for_network
 from .params import ConsensusParams
 
 
@@ -122,7 +123,7 @@ def reward_epoch_seed_v2(*, previous_epoch_block_hashes: Sequence[str], epoch_in
         if len(block_hash) != 64:
             raise ValueError("previous_epoch_block_hashes entries must be 32 bytes hex")
         block_hash_bytes.append(bytes.fromhex(block_hash))
-    domain = f"{REWARD_EPOCH_SEED_V2_DOMAIN_PREFIX}:{network}".encode("utf-8")
+    domain = f"{REWARD_EPOCH_SEED_V2_DOMAIN_PREFIX}:{chain_id_for_network(network)}".encode("utf-8")
     payload = (
         domain
         + b"\x00"
@@ -264,11 +265,12 @@ def attestation_identity(attestation: RewardAttestation) -> tuple[int, int, str,
     )
 
 
-def reward_attestation_signature_digest(attestation: RewardAttestation) -> bytes:
+def reward_attestation_signature_digest(attestation: RewardAttestation, *, network: str = "mainnet") -> bytes:
     """Return the signing digest for one attestation."""
 
     payload = json.dumps(
         {
+            "chain_id": chain_id_for_network(network),
             "candidate_node_id": attestation.candidate_node_id,
             "check_window_index": attestation.check_window_index,
             "concentration_key": attestation.concentration_key,

@@ -132,6 +132,7 @@ def sign_transaction_artifact(
     signer: TransactionArtifactSigner,
     created_at: int,
     created_by: str | None = None,
+    network: str = "mainnet",
 ) -> tuple[TransactionArtifact, Transaction]:
     """Sign one unsigned artifact through an explicit signer interface."""
 
@@ -146,7 +147,12 @@ def sign_transaction_artifact(
     signed_inputs = []
     for index, plan_input in enumerate(sorted(inputs, key=lambda entry: entry.input_index)):
         previous_output = TxOutput(value=ChipbitAmount(plan_input.amount_chipbits), recipient=plan_input.recipient)
-        digest = transaction_signature_digest(unsigned_tx, index, previous_output=previous_output)
+        digest = transaction_signature_digest(
+            unsigned_tx,
+            index,
+            previous_output=previous_output,
+            network=network,
+        )
         signature, public_key = signer.sign_input(digest)
         signed_inputs.append(replace(unsigned_tx.inputs[index], signature=signature, public_key=public_key))
     signed_tx = replace(unsigned_tx, inputs=tuple(signed_inputs))

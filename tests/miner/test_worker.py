@@ -109,12 +109,26 @@ class FakeMiningClient:
         )
 
 
+class WrongChainMiningClient(FakeMiningClient):
+    def get_block_template(self, **kwargs) -> dict[str, object]:
+        payload = super().get_block_template(**kwargs)
+        return {**payload, "chain_id": "chipcoin-mainnet-rehearsal"}
+
+
+class MissingIdentityMiningClient(FakeMiningClient):
+    def get_block_template(self, **kwargs) -> dict[str, object]:
+        payload = super().get_block_template(**kwargs)
+        payload.pop("chain_id", None)
+        payload.pop("genesis_hash", None)
+        return payload
+
+
 def test_miner_worker_fetches_template_immediately_and_mines_remote_block() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "node.sqlite3")
         worker = MinerWorker(
             MinerWorkerConfig(
-                network="mainnet",
+                network="devnet",
                 payout_address=wallet_key(0).address,
                 node_urls=("memory://node",),
                 miner_id="worker-a",
@@ -133,11 +147,33 @@ def test_miner_worker_fetches_template_immediately_and_mines_remote_block() -> N
         assert service.chain_tip() is not None
 
 
+def test_miner_worker_stops_at_exact_accepted_block_limit() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "node.sqlite3")
+        worker = MinerWorker(
+            MinerWorkerConfig(
+                network="devnet",
+                payout_address=wallet_key(0).address,
+                node_urls=("memory://node",),
+                miner_id="bounded-worker",
+                nonce_batch_size=2_000_000,
+                max_accepted_blocks=2,
+            )
+        )
+        worker.clients = [FakeMiningClient(service)]
+
+        result = worker.run()
+
+        assert result["accepted_blocks"] == 2
+        assert service.chain_tip() is not None
+        assert service.chain_tip().height == 1
+
+
 def test_miner_worker_rejects_invalid_worker_count() -> None:
     with pytest.raises(ValueError, match="worker_count must be at least 1"):
         MinerWorker(
             MinerWorkerConfig(
-                network="mainnet",
+                network="devnet",
                 payout_address=wallet_key(0).address,
                 node_urls=("memory://node",),
                 miner_id="worker-a",
@@ -146,10 +182,44 @@ def test_miner_worker_rejects_invalid_worker_count() -> None:
         )
 
 
+def test_miner_worker_rejects_template_from_wrong_chain() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "node.sqlite3")
+        worker = MinerWorker(
+            MinerWorkerConfig(
+                network="devnet",
+                payout_address=wallet_key(0).address,
+                node_urls=("memory://node",),
+                miner_id="worker-a",
+            )
+        )
+        worker.clients = [WrongChainMiningClient(service)]
+
+        with pytest.raises(MiningApiError, match="chain identity mismatch"):
+            worker._acquire_template()
+
+
+def test_miner_worker_rejects_template_with_missing_chain_identity() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "node.sqlite3")
+        worker = MinerWorker(
+            MinerWorkerConfig(
+                network="devnet",
+                payout_address=wallet_key(0).address,
+                node_urls=("memory://node",),
+                miner_id="worker-a",
+            )
+        )
+        worker.clients = [MissingIdentityMiningClient(service)]
+
+        with pytest.raises(MiningApiError, match="chain identity mismatch"):
+            worker._acquire_template()
+
+
 def test_miner_worker_diagnostics_reports_worker_count() -> None:
     worker = MinerWorker(
         MinerWorkerConfig(
-            network="mainnet",
+            network="devnet",
             payout_address=wallet_key(0).address,
             node_urls=("memory://node",),
             miner_id="worker-a",
@@ -166,7 +236,7 @@ def test_miner_worker_marks_template_stale_after_tip_change() -> None:
         fake_time = FakeTime()
         worker = MinerWorker(
             MinerWorkerConfig(
-                network="mainnet",
+                network="devnet",
                 payout_address=wallet_key(0).address,
                 node_urls=("memory://node",),
                 miner_id="worker-a",
@@ -193,7 +263,7 @@ def test_miner_worker_marks_template_expired_after_ttl() -> None:
         fake_time = FakeTime()
         worker = MinerWorker(
             MinerWorkerConfig(
-                network="mainnet",
+                network="devnet",
                 payout_address=wallet_key(0).address,
                 node_urls=("memory://node",),
                 miner_id="worker-a",
@@ -220,7 +290,7 @@ def test_miner_worker_throttles_unchanged_tip_status_checks() -> None:
         fake_time = FakeTime(monotonic_value=10.0)
         worker = MinerWorker(
             MinerWorkerConfig(
-                network="mainnet",
+                network="devnet",
                 payout_address=wallet_key(0).address,
                 node_urls=("memory://node",),
                 miner_id="worker-a",
@@ -249,7 +319,7 @@ def test_miner_worker_fails_over_to_secondary_node() -> None:
         service = _make_service(Path(tempdir) / "node.sqlite3")
         worker = MinerWorker(
             MinerWorkerConfig(
-                network="mainnet",
+                network="devnet",
                 payout_address=wallet_key(0).address,
                 node_urls=("memory://primary", "memory://secondary"),
                 miner_id="worker-a",
@@ -276,7 +346,7 @@ def test_miner_worker_template_startup_does_not_depend_on_history_depth() -> Non
             service.apply_block(_mine_block(service.build_candidate_block(wallet_key(0).address).block))
         worker = MinerWorker(
             MinerWorkerConfig(
-                network="mainnet",
+                network="devnet",
                 payout_address=wallet_key(0).address,
                 node_urls=("memory://node",),
                 miner_id="worker-a",

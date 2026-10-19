@@ -645,6 +645,11 @@ class NodeRuntime:
             renewal_fee_chipbits=int(self.service.reward_node_fee_schedule()["renew_fee_chipbits"]),
             network=self.service.network,
             height=0 if tip is None else tip.height + 1,
+            funded=(
+                self.service.params.funded_reward_node_activation_height is not None
+                and (0 if tip is None else tip.height + 1) >= self.service.params.funded_reward_node_activation_height
+            ),
+            spend_candidates=self.service.list_spendable_outputs(self._reward_owner_wallet.address),
         )
         await self.submit_transaction(transaction)
         self._reward_submitted_renewal_epochs.add(current_epoch_index)
@@ -754,7 +759,8 @@ class NodeRuntime:
                         endpoint_commitment=endpoint_commitment,
                         concentration_key=f"unscoped:{candidate_node_id}",
                         signature_hex="",
-                    )
+                    ),
+                    network=self.service.network,
                 )
                 bundles_by_window.setdefault(int(window_index), []).append(attestation)
         for window_index, attestations in sorted(bundles_by_window.items()):
@@ -3568,12 +3574,15 @@ class NodeRuntime:
         """Build the local identity used for the next session."""
 
         tip = self.service.chain_tip()
+        network_config = get_network_config(self.service.network)
         return LocalPeerIdentity(
             node_id=self.node_id,
             network=self.service.network,
             start_height=0 if tip is None else tip.height,
             user_agent=f"/chipcoin-v2:{__version__}/",
-            network_magic=get_network_config(self.service.network).magic,
+            network_magic=network_config.magic,
+            chain_id=network_config.chain_id,
+            genesis_hash=network_config.canonical_genesis_hash or "",
         )
 
     async def _memory_metrics_loop(self) -> None:

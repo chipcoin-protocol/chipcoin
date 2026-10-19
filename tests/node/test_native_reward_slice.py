@@ -115,7 +115,8 @@ def _submit_signed_attestation(
             endpoint_commitment=endpoint_commitment,
             concentration_key=concentration_key,
             signature_hex="",
-        )
+        ),
+        network=service.network,
     )
     service.receive_transaction(
         Transaction(

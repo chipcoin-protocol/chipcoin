@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from string import hexdigits
 from typing import Callable
 
-from ..crypto.addresses import parse_address, pq_public_key_commitment, public_key_to_address
+from ..crypto.addresses import parse_address, pq_public_key_commitment, public_key_to_address, public_key_to_pq_address
 from ..crypto.addresses import PQ_ADDRESS_PREFIX
 from ..crypto.pq import (
     SIG_SCHEME_LEGACY_ECDSA,
@@ -59,6 +59,7 @@ from .nodes import (
     is_register_node_transaction,
     is_renew_node_transaction,
     is_special_node_transaction,
+    is_funded_reward_node_transaction,
     select_rewarded_nodes,
     special_node_transaction_signature_is_valid,
     validate_special_node_transaction_stateless,
@@ -107,6 +108,7 @@ class ValidationContext:
     enforce_coinbase_maturity: bool = True
     reward_fee_registry_count: int | None = None
     pq_verify_observer: Callable[..., None] | None = None
+    canonical_genesis_block: Block | None = None
 
 
 def is_coinbase_transaction(transaction: Transaction) -> bool:
@@ -195,6 +197,13 @@ def validate_transaction_stateful(transaction: Transaction, context: ValidationC
         return 0
     if is_special_node_transaction(transaction):
         _validate_special_node_transaction_stateful(transaction, context)
+        if is_register_reward_node_transaction(transaction) or is_renew_reward_node_transaction(transaction):
+            activation = context.params.funded_reward_node_activation_height
+            funded_required = activation is not None and context.height >= activation
+            if is_funded_reward_node_transaction(transaction) != funded_required:
+                raise ContextualValidationError("Reward-node transaction funding format does not match activation height.")
+            if funded_required:
+                return _validate_funded_reward_node_payment(transaction, context)
         return 0
     if _is_reward_attestation_bundle_transaction(transaction):
         _validate_reward_attestation_bundle_transaction_with_params(transaction, context)
@@ -220,9 +229,49 @@ def validate_transaction_stateful(transaction: Transaction, context: ValidationC
     return input_total_chipbits - output_total_chipbits
 
 
+def _validate_funded_reward_node_payment(transaction: Transaction, context: ValidationContext) -> int:
+    if int(transaction.metadata.get("owner_signature_scheme_id", "-1")) != SIG_SCHEME_ML_DSA_44:
+        raise ContextualValidationError("Funded reward-node owner must use ML-DSA-44.")
+    owner_pubkey = bytes.fromhex(transaction.metadata["owner_pubkey_hex"])
+    owner_address = public_key_to_pq_address(owner_pubkey, scheme_id=SIG_SCHEME_ML_DSA_44)
+    if any(output.recipient != owner_address for output in transaction.outputs):
+        raise ContextualValidationError("Funded reward-node change must return to the owner.")
+    if len({tx_input.previous_output for tx_input in transaction.inputs}) != len(transaction.inputs):
+        raise ContextualValidationError("Funded reward-node transaction repeats an input.")
+    input_total = 0
+    for index, tx_input in enumerate(transaction.inputs):
+        entry = context.utxo_view.get(tx_input.previous_output)
+        if entry is None:
+            raise ContextualValidationError("Funded reward-node input does not exist in the UTXO set.")
+        if entry.output.recipient != owner_address or tx_input.public_key != owner_pubkey:
+            raise ContextualValidationError("Funded reward-node input does not belong to the owner.")
+        if context.enforce_coinbase_maturity and not is_coinbase_mature(entry, context.height, context.params):
+            raise ContextualValidationError("Coinbase output is not mature enough to spend.")
+        _validate_standard_input_signature(transaction, index, tx_input, entry.output, context)
+        input_total += int(entry.output.value)
+    fee = input_total - transaction_output_total(transaction)
+    fee_key = "registration_fee_chipbits" if is_register_reward_node_transaction(transaction) else "renewal_fee_chipbits"
+    if fee != int(transaction.metadata[fee_key]):
+        raise ContextualValidationError("Funded reward-node effective fee does not match the consensus fee schedule.")
+    return fee
+
+
 def validate_block(block: Block, context: ValidationContext) -> int:
     """Perform full block validation and return the total fee amount."""
 
+    if context.height == 0 and context.canonical_genesis_block is not None:
+        from .genesis import verify_genesis
+
+        expected = context.canonical_genesis_block
+        verify_genesis(
+            block,
+            bits=context.params.genesis_bits,
+            expected_hash=expected.block_hash(),
+            chain_id=expected.transactions[0].metadata["chain_id"],
+        )
+        if block != expected:
+            raise ContextualValidationError("Genesis block does not match the canonical serialized block.")
+        return 0
     validate_block_stateless(block, context)
     return validate_block_stateful(block, context)
 
@@ -296,11 +345,10 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
                 verifier_window_counts[verifier_window_key] = verifier_window_counts.get(verifier_window_key, 0) + 1
                 if verifier_window_counts[verifier_window_key] > context.params.max_attestations_per_verifier_per_window:
                     raise ContextualValidationError("Block exceeds per-window verifier attestation emission limits.")
-        if not is_special_node_transaction(transaction):
-            for tx_input in transaction.inputs:
-                if tx_input.previous_output in seen_spends:
-                    raise ContextualValidationError("Block contains a double spend.")
-                seen_spends.add(tx_input.previous_output)
+        for tx_input in transaction.inputs:
+            if tx_input.previous_output in seen_spends:
+                raise ContextualValidationError("Block contains a double spend.")
+            seen_spends.add(tx_input.previous_output)
 
         staged_context = ValidationContext(
             height=context.height,
@@ -335,6 +383,8 @@ def validate_block_stateful(block: Block, context: ValidationContext) -> int:
         total_fees_chipbits += fee_chipbits
         if is_special_node_transaction(transaction):
             apply_special_node_transaction(transaction, height=context.height, registry_view=staged_registry)
+            if is_funded_reward_node_transaction(transaction):
+                staged_view.apply_transaction(transaction, context.height)
         elif _is_reward_attestation_bundle_transaction(transaction):
             bundle = _parse_reward_attestation_bundle(transaction)
             staged_attestation_bundles.append(bundle)
@@ -752,8 +802,8 @@ def _validate_special_node_transaction_stateful(transaction: Transaction, contex
             raise ContextualValidationError("Legacy node registry transactions are disabled on mainnet.")
         if owner_scheme_id != required_scheme_id:
             raise ContextualValidationError("Mainnet reward-node owner signatures must use ML-DSA-44.")
-        if transaction.metadata.get("owner_signature_version") != "v2":
-            raise ContextualValidationError("Mainnet reward-node owner signatures must use the network-bound v2 format.")
+        if transaction.metadata.get("owner_signature_version") != "v3":
+            raise ContextualValidationError("Mainnet reward-node owner signatures must use the chain-bound v3 format.")
         if is_register_node_transaction(transaction):
             try:
                 payout = parse_address(transaction.metadata["payout_address"])
@@ -943,13 +993,13 @@ def _validate_reward_attestation_bundle_transaction_with_params(transaction: Tra
         if context.params.reward_node_signature_scheme_id and scheme_id != context.params.reward_node_signature_scheme_id:
             raise ContextualValidationError("reward_attestation_bundle verifier does not use the required signature scheme.")
         if scheme_id == SIG_SCHEME_LEGACY_ECDSA:
-            signature_valid = verify_digest(verifier.node_pubkey, reward_attestation_signature_digest(attestation), signature)
+            signature_valid = verify_digest(verifier.node_pubkey, reward_attestation_signature_digest(attestation, network=context.network), signature)
         else:
             scheme = get_signature_scheme(scheme_id)
             signature_valid = (
                 scheme.signature_size is not None
                 and len(signature) == scheme.signature_size
-                and scheme.verify(verifier.node_pubkey, reward_attestation_signature_digest(attestation), signature)
+                and scheme.verify(verifier.node_pubkey, reward_attestation_signature_digest(attestation, network=context.network), signature)
             )
         if not signature_valid:
             raise ContextualValidationError("reward_attestation_bundle attestation signature is invalid.")

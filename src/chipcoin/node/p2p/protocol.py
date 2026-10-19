@@ -37,6 +37,8 @@ class LocalPeerIdentity:
     protocol_version: int = 1
     relay: bool = True
     network_magic: bytes = MAINNET_CONFIG.magic
+    chain_id: str = ""
+    genesis_hash: str = ""
 
 
 @dataclass
@@ -265,6 +267,10 @@ class PeerProtocol:
             raise HandshakeFailedError("Peer sent duplicate version message.")
         if payload.network != self.identity.network:
             raise HandshakeFailedError("Peer announced a different network.")
+        if self.identity.chain_id and payload.chain_id != self.identity.chain_id:
+            raise HandshakeFailedError("Peer announced a different chain id.")
+        if self.identity.genesis_hash and payload.genesis_hash != self.identity.genesis_hash:
+            raise HandshakeFailedError("Peer announced a different genesis hash.")
 
         self.state.remote_version = payload
         self.state.version_received = True
@@ -287,6 +293,8 @@ class PeerProtocol:
                 payload=VersionMessage(
                     protocol_version=self.identity.protocol_version,
                     network=self.identity.network,
+                    chain_id=self.identity.chain_id,
+                    genesis_hash=self.identity.genesis_hash,
                     node_id=self.identity.node_id,
                     start_height=self.identity.start_height,
                     user_agent=self.identity.user_agent,

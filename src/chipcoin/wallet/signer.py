@@ -9,10 +9,13 @@ from ..consensus.models import ChipbitAmount, OutPoint, Transaction, TxInput, Tx
 from ..consensus.epoch_settlement import RewardAttestation, reward_attestation_signature_digest
 from ..consensus.nodes import (
     SPECIAL_NODE_SIGNATURE_VERSION_V2,
+    SPECIAL_NODE_SIGNATURE_VERSION_V3,
     special_node_signature_version_for_height,
     special_node_transaction_signature_digest,
     special_node_transaction_signature_digest_v2,
+    special_node_transaction_signature_digest_v3,
 )
+from ..consensus.network_identity import chain_id_for_network
 from ..consensus.validation import transaction_signature_digest
 from ..crypto.addresses import is_valid_address, public_key_to_address, public_key_to_pq_address
 from ..crypto.keys import derive_public_key, generate_private_key
@@ -220,6 +223,8 @@ class TransactionSigner:
         registration_fee_chipbits: int,
         network: str = "mainnet",
         height: int = 0,
+        funded: bool = False,
+        spend_candidates: list[SpendCandidate] | None = None,
     ) -> Transaction:
         """Construct and sign a native `register_reward_node` transaction."""
 
@@ -249,7 +254,9 @@ class TransactionSigner:
             "owner_signature_scheme_id": str(self.wallet_key.scheme_id),
             "owner_signature_hex": "",
         }
-        return self._sign_special_node_metadata(metadata, network=network, height=height)
+        return self._sign_special_node_metadata(
+            metadata, network=network, height=height, funded=funded, spend_candidates=spend_candidates
+        )
 
     def build_renew_reward_node_transaction(
         self,
@@ -261,6 +268,8 @@ class TransactionSigner:
         renewal_fee_chipbits: int,
         network: str = "mainnet",
         height: int = 0,
+        funded: bool = False,
+        spend_candidates: list[SpendCandidate] | None = None,
     ) -> Transaction:
         """Construct and sign a native `renew_reward_node` transaction."""
 
@@ -277,12 +286,23 @@ class TransactionSigner:
             "owner_signature_scheme_id": str(self.wallet_key.scheme_id),
             "owner_signature_hex": "",
         }
-        return self._sign_special_node_metadata(metadata, network=network, height=height)
+        return self._sign_special_node_metadata(
+            metadata, network=network, height=height, funded=funded, spend_candidates=spend_candidates
+        )
 
-    def _sign_special_node_metadata(self, metadata: dict[str, str], *, network: str, height: int) -> Transaction:
+    def _sign_special_node_metadata(
+        self, metadata: dict[str, str], *, network: str, height: int,
+        funded: bool = False, spend_candidates: list[SpendCandidate] | None = None,
+    ) -> Transaction:
         required_version = special_node_signature_version_for_height(network=network, height=height)
         signed_metadata = dict(metadata)
-        if required_version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
+        if required_version == SPECIAL_NODE_SIGNATURE_VERSION_V3:
+            chain_id = chain_id_for_network(network)
+            signed_metadata["owner_signature_version"] = SPECIAL_NODE_SIGNATURE_VERSION_V3
+            signed_metadata["owner_signature_chain_id"] = chain_id
+            unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+            digest = special_node_transaction_signature_digest_v3(unsigned, chain_id=chain_id)
+        elif required_version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
             signed_metadata["owner_signature_version"] = SPECIAL_NODE_SIGNATURE_VERSION_V2
             signed_metadata["owner_signature_network"] = network
             unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
@@ -291,12 +311,38 @@ class TransactionSigner:
             unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
             digest = special_node_transaction_signature_digest(unsigned)
         signed_metadata["owner_signature_hex"] = self.sign(digest).hex()
-        return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+        if not funded:
+            return Transaction(version=1, inputs=(), outputs=(), metadata=signed_metadata)
+        if self.wallet_key.scheme_id != SIG_SCHEME_ML_DSA_44:
+            raise ValueError("Funded reward-node transactions require an ML-DSA-44 owner.")
+        fee_key = "registration_fee_chipbits" if metadata["kind"] == "register_reward_node" else "renewal_fee_chipbits"
+        fee = int(metadata[fee_key])
+        selection = select_inputs(spend_candidates or [], fee)
+        inputs = tuple(
+            TxInput(previous_output=OutPoint(txid=candidate.txid, index=candidate.index), sig_scheme_id=SIG_SCHEME_ML_DSA_44)
+            for candidate in selection.selected
+        )
+        outputs = (
+            (TxOutput(value=ChipbitAmount(selection.change_chipbits), recipient=self.wallet_key.address),)
+            if selection.change_chipbits else ()
+        )
+        transaction = Transaction(version=2, inputs=inputs, outputs=outputs, metadata=signed_metadata)
+        signed_inputs = []
+        for index, candidate in enumerate(selection.selected):
+            if candidate.recipient != self.wallet_key.address:
+                raise ValueError("Funded reward-node input does not belong to the owner.")
+            digest = transaction_signature_digest(
+                transaction, index,
+                previous_output=TxOutput(value=ChipbitAmount(candidate.amount_chipbits), recipient=candidate.recipient),
+                network=network,
+            )
+            signed_inputs.append(replace(inputs[index], signature=self.sign(digest), public_key=self.wallet_key.public_key))
+        return replace(transaction, inputs=tuple(signed_inputs))
 
-    def sign_reward_attestation(self, attestation: RewardAttestation) -> RewardAttestation:
+    def sign_reward_attestation(self, attestation: RewardAttestation, *, network: str) -> RewardAttestation:
         """Sign one native reward attestation."""
 
         return replace(
             attestation,
-            signature_hex=self.sign(reward_attestation_signature_digest(attestation)).hex(),
+            signature_hex=self.sign(reward_attestation_signature_digest(attestation, network=network)).hex(),
         )

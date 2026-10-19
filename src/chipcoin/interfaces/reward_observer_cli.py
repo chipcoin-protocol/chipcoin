@@ -360,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
             signer=signer,
             created_at=args.created_at if args.created_at is not None else int(time.time()),
             created_by=args.operator,
+            network=config.network,
         )
         store.insert_transaction_artifact(signed_artifact)
         _print_json(transaction_artifact_report(signed_artifact))

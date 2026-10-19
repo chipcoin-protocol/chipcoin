@@ -20,7 +20,7 @@ from ..consensus.nodes import NodeRegistryView, apply_special_node_transaction, 
 from ..consensus.params import ConsensusParams
 from ..consensus.pow import verify_proof_of_work
 from ..consensus.serialization import serialize_transaction
-from ..consensus.utxo import InMemoryUtxoView
+from ..consensus.utxo import InMemoryUtxoView, OverlayUtxoView, UtxoView
 from ..consensus.validation import ValidationContext, ValidationError, validate_transaction
 from ..pq.policy import DEFAULT_PQ_POLICY_LIMITS, pq_signature_cost
 from ..storage.mempool import MempoolEntry
@@ -97,6 +97,7 @@ class MiningCoordinator:
         bits: int,
         mempool_entries: list[MempoolEntry],
         node_registry_view: NodeRegistryView,
+        utxo_view: UtxoView | None = None,
         confirmed_transaction_ids: set[str] | None = None,
         extra_coinbase_metadata: dict[str, str] | None = None,
         system_transactions: tuple[Transaction, ...] = (),
@@ -120,6 +121,7 @@ class MiningCoordinator:
             network=network,
             confirmed_transaction_ids=confirmed_transaction_ids or set(),
             node_registry_view=node_registry_view,
+            utxo_view=utxo_view,
         )
         total_fees_chipbits = sum(entry.fee for entry in selected_entries)
         miner_amount_chipbits = miner_subsidy_chipbits + total_fees_chipbits
@@ -175,6 +177,7 @@ class MiningCoordinator:
         max_transaction_weight_units: int,
         confirmed_transaction_ids: set[str],
         node_registry_view: NodeRegistryView,
+        utxo_view: UtxoView | None = None,
     ) -> list[MempoolEntry]:
         """Select mempool transactions by fee-rate with basic ancestor ordering."""
 
@@ -199,11 +202,12 @@ class MiningCoordinator:
         included_attestation_identities: set[tuple[int, int, str, str]] = set()
         included_verifier_window_counts: dict[tuple[int, str], int] = {}
         staged_registry = node_registry_view.clone()
+        staged_view = InMemoryUtxoView() if utxo_view is None else OverlayUtxoView(utxo_view)
         special_node_context = ValidationContext(
             height=height,
             median_time_past=0,
             params=self.params,
-            utxo_view=InMemoryUtxoView(),
+            utxo_view=staged_view,
             network=network,
             node_registry_view=staged_registry,
             reward_fee_registry_count=reward_fee_node_count(node_registry_view, height=height, params=self.params),
@@ -260,6 +264,7 @@ class MiningCoordinator:
                     except (ValidationError, ValueError):
                         continue
                 included_entries.append(selection.entry)
+                staged_view.apply_transaction(selection.transaction, height)
                 included_txids.add(selection.transaction.txid())
                 current_weight_units += selection.weight_units
                 current_pq_signature_cost += selection_pq_signature_cost

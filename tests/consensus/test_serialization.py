@@ -123,7 +123,7 @@ def test_v2_transaction_serialization_includes_sig_scheme_id() -> None:
     assert decoded == transaction
 
 
-def test_v2_signing_serialization_includes_scheme_id_and_network_domain() -> None:
+def test_v2_signing_serialization_includes_scheme_id_and_chain_domain() -> None:
     transaction = Transaction(
         version=2,
         inputs=(
@@ -147,9 +147,9 @@ def test_v2_signing_serialization_includes_scheme_id_and_network_domain() -> Non
         network="testnet",
     )
 
-    assert b"chipcoin:tx-signature:v2:testnet" in payload
+    assert b"chipcoin:tx-signature:v3:chipcoin-testnet-1" in payload
     assert "070000000a0000fdffffff" in payload.hex()
-    assert payload.endswith((2).to_bytes(4, "little"))
+    assert payload.endswith((3).to_bytes(4, "little"))
 
 
 def test_deserialize_transaction_rejects_truncated_extended_varint() -> None:

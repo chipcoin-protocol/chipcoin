@@ -9,8 +9,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from chipcoin.consensus.epoch_settlement import RewardAttestation
+from chipcoin.consensus.genesis import mine_genesis
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, OutPoint, Transaction
+from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
 from chipcoin.config import TESTNET_CONFIG
 from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.nodes import NodeRecord
@@ -29,6 +31,8 @@ MAINNET_PARAMS = replace(
     genesis_bits=0x207FFFFF,
     require_pq_standard_transactions=False,
     reward_node_signature_scheme_id=0,
+    genesis_miner_subsidy_chipbits=50 * 100_000_000,
+    genesis_node_epoch_reward_chipbits=None,
 )
 
 
@@ -136,10 +140,12 @@ def test_http_api_health_status_and_tip() -> None:
         tip_status, _, tip_body = _call_wsgi(app, method="GET", path="/v1/tip")
 
         assert health_status == "200 OK"
-        assert health_body == {"status": "ok", "api_version": "v1", "network": "mainnet"}
+        assert health_body == {"status": "ok", "api_version": "v1", "network": "mainnet", "chain_id": "chipcoin-mainnet-1", "genesis_hash": None}
         assert status_status == "200 OK"
         assert status_body["api_version"] == "v1"
         assert status_body["network"] == "mainnet"
+        assert status_body["chain_id"] == "chipcoin-mainnet-1"
+        assert status_body["genesis_hash"] is None
         assert status_body["sync"]["mode"] == "idle"
         assert status_body["supply"]["minted_supply_chipbits"] == 0
         assert status_body["supply"]["scheduled_supply_chipbits"] == 0
@@ -255,7 +261,7 @@ def test_http_api_status_and_supply_report_testnet_network() -> None:
         supply_status, _, supply_body = _call_wsgi(app, method="GET", path="/v1/supply")
 
         assert health_status == "200 OK"
-        assert health_body == {"status": "ok", "api_version": "v1", "network": "testnet"}
+        assert health_body == {"status": "ok", "api_version": "v1", "network": "testnet", "chain_id": "chipcoin-testnet-1", "genesis_hash": None}
         assert status_status == "200 OK"
         assert status_body["network"] == "testnet"
         assert status_body["network_magic_hex"] == TESTNET_CONFIG.magic.hex()
@@ -269,7 +275,21 @@ def test_http_api_status_and_supply_report_testnet_network() -> None:
 def test_http_api_supply_matches_cli_and_status_on_same_tip() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        service = _make_service(db_path)
+        supply_params = replace(
+            MAINNET_PARAMS,
+            genesis_miner_subsidy_chipbits=0,
+            genesis_node_epoch_reward_chipbits=0,
+        )
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(
+            db_path,
+            params=supply_params,
+            time_provider=lambda: next(timestamps),
+        )
+        service.install_or_verify_genesis(
+            mine_genesis(timestamp=1_699_999_999, bits=supply_params.genesis_bits),
+            chain_id=PUBLIC_MAINNET_CHAIN_ID,
+        )
         miner_address = wallet_key(0).address
         service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
         service.apply_block(_mine_block(service.build_candidate_block(miner_address).block))
@@ -392,6 +412,7 @@ def test_http_api_exposes_native_reward_epoch_routes() -> None:
         params = replace(
             MAINNET_PARAMS,
             node_reward_activation_height=0,
+            funded_reward_node_activation_height=None,
             epoch_length_blocks=5,
             reward_check_windows_per_epoch=4,
             reward_target_checks_per_epoch=1,
@@ -459,6 +480,7 @@ def test_http_api_reward_node_status_reports_active_stale_and_warming_up() -> No
         params = replace(
             MAINNET_PARAMS,
             node_reward_activation_height=0,
+            funded_reward_node_activation_height=None,
             epoch_length_blocks=5,
             reward_node_warmup_epochs=2,
             reward_check_windows_per_epoch=4,
@@ -644,6 +666,7 @@ def test_http_api_reward_epoch_summary_reports_closed_epoch_with_payouts() -> No
         params = replace(
             MAINNET_PARAMS,
             node_reward_activation_height=0,
+            funded_reward_node_activation_height=None,
             epoch_length_blocks=5,
             reward_node_warmup_epochs=0,
             reward_check_windows_per_epoch=4,
@@ -693,7 +716,8 @@ def test_http_api_reward_epoch_summary_reports_closed_epoch_with_payouts() -> No
                 endpoint_commitment="127.0.0.1:19001",
                 concentration_key="demo:reward-node-a",
                 signature_hex="",
-            )
+            ),
+            network="mainnet",
         )
         service.receive_transaction(
             Transaction(
@@ -1622,7 +1646,7 @@ def test_http_api_stable_client_subset_shapes() -> None:
         _, _, peers = _call_wsgi(app, method="GET", path="/v1/peers")
         _, _, peer_summary = _call_wsgi(app, method="GET", path="/v1/peers/summary")
 
-        assert set(health) == {"api_version", "network", "status"}
+        assert set(health) == {"api_version", "network", "chain_id", "genesis_hash", "status"}
         assert health["status"] == "ok"
 
         assert {

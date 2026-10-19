@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
+from ..config import get_network_config, require_startable_network
 from ..consensus.validation import ValidationError
 from ..crypto.addresses import is_valid_address
 from ..node.service import NodeService
@@ -138,7 +139,14 @@ class HttpApiApp:
 
     def _dispatch(self, *, method: str, path: str, environ) -> object:
         if method == "GET" and path == "/v1/health":
-            return {"status": "ok", "api_version": self.API_VERSION, "network": self.service.network}
+            config = get_network_config(self.service.network)
+            return {
+                "status": "ok",
+                "api_version": self.API_VERSION,
+                "network": self.service.network,
+                "chain_id": config.chain_id,
+                "genesis_hash": config.canonical_genesis_hash,
+            }
 
         if method == "GET" and path == "/v1/status":
             return self._fresh_status_payload()
@@ -650,6 +658,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     configure_logging(args.log_level)
+    require_startable_network(args.network)
     app = create_app(Path(args.data), network=args.network)
     with make_server(
         args.host,

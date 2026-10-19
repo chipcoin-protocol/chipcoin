@@ -8,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from typing import Any
 
+from ..config import get_network_config
 from ..consensus.merkle import merkle_root
 from ..consensus.models import Block, BlockHeader, Transaction, TxOutput
 from ..consensus.pow import verify_proof_of_work
@@ -131,6 +132,13 @@ class MinerWorker:
             raise ValueError("At least one mining node URL is required.")
         if config.worker_count < 1:
             raise ValueError("worker_count must be at least 1.")
+        network_config = get_network_config(config.network)
+        self.expected_chain_id = config.expected_chain_id or network_config.chain_id
+        self.expected_genesis_hash = (
+            config.expected_genesis_hash
+            if config.expected_genesis_hash is not None
+            else network_config.canonical_genesis_hash
+        )
         self._active_client_index = 0
         self.accepted_blocks = 0
         self.rejected_blocks = 0
@@ -178,6 +186,12 @@ class MinerWorker:
                     )
                     if self.config.mining_min_interval_seconds > 0:
                         self.time.sleep(self.config.mining_min_interval_seconds)
+                    if (
+                        self.config.max_accepted_blocks is not None
+                        and self.accepted_blocks >= self.config.max_accepted_blocks
+                    ):
+                        active_template = None
+                        break
                 else:
                     self.rejected_blocks += 1
                     self.logger.info(
@@ -227,6 +241,7 @@ class MinerWorker:
                     miner_id=self.config.miner_id,
                     template_mode="full_block",
                 )
+                self._verify_node_identity(template)
             except MiningApiError as exc:
                 last_error = exc
                 self.logger.warning("mining node unavailable node=%s error=%s", client.base_url, exc)
@@ -353,6 +368,7 @@ class MinerWorker:
         client = self.clients[self._active_client_index]
         try:
             status = client.status()
+            self._verify_node_identity(status)
         except MiningApiError as exc:
             return (
                 TemplateRefreshDecision(
@@ -380,6 +396,16 @@ class MinerWorker:
                 refreshed_template,
             )
         return None, refreshed_template
+
+    def _verify_node_identity(self, payload: dict[str, object]) -> None:
+        """Reject templates/status from a different logical chain."""
+
+        if payload.get("network") != self.config.network:
+            raise MiningApiError("mining endpoint network identity mismatch")
+        if payload.get("chain_id") != self.expected_chain_id:
+            raise MiningApiError("mining endpoint chain identity mismatch")
+        if payload.get("genesis_hash") != self.expected_genesis_hash:
+            raise MiningApiError("mining endpoint genesis identity mismatch")
 
     def _template_is_stale(self, active_template: ActiveTemplate) -> bool:
         """Backwards-compatible boolean helper for tests and callers."""

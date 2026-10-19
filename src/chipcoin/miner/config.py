@@ -19,4 +19,7 @@ class MinerWorkerConfig:
     template_refresh_skew_seconds: int = 1
     mining_min_interval_seconds: float = 0.0
     run_seconds: float | None = None
+    max_accepted_blocks: int | None = None
     worker_count: int = 1
+    expected_chain_id: str | None = None
+    expected_genesis_hash: str | None = None

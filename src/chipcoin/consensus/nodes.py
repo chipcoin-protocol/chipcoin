@@ -7,11 +7,12 @@ from typing import Iterable
 
 from ..crypto.addresses import is_valid_address
 from ..crypto.keys import parse_public_key_hex
-from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, get_signature_scheme
+from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44, get_signature_scheme
 from ..crypto.signatures import verify_digest
 from .epoch_settlement import REGISTER_REWARD_NODE_KIND, RENEW_REWARD_NODE_KIND
 from .hashes import double_sha256
 from .models import Transaction
+from .network_identity import chain_id_for_network, uses_mainnet_policy
 from .params import ConsensusParams
 
 
@@ -19,6 +20,8 @@ REGISTER_NODE_KIND = "register_node"
 RENEW_NODE_KIND = "renew_node"
 SPECIAL_NODE_SIGNATURE_DOMAIN_V2 = "chipcoin:special-node-tx:v2"
 SPECIAL_NODE_SIGNATURE_VERSION_V2 = "v2"
+SPECIAL_NODE_SIGNATURE_DOMAIN_V3 = "chipcoin:special-node-tx:v3"
+SPECIAL_NODE_SIGNATURE_VERSION_V3 = "v3"
 SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT = 11111
 SPECIAL_NODE_SIGNATURE_SCHEDULED_NETWORKS = {"devnet", "testnet"}
 
@@ -120,6 +123,12 @@ def is_legacy_renew_node_transaction(transaction: Transaction) -> bool:
 
 def is_register_reward_node_transaction(transaction: Transaction) -> bool:
     return transaction.metadata.get("kind") == REGISTER_REWARD_NODE_KIND
+
+
+def is_funded_reward_node_transaction(transaction: Transaction) -> bool:
+    return transaction.version == 2 and transaction.metadata.get("kind") in {
+        REGISTER_REWARD_NODE_KIND, RENEW_REWARD_NODE_KIND
+    }
 
 
 def is_renew_reward_node_transaction(transaction: Transaction) -> bool:
@@ -382,9 +391,25 @@ def special_node_transaction_signature_digest_v2(transaction: Transaction, *, ne
     return double_sha256(payload.encode("utf-8"))
 
 
+def special_node_transaction_signature_digest_v3(transaction: Transaction, *, chain_id: str) -> bytes:
+    """Return the immutable-chain-domain digest used by public mainnet."""
+
+    if not chain_id:
+        raise ValueError("Special node transaction v3 signatures require a chain id.")
+    payload = "|".join(
+        [
+            f"{SPECIAL_NODE_SIGNATURE_DOMAIN_V3}:{chain_id}",
+            _special_node_transaction_signature_payload_v1(transaction),
+        ]
+    )
+    return double_sha256(payload.encode("utf-8"))
+
+
 def special_node_signature_version_for_height(*, network: str, height: int) -> str:
     """Return the required special-node signature version for a network height."""
 
+    if uses_mainnet_policy(network):
+        return SPECIAL_NODE_SIGNATURE_VERSION_V3
     if network in SPECIAL_NODE_SIGNATURE_SCHEDULED_NETWORKS and height < SPECIAL_NODE_SIGNATURE_V2_ACTIVATION_HEIGHT:
         return ""
     return SPECIAL_NODE_SIGNATURE_VERSION_V2
@@ -405,6 +430,12 @@ def special_node_transaction_signature_is_valid(transaction: Transaction, *, net
     version = transaction.metadata.get("owner_signature_version", "")
     if version != required_version:
         return False
+    if version == SPECIAL_NODE_SIGNATURE_VERSION_V3:
+        signature_chain_id = transaction.metadata.get("owner_signature_chain_id", "")
+        expected_chain_id = chain_id_for_network(network)
+        if signature_chain_id != expected_chain_id:
+            return False
+        return _verify_scheme_signature(owner_scheme_id, owner_pubkey, special_node_transaction_signature_digest_v3(transaction, chain_id=expected_chain_id), owner_signature)
     if version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
         signature_network = transaction.metadata.get("owner_signature_network", "")
         if signature_network != network:
@@ -420,6 +451,11 @@ def special_node_transaction_signature_is_valid_stateless(transaction: Transacti
     owner_pubkey = _parse_scheme_public_key(transaction.metadata["owner_pubkey_hex"], owner_scheme_id)
     owner_signature = bytes.fromhex(transaction.metadata["owner_signature_hex"])
     version = transaction.metadata.get("owner_signature_version", "")
+    if version == SPECIAL_NODE_SIGNATURE_VERSION_V3:
+        signature_chain_id = transaction.metadata.get("owner_signature_chain_id", "")
+        if not signature_chain_id:
+            return False
+        return _verify_scheme_signature(owner_scheme_id, owner_pubkey, special_node_transaction_signature_digest_v3(transaction, chain_id=signature_chain_id), owner_signature)
     if version == SPECIAL_NODE_SIGNATURE_VERSION_V2:
         signature_network = transaction.metadata.get("owner_signature_network", "")
         if not signature_network:
@@ -579,16 +615,21 @@ def _validate_renew_reward_node_transaction(transaction: Transaction) -> None:
 def _validate_node_metadata_common(transaction: Transaction) -> None:
     owner_pubkey_hex = transaction.metadata.get("owner_pubkey_hex", "")
     owner_signature_hex = transaction.metadata.get("owner_signature_hex", "")
-    if transaction.inputs:
-        raise ValueError("Special node transactions must not contain UTXO inputs.")
-    if transaction.outputs:
-        raise ValueError("Special node transactions must not contain outputs.")
+    if is_funded_reward_node_transaction(transaction):
+        if not transaction.inputs or len(transaction.outputs) > 1:
+            raise ValueError("Funded reward transactions require inputs and at most one change output.")
+        if any(tx_input.sig_scheme_id != SIG_SCHEME_ML_DSA_44 or not tx_input.signature or not tx_input.public_key for tx_input in transaction.inputs):
+            raise ValueError("Funded reward transaction inputs require ML-DSA-44 signatures.")
+        if any(int(output.value) <= 0 or not is_valid_address(output.recipient) for output in transaction.outputs):
+            raise ValueError("Funded reward transaction change output is invalid.")
+    elif transaction.version != 1 or transaction.inputs or transaction.outputs:
+        raise ValueError("Legacy special node transactions must be version 1 without inputs or outputs.")
     if not owner_pubkey_hex:
         raise ValueError("Special node transactions must declare owner_pubkey_hex.")
     if not owner_signature_hex:
         raise ValueError("Special node transactions must declare owner_signature_hex.")
     version = transaction.metadata.get("owner_signature_version", "")
-    if version and version != SPECIAL_NODE_SIGNATURE_VERSION_V2:
+    if version and version not in {SPECIAL_NODE_SIGNATURE_VERSION_V2, SPECIAL_NODE_SIGNATURE_VERSION_V3}:
         raise ValueError("Special node transactions declare an unsupported owner_signature_version.")
     if version == SPECIAL_NODE_SIGNATURE_VERSION_V2 and not transaction.metadata.get("owner_signature_network", ""):
         raise ValueError("Special node transaction v2 signatures must declare owner_signature_network.")

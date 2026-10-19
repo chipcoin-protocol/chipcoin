@@ -112,11 +112,11 @@ def test_transaction_signer_builds_post_activation_pq_vector() -> None:
     assert built.transaction.inputs[0].sig_scheme_id == SIG_SCHEME_ML_DSA_44
     assert fee == 1_000
     assert built.change_chipbits == 234_566_890
-    assert built.transaction.txid() == "05eb8549e696aa818d5a20aa585a12959c80ebeaa6035c8a44272caf17f7c2ce"
+    assert built.transaction.txid() == "f08eb40abc37a3572c35388cf89de9ed37bf7affbe4fa7d249ac91304879d46e"
     assert hashlib.sha256(owner.private_key).hexdigest() == "04bf6b9f579166a627961dfc5c3bf9717df868db88863856356c4668c8b56b0b"
     assert hashlib.sha256(owner.public_key).hexdigest() == "9f107644c1084526af3bc8098680b05499a2325a644e388fb4f970e058d19d46"
-    assert hashlib.sha256(built.transaction.inputs[0].signature).hexdigest() == "d1af5447e0758334b719a99849e10062821f2b7d9fea01be35f2ed15f3a7ccfe"
-    assert hashlib.sha256(serialized).hexdigest() == "a873e1e18fca2457bac12386176035be8c80a5de0e4f2eb039d5b15be9198623"
+    assert hashlib.sha256(built.transaction.inputs[0].signature).hexdigest() == "b5c62c5e68d0f973249a56c86c2aad7a257f0873ebf3b4cc9b2bcfb670741a0c"
+    assert hashlib.sha256(serialized).hexdigest() == "b2424b4defcf6f16eea7287b6b2ddad4b88ade6ba69ec73e7289ade55b1d8e58"
     assert len(serialized) == 3_934
 
 

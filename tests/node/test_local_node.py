@@ -47,6 +47,9 @@ MAINNET_PARAMS = replace(
     genesis_bits=0x207FFFFF,
     require_pq_standard_transactions=False,
     reward_node_signature_scheme_id=0,
+    genesis_miner_subsidy_chipbits=50 * 100_000_000,
+    genesis_node_epoch_reward_chipbits=None,
+    funded_reward_node_activation_height=None,
 )
 
 

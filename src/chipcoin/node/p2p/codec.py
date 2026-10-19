@@ -116,6 +116,8 @@ def _encode_payload(message: MessageEnvelope) -> bytes:
             [
                 pack("<I", payload.protocol_version),
                 _encode_string(payload.network),
+                _encode_string(payload.chain_id),
+                _encode_string(payload.genesis_hash),
                 _encode_string(payload.node_id),
                 pack("<I", payload.start_height),
                 _encode_string(payload.user_agent),
@@ -187,6 +189,8 @@ def _decode_payload(command: str, payload: bytes) -> MessageEnvelope:
         protocol_version = _unpack_from(UINT32, payload, 0, "version protocol version")[0]
         offset = 4
         network, offset = _decode_string(payload, offset)
+        chain_id, offset = _decode_string(payload, offset)
+        genesis_hash, offset = _decode_string(payload, offset)
         node_id, offset = _decode_string(payload, offset)
         start_height = _unpack_from(UINT32, payload, offset, "version start height")[0]
         offset += 4
@@ -199,6 +203,8 @@ def _decode_payload(command: str, payload: bytes) -> MessageEnvelope:
             payload=VersionMessage(
                 protocol_version=protocol_version,
                 network=network,
+                chain_id=chain_id,
+                genesis_hash=genesis_hash,
                 node_id=node_id,
                 start_height=start_height,
                 user_agent=user_agent,

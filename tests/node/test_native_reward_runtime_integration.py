@@ -126,7 +126,8 @@ def _build_attestation_bundle_transaction(
             endpoint_commitment=endpoint_commitment,
             concentration_key=concentration_key,
             signature_hex="",
-        )
+        ),
+        network="devnet",
     )
     return Transaction(
         version=1,

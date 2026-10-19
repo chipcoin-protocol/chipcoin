@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .network_identity import uses_mainnet_policy
 from .params import ConsensusParams
 
 
@@ -19,7 +20,7 @@ def pq_support_activation_height(network: str, *, params: ConsensusParams | None
         return params.pq_support_activation_height
 
     normalized = network.lower()
-    if normalized == "mainnet":
+    if uses_mainnet_policy(normalized):
         return PQ_SUPPORT_MAINNET_ACTIVATION_HEIGHT
     if normalized == "devnet":
         return PQ_SUPPORT_DEVNET_ACTIVATION_HEIGHT

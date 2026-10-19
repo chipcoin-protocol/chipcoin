@@ -16,7 +16,7 @@ from chipcoin.consensus.nodes import InMemoryNodeRegistryView, NodeRecord
 from chipcoin.consensus.params import MAINNET_PARAMS, TESTNET_PARAMS
 
 
-EXACT_CAP_HEIGHT = 643_297
+EXACT_CAP_HEIGHT = 643_328
 
 
 def _legacy_subsidy_totals_through_height(height: int, params) -> tuple[int, int]:
@@ -25,7 +25,7 @@ def _legacy_subsidy_totals_through_height(height: int, params) -> tuple[int, int
 
     miner_total = 0
     node_total = 0
-    for current_height in range(height + 1):
+    for current_height in range(1, height + 1):
         halvings = current_height // params.halving_interval
         miner_subsidy = max(params.initial_miner_subsidy_chipbits >> halvings, 0)
         node_reward = 0
@@ -41,10 +41,11 @@ def _legacy_subsidy_totals_through_height(height: int, params) -> tuple[int, int
 
 
 def test_initial_subsidy_values_match_locked_baseline() -> None:
-    assert miner_subsidy_chipbits(0, MAINNET_PARAMS) == 50 * 100_000_000
+    assert miner_subsidy_chipbits(0, MAINNET_PARAMS) == 0
+    assert miner_subsidy_chipbits(1, MAINNET_PARAMS) == 50 * 100_000_000
     assert node_reward_pool_chipbits(0, MAINNET_PARAMS) == 0
     assert node_reward_pool_chipbits(99, MAINNET_PARAMS) == 50 * 100_000_000
-    assert total_block_subsidy_chipbits(0, MAINNET_PARAMS) == 50 * 100_000_000
+    assert total_block_subsidy_chipbits(0, MAINNET_PARAMS) == 0
     assert total_block_subsidy_chipbits(99, MAINNET_PARAMS) == 100 * 100_000_000
 
 
@@ -71,17 +72,18 @@ def test_halving_boundary_applies_to_miner_and_node_epoch_reward() -> None:
 
 
 def test_subsidy_split_matches_epoch_reward_shape() -> None:
-    assert subsidy_split_chipbits(0, MAINNET_PARAMS) == (50 * 100_000_000, 0)
+    assert subsidy_split_chipbits(0, MAINNET_PARAMS) == (0, 0)
+    assert subsidy_split_chipbits(1, MAINNET_PARAMS) == (50 * 100_000_000, 0)
     assert subsidy_split_chipbits(99, MAINNET_PARAMS) == (50 * 100_000_000, 50 * 100_000_000)
     assert subsidy_split_chipbits(100, MAINNET_PARAMS) == (50 * 100_000_000, 0)
 
 
 def test_total_issuance_progression_matches_new_schedule() -> None:
     assert total_subsidy_through_height(-1, MAINNET_PARAMS) == 0
-    assert total_subsidy_through_height(0, MAINNET_PARAMS) == 50 * 100_000_000
-    assert total_subsidy_through_height(98, MAINNET_PARAMS) == 99 * 50 * 100_000_000
-    assert total_subsidy_through_height(99, MAINNET_PARAMS) == 100 * 50 * 100_000_000 + 50 * 100_000_000
-    assert total_subsidy_through_height(199, MAINNET_PARAMS) == 200 * 50 * 100_000_000 + 2 * 50 * 100_000_000
+    assert total_subsidy_through_height(0, MAINNET_PARAMS) == 0
+    assert total_subsidy_through_height(98, MAINNET_PARAMS) == 98 * 50 * 100_000_000
+    assert total_subsidy_through_height(99, MAINNET_PARAMS) == 99 * 50 * 100_000_000 + 50 * 100_000_000
+    assert total_subsidy_through_height(199, MAINNET_PARAMS) == 199 * 50 * 100_000_000 + 2 * 50 * 100_000_000
 
 
 def test_total_issuance_matches_legacy_loop_at_boundaries() -> None:
@@ -105,7 +107,7 @@ def test_total_issuance_matches_legacy_loop_at_boundaries() -> None:
 
 
 def test_first_era_total_matches_reference_number() -> None:
-    assert total_subsidy_through_height(110_999, MAINNET_PARAMS) == 560_550_000_000_000
+    assert total_subsidy_through_height(110_999, MAINNET_PARAMS) == 560_545_000_000_000
 
 
 def test_cap_clamp_hits_exact_max_supply() -> None:

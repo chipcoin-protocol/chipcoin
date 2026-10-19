@@ -9,8 +9,10 @@ import pytest
 
 from chipcoin.consensus.economics import subsidy_split_chipbits
 from chipcoin.consensus.epoch_settlement import RewardAttestation
+from chipcoin.consensus.genesis import mine_genesis
 from chipcoin.consensus.models import Block, OutPoint, Transaction
 from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
 from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.validation import ContextualValidationError
 from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
@@ -25,7 +27,7 @@ MAINNET_PQ_TEST_PARAMS = replace(
     genesis_bits=0x207FFFFF,
     coinbase_maturity=2,
     node_reward_activation_height=0,
-    epoch_length_blocks=5,
+    epoch_length_blocks=10,
     reward_node_warmup_epochs=0,
     reward_check_windows_per_epoch=4,
     reward_target_checks_per_epoch=1,
@@ -41,14 +43,19 @@ def _wallet(seed_byte: int):
     return wallet_key_from_mldsa44_seed(bytes((seed_byte,)) * 32)
 
 
-def _make_service(database_path: Path) -> NodeService:
-    timestamps = iter(range(1_800_000_000, 1_800_001_000))
-    return NodeService.open_sqlite(
+def _make_service(database_path: Path, *, start_time: int = 1_800_000_000) -> NodeService:
+    timestamps = iter(range(start_time, start_time + 1_000))
+    service = NodeService.open_sqlite(
         database_path,
         network="mainnet",
         params=MAINNET_PQ_TEST_PARAMS,
         time_provider=lambda: next(timestamps),
     )
+    service.install_or_verify_genesis(
+        mine_genesis(timestamp=1_799_999_999, bits=MAINNET_PQ_TEST_PARAMS.genesis_bits),
+        chain_id=PUBLIC_MAINNET_CHAIN_ID,
+    )
+    return service
 
 
 def _mine_block(block: Block) -> Block:
@@ -80,8 +87,28 @@ def _register_reward_node(service: NodeService, *, wallet, node_id: str, port: i
             declared_port=port,
             registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
             network="mainnet",
+            height=service.chain_tip().height + 1,
+            funded=True,
+            spend_candidates=service.list_spendable_outputs(wallet.address),
         )
     )
+
+
+def _fund_reward_owner(service: NodeService, *, miner, owner, amount_chipbits: int) -> Transaction:
+    built = TransactionSigner(miner).build_signed_transaction(
+        spend_candidates=service.list_spendable_outputs(miner.address),
+        recipient=owner.address,
+        amount_chipbits=amount_chipbits,
+        fee_chipbits=1_000,
+        change_recipient=miner.address,
+        network="mainnet",
+    )
+    service.receive_transaction(built.transaction)
+    block = _mine(service, miner.address)
+    assert block.transactions[1].txid() == built.transaction.txid()
+    block_height = int(block.transactions[0].metadata["height"])
+    assert int(block.transactions[0].outputs[0].value) == subsidy_split_chipbits(block_height, service.params)[0] + 1_000
+    return built.transaction
 
 
 def _submit_attestation(
@@ -108,7 +135,8 @@ def _submit_attestation(
             endpoint_commitment=f"{assignment['declared_host']}:{assignment['declared_port']}",
             concentration_key=f"mainnet-pq:{candidate_node_id}",
             signature_hex="",
-        )
+        ),
+        network="mainnet",
     )
     service.receive_transaction(
         Transaction(
@@ -141,9 +169,16 @@ def test_mainnet_pq_value_and_reward_node_lifecycle_end_to_end() -> None:
         assert coinbase.outputs[0].recipient == miner.address
         assert miner.address.startswith("CHCQ")
 
+        _mine(service, miner.address)
+        _fund_reward_owner(service, miner=miner, owner=reward_a, amount_chipbits=200_000_000)
+        _fund_reward_owner(service, miner=miner, owner=reward_b, amount_chipbits=200_000_000)
+
         _register_reward_node(service, wallet=reward_a, node_id="reward-node-a", port=19001)
         _register_reward_node(service, wallet=reward_b, node_id="reward-node-b", port=19002)
-        _mine(service, miner.address)
+        registration_block = _mine(service, miner.address)
+        assert sum(int(output.value) for output in registration_block.transactions[0].outputs) == (
+            subsidy_split_chipbits(5, service.params)[0] + 200_000_000
+        )
 
         for node_id, wallet in (("reward-node-a", reward_a), ("reward-node-b", reward_b)):
             record = service.get_registered_node(node_id)
@@ -153,11 +188,7 @@ def test_mainnet_pq_value_and_reward_node_lifecycle_end_to_end() -> None:
             assert record.node_signature_scheme_id == SIG_SCHEME_ML_DSA_44
 
         spend = TransactionSigner(miner).build_signed_transaction(
-            spend_candidates=spend_candidates_for_wallet(
-                OutPoint(txid=coinbase.txid(), index=0),
-                value=int(coinbase.outputs[0].value),
-                owner=miner,
-            ),
+            spend_candidates=service.list_spendable_outputs(miner.address),
             recipient=recipient.address,
             amount_chipbits=100_000_000,
             fee_chipbits=1_000,
@@ -175,6 +206,9 @@ def test_mainnet_pq_value_and_reward_node_lifecycle_end_to_end() -> None:
             declared_port=19101,
             renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
             network="mainnet",
+            height=service.chain_tip().height + 1,
+            funded=True,
+            spend_candidates=service.list_spendable_outputs(reward_a.address),
         )
         service.receive_transaction(renew)
         _mine(service, miner.address)
@@ -195,12 +229,13 @@ def test_mainnet_pq_value_and_reward_node_lifecycle_end_to_end() -> None:
             verifier_wallet=verifier_wallet,
         )
         _mine(service, miner.address)
+        _mine(service, miner.address)
         closing_block = _mine(service, miner.address)
 
         settlement = service.native_reward_settlement_diagnostics(epoch_index=0)[0]
         assert settlement["rewarded_node_count"] == 1
         assert settlement["reward_entries"][0]["node_id"] == "reward-node-a"
-        expected_reward = subsidy_split_chipbits(4, service.params)[1]
+        expected_reward = subsidy_split_chipbits(9, service.params)[1]
         assert settlement["distributed_node_reward_chipbits"] == expected_reward
         inspected = service.inspect_block(block_hash=closing_block.block_hash())
         assert inspected is not None
@@ -295,8 +330,8 @@ def test_mainnet_pq_nodes_sync_and_reorg_to_more_work() -> None:
     with TemporaryDirectory() as tempdir:
         root = Path(tempdir)
         origin = _make_service(root / "origin.sqlite3")
-        node_a = _make_service(root / "node-a.sqlite3")
-        node_b = _make_service(root / "node-b.sqlite3")
+        node_a = _make_service(root / "node-a.sqlite3", start_time=1_800_010_000)
+        node_b = _make_service(root / "node-b.sqlite3", start_time=1_800_020_000)
         miner_a = _wallet(13)
         miner_b = _wallet(14)
         common_blocks = _mine_chain(origin, 3, miner_a.address)
@@ -342,6 +377,55 @@ def test_mainnet_pq_nodes_sync_and_reorg_to_more_work() -> None:
         assert result.new_tip == branch_b[-1].block_hash()
         assert node_a.find_transaction(spend_b.txid())["location"] == "chain"
         assert node_a.find_transaction(spend_a.txid()) is None
+
+
+def test_mainnet_funded_registration_rolls_back_and_returns_to_mempool_after_reorg() -> None:
+    with TemporaryDirectory() as tempdir:
+        root = Path(tempdir)
+        origin = _make_service(root / "origin.sqlite3")
+        node_a = _make_service(root / "node-a.sqlite3", start_time=1_800_010_000)
+        node_b = _make_service(root / "node-b.sqlite3", start_time=1_800_020_000)
+        miner = _wallet(17)
+        owner = _wallet(18)
+
+        _mine_chain(origin, 3, miner.address)
+        _fund_reward_owner(origin, miner=miner, owner=owner, amount_chipbits=200_000_000)
+        assert SyncManager(node=node_a).synchronize(origin).blocks_fetched == 4
+        assert SyncManager(node=node_b).synchronize(origin).blocks_fetched == 4
+
+        registration = TransactionSigner(owner).build_register_reward_node_transaction(
+            node_id="reorg-funded-node",
+            payout_address=owner.address,
+            node_public_key_hex=owner.public_key.hex(),
+            node_signature_scheme_id=owner.scheme_id,
+            declared_host="127.0.0.1",
+            declared_port=19018,
+            registration_fee_chipbits=int(node_a.reward_node_fee_schedule()["register_fee_chipbits"]),
+            network="mainnet",
+            height=node_a.chain_tip().height + 1,
+            funded=True,
+            spend_candidates=node_a.list_spendable_outputs(owner.address),
+        )
+        node_a.receive_transaction(registration)
+        orphaned_block = _mine(node_a, miner.address)
+        orphaned_coinbase = OutPoint(orphaned_block.transactions[0].txid(), 0)
+        assert node_a.get_registered_node("reorg-funded-node") is not None
+
+        winning_branch = _mine_chain(node_b, 2, miner.address)
+        result = SyncManager(node=node_a).synchronize(node_b)
+
+        assert result.reorged is True
+        assert result.old_tip == orphaned_block.block_hash()
+        assert result.new_tip == winning_branch[-1].block_hash()
+        assert node_a.get_registered_node("reorg-funded-node") is None
+        assert node_a.chainstate.get(registration.inputs[0].previous_output) is not None
+        assert node_a.chainstate.get(OutPoint(registration.txid(), 0)) is None
+        assert node_a.chainstate.get(orphaned_coinbase) is None
+        assert [transaction.txid() for transaction in node_a.list_mempool_transactions()] == [
+            registration.txid()
+        ]
+        assert node_a.chain_tip() == node_b.chain_tip()
+        assert node_a.chainstate.list_utxos() == node_b.chainstate.list_utxos()
 
 
 def test_mainnet_pq_snapshot_roundtrip_and_delta_sync() -> None:

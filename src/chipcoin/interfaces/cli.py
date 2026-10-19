@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib import error, request
 from urllib.parse import urlparse
 
-from ..config import DEFAULT_NETWORK, NETWORK_CONFIGS, get_network_config, resolve_data_path
+from ..config import DEFAULT_NETWORK, NETWORK_CONFIGS, get_network_config, require_startable_network, resolve_data_path
 from ..consensus.epoch_settlement import RewardAttestation
 from ..consensus.models import Transaction
 from ..consensus.pow import verify_proof_of_work
@@ -53,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)
+        if args.command in {"run", "start", "mine"}:
+            require_startable_network(args.network)
         configure_runtime = args.command in {"run", "mine"}
         if configure_runtime:
             from ..utils.logging import configure_logging
@@ -601,8 +603,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "wallet-generate":
-            scheme = args.scheme or ("mldsa44" if args.network == "mainnet" else "secp256k1")
-            if scheme == "mldsa44" and args.network != "mainnet":
+            network_config = get_network_config(args.network)
+            scheme = args.scheme or ("mldsa44" if network_config.params.require_pq_standard_transactions else "secp256k1")
+            if scheme == "mldsa44" and not network_config.params.require_pq_standard_transactions:
                 _print_warning(
                     "Experimental testnet CHCQ wallet. Protect the signing device and backups carefully; "
                     "deterministic ML-DSA signing is not a substitute for hardware-isolated key storage. "
@@ -948,6 +951,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Mining node HTTP endpoint. Repeat the flag to configure failover nodes.",
     )
     mine_parser.add_argument("--run-seconds", type=float, default=None, help="Stop automatically after N seconds.")
+    mine_parser.add_argument(
+        "--max-accepted-blocks",
+        type=int,
+        default=None,
+        help="Stop after this many accepted blocks. Intended for controlled operations.",
+    )
     mine_parser.add_argument("--miner-address", required=True, help="Mining reward payout address.")
     mine_parser.add_argument("--miner-id", default=None, help="Stable miner identifier used in template requests.")
     mine_parser.add_argument("--polling-interval-seconds", type=float, default=2.0)
@@ -1558,6 +1567,7 @@ def _run_miner_worker(args) -> dict[str, object]:
 
     if not args.node_url:
         raise ValueError("mine requires at least one --node-url endpoint")
+    network_config = get_network_config(args.network)
     config = MinerWorkerConfig(
         network=args.network,
         payout_address=args.miner_address,
@@ -1570,6 +1580,9 @@ def _run_miner_worker(args) -> dict[str, object]:
         template_refresh_skew_seconds=int(args.template_refresh_skew_seconds),
         mining_min_interval_seconds=float(args.mining_min_interval_seconds),
         run_seconds=args.run_seconds,
+        max_accepted_blocks=args.max_accepted_blocks,
+        expected_chain_id=network_config.chain_id,
+        expected_genesis_hash=network_config.canonical_genesis_hash,
     )
     worker = MinerWorker(config)
     return worker.run()
@@ -1869,6 +1882,9 @@ def _build_register_reward_node_transaction(service: NodeService, wallet_key: Wa
     existing_owner = service.get_registered_node_by_owner(wallet_key.public_key)
     if existing_owner is not None and existing_owner.node_id != args.node_id:
         raise ValueError("This wallet owner is already registered to a node.")
+    height = _next_block_height(service)
+    activation = service.params.funded_reward_node_activation_height
+    funded = activation is not None and height >= activation
     return signer.build_register_reward_node_transaction(
         node_id=args.node_id,
         payout_address=args.payout_address,
@@ -1877,7 +1893,9 @@ def _build_register_reward_node_transaction(service: NodeService, wallet_key: Wa
         declared_port=args.declared_port,
         registration_fee_chipbits=int(service.reward_node_fee_schedule()["register_fee_chipbits"]),
         network=service.network,
-        height=_next_block_height(service),
+        height=height,
+        funded=funded,
+        spend_candidates=service.list_spendable_outputs(wallet_key.address) if funded else None,
     )
 
 
@@ -1890,6 +1908,9 @@ def _build_renew_reward_node_transaction(service: NodeService, wallet_key: Walle
         raise ValueError("Node id is not registered.")
     if record.owner_pubkey != wallet_key.public_key:
         raise ValueError("Wallet does not match the registered node owner.")
+    height = _next_block_height(service)
+    activation = service.params.funded_reward_node_activation_height
+    funded = activation is not None and height >= activation
     return signer.build_renew_reward_node_transaction(
         node_id=args.node_id,
         renewal_epoch=current_epoch,
@@ -1897,7 +1918,9 @@ def _build_renew_reward_node_transaction(service: NodeService, wallet_key: Walle
         declared_port=args.declared_port,
         renewal_fee_chipbits=int(service.reward_node_fee_schedule()["renew_fee_chipbits"]),
         network=service.network,
-        height=_next_block_height(service),
+        height=height,
+        funded=funded,
+        spend_candidates=service.list_spendable_outputs(wallet_key.address) if funded else None,
     )
 
 
@@ -1947,7 +1970,7 @@ def _build_reward_attestation_bundle_transaction(service: NodeService, args, wal
                     f"for verifier_node_id={attestation.verifier_node_id}"
                 )
         if signer is not None:
-            attestation = signer.sign_reward_attestation(attestation)
+            attestation = signer.sign_reward_attestation(attestation, network=args.network)
         attestations.append(attestation)
     metadata = {
         "kind": "reward_attestation_bundle",
@@ -2044,6 +2067,8 @@ async def _send_transaction_to_peer(transaction, peer: OutboundPeer, *, network:
             user_agent="chipcoin-wallet/0.1",
             relay=False,
             network_magic=network_config.magic,
+            chain_id=network_config.chain_id,
+            genesis_hash=network_config.canonical_genesis_hash or "",
         ),
     )
     try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from struct import pack, unpack_from
 
 from .models import Block, BlockHeader, ChipbitAmount, OutPoint, Transaction, TxInput, TxOutput
+from .network_identity import chain_id_for_network
 
 
 def _encode_varint(value: int) -> bytes:
@@ -165,8 +166,8 @@ def serialize_transaction_for_signing(
     encoded.extend(pack("<Q", previous_output_value))
     encoded.extend(_encode_string(previous_output_recipient))
     if transaction.version >= 2:
-        encoded.extend(_encode_string(f"chipcoin:tx-signature:v2:{network}"))
-        encoded.extend(pack("<I", 2))
+        encoded.extend(_encode_string(f"chipcoin:tx-signature:v3:{chain_id_for_network(network)}"))
+        encoded.extend(pack("<I", 3))
     else:
         encoded.extend(pack("<I", 1))
     return bytes(encoded)

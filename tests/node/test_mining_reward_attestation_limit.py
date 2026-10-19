@@ -169,7 +169,8 @@ def test_build_candidate_block_skips_conflicting_verifier_window_attestation_bun
                     endpoint_commitment=candidate_endpoints[candidate_node_id],
                     concentration_key=f"unscoped:{candidate_node_id}",
                     signature_hex="",
-                )
+                ),
+                network="devnet",
             )
             transaction = Transaction(
                 version=1,

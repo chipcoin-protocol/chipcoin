@@ -51,6 +51,8 @@ MAINNET_PARAMS = replace(
     genesis_bits=0x207FFFFF,
     require_pq_standard_transactions=False,
     reward_node_signature_scheme_id=0,
+    genesis_miner_subsidy_chipbits=50 * 100_000_000,
+    genesis_node_epoch_reward_chipbits=None,
 )
 
 
@@ -111,13 +113,14 @@ def _register_reward_node_transaction(*, node_id: str, owner_index: int = 0, fee
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest_v2
+    from chipcoin.consensus.nodes import special_node_transaction_signature_digest_v3
+    from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
     from chipcoin.crypto.signatures import sign_digest
 
-    metadata["owner_signature_version"] = "v2"
-    metadata["owner_signature_network"] = "mainnet"
+    metadata["owner_signature_version"] = "v3"
+    metadata["owner_signature_chain_id"] = PUBLIC_MAINNET_CHAIN_ID
     unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
+    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v3(unsigned_v2, chain_id=PUBLIC_MAINNET_CHAIN_ID)).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
 
 
@@ -138,13 +141,14 @@ def _renew_reward_node_transaction(*, node_id: str, owner_index: int = 0, renewa
         "owner_signature_hex": "",
     }
     unsigned = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    from chipcoin.consensus.nodes import special_node_transaction_signature_digest_v2
+    from chipcoin.consensus.nodes import special_node_transaction_signature_digest_v3
+    from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
     from chipcoin.crypto.signatures import sign_digest
 
-    metadata["owner_signature_version"] = "v2"
-    metadata["owner_signature_network"] = "mainnet"
+    metadata["owner_signature_version"] = "v3"
+    metadata["owner_signature_chain_id"] = PUBLIC_MAINNET_CHAIN_ID
     unsigned_v2 = Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
-    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v2(unsigned_v2, network="mainnet")).hex()
+    metadata["owner_signature_hex"] = sign_digest(owner.private_key, special_node_transaction_signature_digest_v3(unsigned_v2, chain_id=PUBLIC_MAINNET_CHAIN_ID)).hex()
     return Transaction(version=1, inputs=(), outputs=(), metadata=metadata)
 
 
@@ -267,7 +271,8 @@ def _valid_native_attestation_bundle_transaction(*, params=None) -> tuple[Transa
             endpoint_commitment=f"{candidate.declared_host}:{candidate.declared_port}",
             concentration_key="ip:127.0.0.1",
             signature_hex="",
-        )
+        ),
+        network="mainnet",
     )
     transaction = _reward_attestation_bundle_transaction(
         attestations=[
@@ -541,7 +546,7 @@ def test_validate_transaction_accepts_register_reward_node_with_matching_fee_par
     context = ValidationContext(
         height=301,
         median_time_past=0,
-        params=MAINNET_PARAMS,
+        params=replace(MAINNET_PARAMS, funded_reward_node_activation_height=None),
         utxo_view=InMemoryUtxoView(),
         node_registry_view=InMemoryNodeRegistryView(),
     )
@@ -564,7 +569,7 @@ def test_validate_transaction_accepts_register_reward_node_upgrade_for_same_lega
     context = ValidationContext(
         height=3053,
         median_time_past=0,
-        params=MAINNET_PARAMS,
+        params=replace(MAINNET_PARAMS, funded_reward_node_activation_height=None),
         utxo_view=InMemoryUtxoView(),
         node_registry_view=registry,
     )
@@ -601,7 +606,7 @@ def test_validate_transaction_accepts_renew_reward_node_with_matching_fee_param(
     context = ValidationContext(
         height=300,
         median_time_past=0,
-        params=MAINNET_PARAMS,
+        params=replace(MAINNET_PARAMS, funded_reward_node_activation_height=None),
         utxo_view=InMemoryUtxoView(),
         node_registry_view=InMemoryNodeRegistryView.from_records([existing]),
     )

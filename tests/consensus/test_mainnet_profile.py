@@ -7,11 +7,11 @@ from chipcoin.consensus.economics import (
 )
 from chipcoin.consensus.epoch_settlement import reward_epoch_seed_version
 from chipcoin.consensus.nodes import special_node_signature_version_for_height
-from chipcoin.consensus.params import MAINNET_PARAMS
+from chipcoin.consensus.params import MAINNET_PARAMS, MAINNET_TEST_ONLY_PARAMS
 from chipcoin.consensus.pq_activation import pq_support_activation_height
 
 
-MAINNET_EXACT_CAP_HEIGHT = 643_297
+MAINNET_EXACT_CAP_HEIGHT = 643_328
 
 
 def test_mainnet_consensus_profile_is_frozen() -> None:
@@ -39,12 +39,28 @@ def test_mainnet_consensus_profile_is_frozen() -> None:
 def test_mainnet_modern_consensus_rules_are_active_from_genesis() -> None:
     assert pq_support_activation_height("mainnet", params=MAINNET_PARAMS) == 0
     assert reward_epoch_seed_version(network="mainnet", epoch_index=0) == 2
-    assert special_node_signature_version_for_height(network="mainnet", height=0) == "v2"
+    assert special_node_signature_version_for_height(network="mainnet", height=0) == "v3"
+
+
+def test_test_only_rehearsal_uses_mainnet_policy_rules() -> None:
+    assert pq_support_activation_height(
+        "mainnet-test-only",
+        params=MAINNET_TEST_ONLY_PARAMS,
+    ) == 0
+    assert reward_epoch_seed_version(network="mainnet-test-only", epoch_index=0) == 2
+    assert special_node_signature_version_for_height(
+        network="mainnet-test-only",
+        height=0,
+    ) == "v3"
+    assert MAINNET_TEST_ONLY_PARAMS.require_pq_standard_transactions is True
+    assert MAINNET_TEST_ONLY_PARAMS.reward_node_signature_scheme_id == 10
 
 
 def test_mainnet_emission_ends_at_the_frozen_hard_cap() -> None:
     maximum = MAINNET_PARAMS.max_money_chipbits
 
+    assert subsidy_split_chipbits(0, MAINNET_PARAMS) == (0, 0)
+    assert subsidy_split_chipbits(1, MAINNET_PARAMS) == (50 * 100_000_000, 0)
     assert node_reward_pool_chipbits(99, MAINNET_PARAMS) == 50 * 100_000_000
     assert total_subsidy_through_height(MAINNET_EXACT_CAP_HEIGHT - 1, MAINNET_PARAMS) == maximum - 156_250_000
     assert subsidy_split_chipbits(MAINNET_EXACT_CAP_HEIGHT, MAINNET_PARAMS) == (156_250_000, 0)

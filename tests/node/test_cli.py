@@ -14,6 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from chipcoin.consensus.economics import register_reward_node_fee_chipbits, subsidy_split_chipbits
 from chipcoin.consensus.epoch_settlement import RewardAttestation
+from chipcoin.consensus.genesis import mine_genesis
+from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.models import Block, OutPoint, Transaction
@@ -34,12 +36,21 @@ MAINNET_PARAMS = replace(
     genesis_bits=0x207FFFFF,
     require_pq_standard_transactions=False,
     reward_node_signature_scheme_id=0,
+    genesis_miner_subsidy_chipbits=50 * 100_000_000,
+    genesis_node_epoch_reward_chipbits=None,
 )
 
 
 def _make_service(database_path: Path) -> NodeService:
     timestamps = iter(range(1_700_000_000, 1_700_000_200))
     return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS, time_provider=lambda: next(timestamps))
+
+
+def _install_test_public_genesis(service: NodeService) -> None:
+    service.install_or_verify_genesis(
+        mine_genesis(timestamp=1_699_999_999, bits=service.params.genesis_bits),
+        chain_id=PUBLIC_MAINNET_CHAIN_ID,
+    )
 
 
 def _mine_block(block: Block) -> Block:
@@ -53,6 +64,7 @@ def _mine_block(block: Block) -> Block:
 def _native_reward_test_params():
     return replace(
         MAINNET_PARAMS,
+        funded_reward_node_activation_height=None,
         node_reward_activation_height=0,
         epoch_length_blocks=5,
         reward_node_warmup_epochs=0,
@@ -101,7 +113,8 @@ def _materialize_native_reward_payout(service: NodeService, *, miner_address: st
             endpoint_commitment="127.0.0.1:19001",
             concentration_key="demo:reward-node-a",
             signature_hex="",
-        )
+        ),
+        network="mainnet",
     )
     service.receive_transaction(
         Transaction(
@@ -226,11 +239,11 @@ def test_cli_start_returns_status_snapshot() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
 
-        code, payload = _run_cli(["--data", str(db_path), "start"])
+        code, payload = _run_cli(["--network", "devnet", "--data", str(db_path), "start"])
 
         assert code == 0
         assert payload["started"] is True
-        assert payload["status"]["network"] == "mainnet"
+        assert payload["status"]["network"] == "devnet"
 
 
 def test_cli_start_uses_devnet_profile() -> None:
@@ -870,7 +883,7 @@ def test_cli_list_peers_and_peer_detail_show_protocol_error_class() -> None:
         assert list_payload[0]["host"] == "127.0.0.1"
         assert list_payload[0]["port"] == 18444
         assert list_payload[0]["network"] == "mainnet"
-        assert list_payload[0]["network_magic_hex"] == "f9beb4d9"
+        assert list_payload[0]["network_magic_hex"] == "c0897c0d"
         assert list_payload[0]["direction"] == "outbound"
         assert list_payload[0]["source"] is None
         assert list_payload[0]["peer_state"] == "banned"
@@ -1576,6 +1589,7 @@ def test_cli_reward_history_for_miner_address_and_empty_case() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
         service = _make_service(db_path)
+        _install_test_public_genesis(service)
         miner_address = wallet_key(0).address
         mined = _mine_block(service.build_candidate_block(miner_address).block)
         service.apply_block(mined)
@@ -1735,7 +1749,8 @@ def test_cli_reward_settlement_report_exposes_ranking_and_non_reward_reason() ->
                 endpoint_commitment="127.0.0.1:19001",
                 concentration_key="demo:reward-node-a",
                 signature_hex="",
-            )
+            ),
+            network="mainnet",
         )
         service.receive_transaction(
             Transaction(
@@ -2098,7 +2113,7 @@ def test_cli_economy_summary_and_supply_diagnostics_with_zero_data() -> None:
         assert economy_payload["scheduled_supply_chipbits"] == 0
         assert economy_payload["materialized_supply_chipbits"] == 0
         assert economy_payload["undistributed_node_reward_supply_chipbits"] == 0
-        assert economy_payload["next_block_miner_subsidy_chipbits"] == 5_000_000_000
+        assert economy_payload["next_block_miner_subsidy_chipbits"] == 0
         assert economy_payload["next_block_node_reward_chipbits"] == 0
         assert economy_payload["next_block_epoch_closing"] is False
         assert economy_payload["remaining_supply_chipbits"] == MAINNET_PARAMS.max_money_chipbits
@@ -2116,6 +2131,7 @@ def test_cli_top_miners_and_top_recipients() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
         service = _make_service(db_path)
+        _install_test_public_genesis(service)
         miner_a = wallet_key(0).address
         miner_b = wallet_key(1).address
         service.apply_block(_mine_block(service.build_candidate_block(miner_a).block))
@@ -2164,6 +2180,7 @@ def test_cli_supply_diagnostics_reflects_immature_coinbase() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
         service = _make_service(db_path)
+        _install_test_public_genesis(service)
         service.apply_block(_mine_block(service.build_candidate_block(wallet_key(0).address).block))
 
         economy_code, economy_payload = _run_cli(["--data", str(db_path), "economy-summary"])
@@ -2739,7 +2756,11 @@ def test_cli_renew_node_rejects_wrong_owner() -> None:
 def test_cli_address_history_reports_confirmed_incoming_and_outgoing() -> None:
     with TemporaryDirectory() as tempdir:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
-        params = replace(MAINNET_PARAMS, coinbase_maturity=0)
+        params = replace(
+            MAINNET_PARAMS,
+            coinbase_maturity=0,
+            genesis_miner_subsidy_chipbits=50 * 100_000_000,
+        )
         timestamps = iter(range(1_700_000_000, 1_700_000_200))
         service = NodeService.open_sqlite(db_path, params=params, time_provider=lambda: next(timestamps))
         miner_address = wallet_key(0).address
@@ -3133,6 +3154,8 @@ def test_cli_mine_command_runs_and_produces_a_block() -> None:
         try:
             code, payload = _run_cli(
                 [
+                    "--network",
+                    "devnet",
                     "mine",
                     "--node-url",
                     "http://127.0.0.1:8081",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,9 @@ class ConsensusParams:
     reward_node_fee_recent_driver_activation_height: int = 0
     require_pq_standard_transactions: bool = False
     reward_node_signature_scheme_id: int = 0
+    genesis_miner_subsidy_chipbits: int | None = None
+    genesis_node_epoch_reward_chipbits: int | None = None
+    funded_reward_node_activation_height: int | None = None
 
 
 def target_block_time_seconds_for_height(height: int, params: ConsensusParams) -> int:
@@ -83,6 +86,16 @@ MAINNET_PARAMS = ConsensusParams(
     max_attestations_per_verifier_per_window=1,
     require_pq_standard_transactions=True,
     reward_node_signature_scheme_id=10,
+    genesis_miner_subsidy_chipbits=0,
+    genesis_node_epoch_reward_chipbits=0,
+    funded_reward_node_activation_height=0,
+)
+
+# This profile exists only for the isolated public-mainnet rehearsal. It keeps
+# every mainnet consensus/economic rule except the PoW limit used to make the
+# rehearsal operationally finite.
+MAINNET_TEST_ONLY_PARAMS = replace(
+    MAINNET_PARAMS, genesis_bits=0x207FFFFF, funded_reward_node_activation_height=300
 )
 
 

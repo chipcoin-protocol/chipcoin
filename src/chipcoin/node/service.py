@@ -12,8 +12,9 @@ from pathlib import Path
 import secrets
 import time
 
-from ..config import get_network_config
+from ..config import MAINNET_TEST_ONLY_CONFIG, get_network_config, require_startable_network
 from ..consensus.models import Block, OutPoint, Transaction, TxOutput
+from ..consensus.genesis import canonical_genesis_block, verify_genesis
 from ..consensus.epoch_settlement import (
     REWARD_ATTESTATION_BUNDLE_KIND,
     REWARD_SETTLE_EPOCH_KIND,
@@ -37,6 +38,7 @@ from ..consensus.nodes import (
     is_register_reward_node_transaction,
     is_renew_reward_node_transaction,
     is_special_node_transaction,
+    is_funded_reward_node_transaction,
     current_epoch,
     reward_node_eligible_from_height,
     reward_node_is_active,
@@ -340,6 +342,7 @@ class NodeService:
         time_provider=unix_time,
         connection=None,
         sqlite_config: SQLiteRuntimeConfig | None = None,
+        canonical_genesis: Block | None = None,
     ) -> None:
         self.network = network
         self.params = params
@@ -354,6 +357,7 @@ class NodeService:
         self.time_provider = time_provider
         self.connection = connection
         self.sqlite_config = sqlite_config or SQLiteRuntimeConfig()
+        self.canonical_genesis = canonical_genesis
         self._heavy_write_commit_count = 0
         self.mempool = MempoolManager(
             repository=mempool_repository,
@@ -386,10 +390,12 @@ class NodeService:
     ) -> "NodeService":
         """Open a local node backed by a SQLite database."""
 
+        if network == MAINNET_TEST_ONLY_CONFIG.name:
+            require_startable_network(network)
         resolved_params = get_network_config(network).params if params is None else params
         sqlite_config = sqlite_config_from_env()
         connection = initialize_database(path, config=sqlite_config)
-        return cls(
+        service = cls(
             network=network,
             params=resolved_params,
             headers=SQLiteHeaderRepository(connection),
@@ -403,7 +409,68 @@ class NodeService:
             time_provider=time_provider,
             connection=connection,
             sqlite_config=sqlite_config,
+            canonical_genesis=(
+                canonical_genesis_block(network=network)
+                if get_network_config(network).genesis_finalized
+                else None
+            ),
         )
+        if service.canonical_genesis is not None:
+            service.install_or_verify_genesis(service.canonical_genesis, chain_id=get_network_config(network).chain_id)
+        return service
+
+    def install_or_verify_genesis(self, block: Block, *, chain_id: str) -> None:
+        """Atomically install an empty-chain genesis or verify existing identity."""
+
+        if self.connection is None:
+            raise ValueError("canonical genesis installation requires SQLite storage")
+        expected_hash = block.block_hash()
+        verify_genesis(
+            block,
+            bits=self.params.genesis_bits,
+            expected_hash=expected_hash,
+            chain_id=chain_id,
+        )
+        stored_height_zero = self.headers.get_hash_at_height(0)
+        stored_chain_id = self._get_chain_meta("chain_id")
+        stored_genesis_hash = self._get_chain_meta("genesis_hash")
+        if stored_height_zero is not None:
+            if stored_height_zero != expected_hash:
+                raise ValueError("database genesis does not match configured public mainnet")
+            if stored_chain_id not in {None, chain_id} or stored_genesis_hash not in {None, expected_hash}:
+                raise ValueError("database chain identity does not match configured public mainnet")
+            self._set_chain_meta("chain_id", chain_id)
+            self._set_chain_meta("genesis_hash", expected_hash)
+            self.canonical_genesis = block
+            return
+        if self.headers.get_tip() is not None:
+            raise ValueError("non-empty database is missing canonical height-zero genesis")
+        context = ValidationContext(
+            height=0,
+            median_time_past=0,
+            params=self.params,
+            utxo_view=OverlayUtxoView(self.chainstate),
+            network=self.network,
+            expected_previous_block_hash="00" * 32,
+            expected_bits=self.params.genesis_bits,
+            canonical_genesis_block=block,
+        )
+        validate_block(block, context)
+        with sqlite_transaction(self.connection, phase="canonical_genesis_install"):
+            self.headers.put(
+                block.header,
+                height=0,
+                cumulative_work=header_work(block.header),
+                is_main_chain=True,
+            )
+            self.blocks.put(block)
+            self.headers.set_tip(expected_hash, 0)
+            self._set_chain_meta("chain_id", chain_id)
+            self._set_chain_meta("genesis_hash", expected_hash)
+        self.invalidate_active_chain_transaction_index()
+        self.invalidate_supply_snapshot()
+        self.invalidate_mining_templates()
+        self.canonical_genesis = block
 
     def start(self) -> None:
         """Local-only startup placeholder."""
@@ -589,6 +656,7 @@ class NodeService:
             bits=expected_bits,
             mempool_entries=mempool_entries,
             node_registry_view=self.node_registry.snapshot(),
+            utxo_view=self.chainstate,
             confirmed_transaction_ids=self._known_confirmed_transaction_ids(),
             system_transactions=() if preferred_settlement is None else (preferred_settlement,),
         )
@@ -604,6 +672,8 @@ class NodeService:
         snapshot_anchor = self.snapshot_anchor()
         return {
             "network": self.network,
+            "chain_id": get_network_config(self.network).chain_id,
+            "genesis_hash": get_network_config(self.network).canonical_genesis_hash,
             "best_tip_hash": best_tip_hash,
             "best_height": best_height,
             "bootstrap_mode": "full" if snapshot_anchor is None else "snapshot",
@@ -662,6 +732,8 @@ class NodeService:
             "template_id": template_id,
             "template_mode": template_mode,
             "network": self.network,
+            "chain_id": get_network_config(self.network).chain_id,
+            "genesis_hash": get_network_config(self.network).canonical_genesis_hash,
             "previous_block_hash": record.previous_block_hash,
             "height": record.height,
             "version": record.version,
@@ -859,6 +931,7 @@ class NodeService:
             epoch_seed_by_index=self._epoch_seed_map(height),
             expected_previous_block_hash=previous_hash,
             expected_bits=self._expected_bits_for_height(height),
+            canonical_genesis_block=self.canonical_genesis,
         )
         total_fees = validate_block(block, context)
         self.mempool.record_pq_mined(block.transactions[1:])
@@ -1034,6 +1107,7 @@ class NodeService:
                         validated_headers,
                         path_hashes=path_hashes,
                     ),
+                    canonical_genesis_block=self.canonical_genesis,
                 )
                 validate_block(block, context)
                 utxo_view.apply_block(block, height)
@@ -1113,6 +1187,7 @@ class NodeService:
                     validated_headers,
                     path_hashes=path_hashes,
                 ),
+                canonical_genesis_block=self.canonical_genesis,
             )
             validate_block(block, context)
             utxo_view.apply_block(block, height)
@@ -1718,6 +1793,8 @@ class NodeService:
         return {
             "network": self.network,
             "network_magic_hex": get_network_config(self.network).magic.hex(),
+            "chain_id": get_network_config(self.network).chain_id,
+            "genesis_hash": get_network_config(self.network).canonical_genesis_hash,
             "height": None if tip is None else tip.height,
             "tip_hash": None if tip is None else tip.block_hash,
             "bootstrap_mode": "full" if snapshot_anchor is None else "snapshot",
@@ -4011,7 +4088,7 @@ class NodeService:
                     if tx_output.recipient == recipient
                 )
                 outgoing_chipbits = 0
-                if tx_index > 0 and not is_special_node_transaction(transaction):
+                if tx_index > 0 and (not is_special_node_transaction(transaction) or is_funded_reward_node_transaction(transaction)):
                     for tx_input in transaction.inputs:
                         spent_entry = utxo_view.get(tx_input.previous_output)
                         if spent_entry is not None and spent_entry.output.recipient == recipient:
@@ -4068,7 +4145,7 @@ class NodeService:
                             ],
                         }
                     )
-                if not is_special_node_transaction(transaction):
+                if not is_special_node_transaction(transaction) or is_funded_reward_node_transaction(transaction):
                     utxo_view.apply_transaction(transaction, height, is_coinbase=tx_index == 0)
 
         rows.sort(key=lambda row: (row["block_height"], row["txid"]))
@@ -4494,9 +4571,9 @@ class NodeService:
             if index == 0 or is_coinbase_transaction(transaction):
                 continue
             if is_special_node_transaction(transaction):
-                if index > 0:
-                    apply_special_node_transaction(transaction, height=height, registry_view=node_registry_view)
-                continue
+                apply_special_node_transaction(transaction, height=height, registry_view=node_registry_view)
+                if not is_funded_reward_node_transaction(transaction):
+                    continue
             input_total_chipbits = 0
             for tx_input in transaction.inputs:
                 entry = utxo_view.get(tx_input.previous_output)

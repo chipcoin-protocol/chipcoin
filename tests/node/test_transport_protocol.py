@@ -112,6 +112,48 @@ def test_peer_handshake_completes_between_two_local_sessions() -> None:
     asyncio.run(scenario())
 
 
+def test_peer_handshake_rejects_wrong_chain_id_or_genesis() -> None:
+    async def rejected(*, remote_chain_id: str, remote_genesis: str) -> None:
+        outbound_transport, inbound_transport = _make_transport_pair()
+        outbound = PeerProtocol(
+            transport=outbound_transport,
+            identity=LocalPeerIdentity(
+                node_id="node-a",
+                network="mainnet",
+                start_height=0,
+                user_agent="/chipcoin:test-a/",
+                network_magic=MAINNET_CONFIG.magic,
+                chain_id="chipcoin-mainnet-1",
+                genesis_hash="11" * 32,
+            ),
+            inbound=False,
+            handshake_timeout=0.2,
+        )
+        inbound = PeerProtocol(
+            transport=inbound_transport,
+            identity=LocalPeerIdentity(
+                node_id="node-b",
+                network="mainnet",
+                start_height=0,
+                user_agent="/chipcoin:test-b/",
+                network_magic=MAINNET_CONFIG.magic,
+                chain_id=remote_chain_id,
+                genesis_hash=remote_genesis,
+            ),
+            inbound=True,
+            handshake_timeout=0.2,
+        )
+        results = await asyncio.gather(outbound.start(), inbound.start(), return_exceptions=True)
+        assert any(isinstance(result, Exception) for result in results)
+        await outbound.close()
+        await inbound.close()
+
+    asyncio.run(rejected(remote_chain_id="chipcoin-rehearsal-legacy", remote_genesis="11" * 32))
+    asyncio.run(rejected(remote_chain_id="chipcoin-mainnet-1", remote_genesis="22" * 32))
+    asyncio.run(rejected(remote_chain_id="", remote_genesis="11" * 32))
+    asyncio.run(rejected(remote_chain_id="chipcoin-mainnet-1", remote_genesis=""))
+
+
 def test_ping_pong_roundtrip_over_local_session() -> None:
     async def scenario() -> None:
         outbound_transport, inbound_transport = _make_transport_pair()
