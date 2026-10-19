@@ -119,15 +119,16 @@ describe("Chipcoin Signed Login v1", () => {
 
   it("signs and verifies over the login-message domain", () => {
     const message = canonicalMessage();
-    const signature = signLoginMessage(PRIVATE_KEY, message);
-    expect(verifyLoginMessageSignature(PUBLIC_KEY, signature, message)).toBe(true);
+    const signature = signLoginMessage(PRIVATE_KEY, message, "testnet");
+    expect(verifyLoginMessageSignature(PUBLIC_KEY, signature, message, "testnet")).toBe(true);
+    expect(verifyLoginMessageSignature(PUBLIC_KEY, signature, message, "mainnet")).toBe(false);
     assertPublicKeyMatchesAddress(PUBLIC_KEY, ADDRESS);
-    expect(LOGIN_SIGNING_DOMAIN).toBe("chipcoin:web-auth:v1:testnet");
+    expect(LOGIN_SIGNING_DOMAIN).toBe("chipcoin:web-auth:v2:chipcoin-testnet-1");
   });
 
   it("does not sign the transaction sighash domain", () => {
     const message = canonicalMessage();
-    const signature = signLoginMessage(PRIVATE_KEY, message);
+    const signature = signLoginMessage(PRIVATE_KEY, message, "testnet");
     const transaction: TransactionModel = {
       version: 1,
       inputs: [{
@@ -146,13 +147,13 @@ describe("Chipcoin Signed Login v1", () => {
       previousOutputValue: 1,
       previousOutputRecipient: ADDRESS,
     });
-    expect(loginMessageDigest(message)).not.toEqual(txDigest);
+    expect(loginMessageDigest(message, "testnet")).not.toEqual(txDigest);
     expect(
       secp256k1.verify(secp256k1.Signature.fromDER(hexToBytes(signature)).toCompactRawBytes(), txDigest, hexToBytes(PUBLIC_KEY), {
         lowS: true,
         prehash: false,
       }),
     ).toBe(false);
-    expect(loginMessageDigest(message)).toEqual(sha256(new TextEncoder().encode(`${LOGIN_SIGNING_DOMAIN}\0${message}`)));
+    expect(loginMessageDigest(message, "testnet")).toEqual(sha256(new TextEncoder().encode(`${LOGIN_SIGNING_DOMAIN}\0${message}`)));
   });
 });

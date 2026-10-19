@@ -4,9 +4,10 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import { parseAddress, publicKeyHexToAddress, publicKeyHexToPqAddress } from "../crypto/addresses";
 import { bytesToHex, hexToBytes } from "../crypto/keys";
 import { createExperimentalMlDsa44Backend } from "../crypto/mldsa44";
+import { chainIdForNetwork } from "../shared/constants";
 
 export const SIGNED_LOGIN_TITLE = "Chipcoin Signed Login v1";
-export const LOGIN_SIGNING_DOMAIN = "chipcoin:web-auth:v1:testnet";
+export const LOGIN_SIGNING_DOMAIN = "chipcoin:web-auth:v2:chipcoin-testnet-1";
 export const LOGIN_MESSAGE_MAX_LENGTH = 2_048;
 export const LOGIN_STATEMENT_MAX_LENGTH = 140;
 export const LOGIN_NONCE_MAX_LENGTH = 128;
@@ -148,8 +149,8 @@ export function validateLoginOriginBinding(parsed: ParsedLoginMessage, requestin
   }
 }
 
-export function loginMessageDigest(message: string, network: "mainnet" | "testnet" = "testnet"): Uint8Array {
-  const tagBytes = new TextEncoder().encode(`chipcoin:web-auth:v1:${network}\0`);
+export function loginMessageDigest(message: string, network: "mainnet" | "testnet"): Uint8Array {
+  const tagBytes = new TextEncoder().encode(`chipcoin:web-auth:v2:${chainIdForNetwork(network)}\0`);
   const messageBytes = new TextEncoder().encode(message);
   const payload = new Uint8Array(tagBytes.length + messageBytes.length);
   payload.set(tagBytes);
@@ -157,19 +158,24 @@ export function loginMessageDigest(message: string, network: "mainnet" | "testne
   return sha256(payload);
 }
 
-export function signLoginMessage(privateKeyHex: string, message: string): string {
-  const signature = secp256k1.sign(loginMessageDigest(message), hexToBytes(privateKeyHex), {
+export function signLoginMessage(privateKeyHex: string, message: string, network: "mainnet" | "testnet"): string {
+  const signature = secp256k1.sign(loginMessageDigest(message, network), hexToBytes(privateKeyHex), {
     lowS: true,
     prehash: false,
   });
   return bytesToHex(signature.toDERRawBytes());
 }
 
-export function verifyLoginMessageSignature(publicKeyHex: string, signatureHex: string, message: string): boolean {
+export function verifyLoginMessageSignature(
+  publicKeyHex: string,
+  signatureHex: string,
+  message: string,
+  network: "mainnet" | "testnet",
+): boolean {
   const signature = secp256k1.Signature.fromDER(hexToBytes(signatureHex)).toCompactRawBytes();
   return secp256k1.verify(
     signature,
-    loginMessageDigest(message),
+    loginMessageDigest(message, network),
     hexToBytes(publicKeyHex),
     { lowS: true, prehash: false },
   );

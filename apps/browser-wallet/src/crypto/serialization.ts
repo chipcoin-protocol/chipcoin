@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha256";
 
 import type { TransactionModel } from "../wallet/models";
+import { chainIdForNetwork } from "../shared/constants";
 import { bytesToHex, hexToBytes } from "./keys";
 
 function encodeVarint(value: number): Uint8Array {
@@ -106,7 +107,7 @@ export function serializeTransactionForSigning(args: {
     encodeString(previousOutputRecipient),
   ];
   if (transaction.version >= 2) {
-    encoded.push(encodeString(`chipcoin:tx-signature:v2:${network}`), encodeUint32(2));
+    encoded.push(encodeString(`chipcoin:tx-signature:v3:${chainIdForNetwork(network)}`), encodeUint32(3));
   } else {
     encoded.push(encodeUint32(1));
   }

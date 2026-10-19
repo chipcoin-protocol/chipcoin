@@ -525,7 +525,7 @@ export async function signProviderLoginMessage(args: {
     address: session.address,
     signature_scheme: 0,
     public_key: session.publicKeyHex,
-    signature: signLoginMessage(session.privateKeyHex, args.message),
+    signature: signLoginMessage(session.privateKeyHex, args.message, parsed.network),
     message: args.message,
   };
 }
@@ -897,6 +897,16 @@ async function validateClientNetwork(client: ChipcoinApiClient, expectedNetwork:
   const status = await client.status();
   if (status.network !== expectedNetwork) {
     throw new Error(`Wrong network. Expected ${expectedNetwork}, got ${status.network}.`);
+  }
+  const expected = getSupportedNetwork(expectedNetwork);
+  if (status.chain_id !== expected.chainId) {
+    throw new Error(`Wrong chain id. Expected ${expected.chainId}, got ${status.chain_id}.`);
+  }
+  if (expectedNetwork === "mainnet" && expected.canonicalGenesisHash === null) {
+    throw new Error("Public mainnet genesis is not finalized.");
+  }
+  if (expected.canonicalGenesisHash !== null && status.genesis_hash !== expected.canonicalGenesisHash) {
+    throw new Error("Wrong canonical genesis hash.");
   }
 }
 

@@ -39,6 +39,8 @@ function nodeStatus(network: "mainnet" | "devnet" | "testnet"): NodeStatus {
     api_version: "1",
     network,
     network_magic_hex: "00",
+    chain_id: `chipcoin-${network}-1`,
+    genesis_hash: null,
     height: network === "testnet" ? 1801 : 6539,
     tip_hash: network === "testnet"
       ? "00002087b2dfc6ee2d89c013e9a78f8b26454f9372882f2d61de604b04522847"
@@ -141,16 +143,14 @@ describe("browser wallet network support", () => {
     expect(state.nodeApiBaseUrl).toBe("https://testnet-api.chipcoinprotocol.com");
   });
 
-  it("supports a network-validated mainnet endpoint", async () => {
+  it("fails closed while the public mainnet genesis is pending", async () => {
     installFetch("mainnet");
     const session = await import("../../src/background/session");
 
     await session.createPqWallet("phase12-password");
-    const state = await session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet");
-
-    expect(state.expectedNetwork).toBe("mainnet");
-    expect(state.nodeApiBaseUrl).toBe("https://mainnet-api.chipcoinprotocol.com");
-    expect(state.address?.startsWith("CHCQ")).toBe(true);
+    await expect(
+      session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),
+    ).rejects.toThrow("Public mainnet genesis is not finalized.");
   });
 
   it("refuses to select mainnet with a legacy wallet", async () => {

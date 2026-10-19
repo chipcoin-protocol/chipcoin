@@ -2,6 +2,8 @@ export interface HealthResponse {
   status: "ok";
   api_version: string;
   network: string;
+  chain_id: string;
+  genesis_hash: string | null;
 }
 
 export interface RewardWinner {
@@ -15,6 +17,8 @@ export interface NodeStatus {
   api_version: string;
   network: string;
   network_magic_hex: string;
+  chain_id: string;
+  genesis_hash: string | null;
   height: number | null;
   tip_hash: string | null;
   current_bits: number;

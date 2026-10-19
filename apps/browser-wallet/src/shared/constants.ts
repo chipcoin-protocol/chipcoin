@@ -9,6 +9,8 @@ export interface SupportedNetworkConfig {
   description: string;
   statusLabel: string;
   httpSafetyNote: string;
+  chainId: string;
+  canonicalGenesisHash: string | null;
 }
 
 export const MIN_PASSWORD_LENGTH = 10;
@@ -31,6 +33,8 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     description: "Production network. ML-DSA-44 wallets and CHCQ addresses are required from genesis.",
     statusLabel: "production mainnet",
     httpSafetyNote: "Use the wallet-safe public mainnet API or a trusted local node. Verify the connected network before signing.",
+    chainId: "chipcoin-mainnet-1",
+    canonicalGenesisHash: null,
   },
   {
     id: "devnet",
@@ -40,6 +44,8 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     description: "Legacy public devnet/fallback environment.",
     statusLabel: "legacy devnet",
     httpSafetyNote: "Public devnet endpoint is provided for convenience and may change.",
+    chainId: "chipcoin-devnet-1",
+    canonicalGenesisHash: null,
   },
   {
     id: "testnet",
@@ -50,6 +56,8 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     description: "Public testnet candidate. Uses the wallet-safe public API by default; operators can switch to a local node API.",
     statusLabel: "public testnet candidate",
     httpSafetyNote: "The public testnet API only allows wallet-safe reads and transaction submit. Keep raw node HTTP local/private and do not use the readonly explorer API for wallet submissions.",
+    chainId: "chipcoin-testnet-1",
+    canonicalGenesisHash: null,
   },
 ] as const;
 export const WALLET_FORMAT_VERSION = 3;
@@ -91,6 +99,10 @@ export function getSupportedNetwork(value: string): SupportedNetworkConfig {
     throw new Error(`Unsupported Chipcoin network: ${value}.`);
   }
   return network;
+}
+
+export function chainIdForNetwork(value: string): string {
+  return getSupportedNetwork(value).chainId;
 }
 
 export function networkScopedStorageKey(baseKey: string, network: SupportedNetworkId): string {
