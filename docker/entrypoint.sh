@@ -666,6 +666,9 @@ import json
 import os
 import sys
 from urllib import request
+import base64
+
+from chipcoin.node.snapshot_manifest import validate_manifest_entry
 
 manifest_urls = [
     item.strip()
@@ -702,6 +705,7 @@ for manifest_url in manifest_urls:
             reverse=True,
         )
         selected = entries[0]
+        validate_manifest_entry(selected, network=network)
         print(
             "\t".join(
                 [
@@ -710,6 +714,7 @@ for manifest_url in manifest_urls:
                     str(selected["snapshot_block_hash"]),
                     str(selected.get("checksum_sha256", selected.get("checksum", ""))),
                     manifest_url,
+                    base64.urlsafe_b64encode(json.dumps(selected, sort_keys=True).encode()).decode(),
                 ]
             )
         )
@@ -797,6 +802,18 @@ prepare_snapshot_bootstrap_if_needed() {
       ;;
   esac
 
+  if [[ "${CHIPCOIN_NETWORK:-}" == "mainnet" ]]; then
+    if [[ "${NODE_SNAPSHOT_TRUST_MODE:-enforce}" != "enforce" ]]; then
+      die "Public mainnet snapshot bootstrap requires enforce trust mode."
+    fi
+    if [[ ! -s "${NODE_SNAPSHOT_TRUSTED_KEYS_FILE:-}" ]]; then
+      die "Public mainnet snapshot bootstrap requires a nonempty trusted keys file."
+    fi
+    if [[ -n "${NODE_SNAPSHOT_SELECTED_URL:-}" ]]; then
+      die "Public mainnet snapshot bootstrap requires a complete identity-bound manifest."
+    fi
+  fi
+
   local snapshot_path="${NODE_SNAPSHOT_FILE:-}"
   if [[ -z "$snapshot_path" ]]; then
     if [[ "$mode" == "auto" ]]; then
@@ -811,6 +828,7 @@ prepare_snapshot_bootstrap_if_needed() {
   local snapshot_hash="${NODE_SNAPSHOT_SELECTED_HASH:-}"
   local snapshot_checksum=""
   local manifest_url=""
+  local manifest_entry=""
   local backoff_line backoff_seconds backoff_failures backoff_reason
   backoff_line="$(snapshot_bootstrap_apply_backoff "$sqlite_path")"
   if [[ -n "$backoff_line" ]]; then
@@ -834,7 +852,7 @@ prepare_snapshot_bootstrap_if_needed() {
       fi
       die "Snapshot bootstrap failed while selecting manifest entry: ${selected}"
     fi
-    IFS=$'\t' read -r snapshot_url snapshot_height snapshot_hash snapshot_checksum manifest_url <<< "$selected"
+    IFS=$'\t' read -r snapshot_url snapshot_height snapshot_hash snapshot_checksum manifest_url manifest_entry <<< "$selected"
   fi
 
   if [[ -z "$snapshot_url" ]]; then
@@ -867,13 +885,40 @@ prepare_snapshot_bootstrap_if_needed() {
     write_snapshot_file_marker "$snapshot_url" "$snapshot_path" "$snapshot_height" "$snapshot_hash"
   fi
 
+  if [[ "${CHIPCOIN_NETWORK:-}" == "mainnet" ]]; then
+    local identity_result=""
+    if ! identity_result="$(SNAPSHOT_ENTRY_B64="$manifest_entry" SNAPSHOT_PATH="$snapshot_path" python3 - <<'PY' 2>&1
+import base64
+import json
+import os
+from pathlib import Path
+from chipcoin.node.snapshot_manifest import verify_manifest_snapshot
+
+entry = json.loads(base64.urlsafe_b64decode(os.environ["SNAPSHOT_ENTRY_B64"]))
+verify_manifest_snapshot(Path(os.environ["SNAPSHOT_PATH"]), entry, network="mainnet")
+PY
+)"; then
+      snapshot_bootstrap_record_failure "$sqlite_path" "identity_failed:${identity_result}" >/dev/null || true
+      snapshot_bootstrap_release_lock "$lock_dir"
+      if [[ "$mode" == "auto" ]]; then
+        warn "Snapshot identity rejected. Falling back to full sync."
+        return 0
+      fi
+      die "Snapshot identity rejected: ${identity_result}"
+    fi
+  fi
+
+  local trust_mode="${NODE_SNAPSHOT_TRUST_MODE:-warn}"
+  if [[ "${CHIPCOIN_NETWORK:-}" == "mainnet" ]]; then
+    trust_mode="enforce"
+  fi
   local -a import_args=(
     --network "${CHIPCOIN_NETWORK}"
     --data "$sqlite_path"
     snapshot-import
     --snapshot-file "$snapshot_path"
     --snapshot-reset
-    --snapshot-trust-mode "${NODE_SNAPSHOT_TRUST_MODE:-warn}"
+    --snapshot-trust-mode "$trust_mode"
   )
   if [[ -n "${NODE_SNAPSHOT_TRUSTED_KEYS_FILE:-}" ]]; then
     import_args+=(--snapshot-trusted-keys-file "${NODE_SNAPSHOT_TRUSTED_KEYS_FILE}")
@@ -896,6 +941,12 @@ prepare_snapshot_bootstrap_if_needed() {
   if ! validation_output="$(validate_snapshot_bootstrap_result "$sqlite_path" "$snapshot_height" "$snapshot_hash" 2>&1)"; then
     local failure_reason="validation_failed:${validation_output}"
     snapshot_bootstrap_record_failure "$sqlite_path" "$failure_reason" >/dev/null || true
+    rm -f -- "$sqlite_path" "$sqlite_path-shm" "$sqlite_path-wal"
+    if [[ "$mode" == "auto" ]]; then
+      snapshot_bootstrap_release_lock "$lock_dir"
+      warn "Snapshot validation failed after import. Falling back to full sync."
+      return 0
+    fi
     snapshot_bootstrap_release_lock "$lock_dir"
     die "Snapshot validation failed after import: ${validation_output}"
   fi

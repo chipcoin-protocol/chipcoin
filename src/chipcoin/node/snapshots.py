@@ -16,6 +16,7 @@ from ..consensus.models import Block, BlockHeader, OutPoint, TxOutput
 from ..consensus.epoch_settlement import parse_reward_attestation_bundle_metadata, parse_reward_settlement_metadata
 from ..consensus.nodes import NodeRecord
 from ..consensus.params import ConsensusParams
+from ..config import consensus_params_fingerprint, get_network_config
 from ..consensus.pow import calculate_next_work_required, header_work, verify_proof_of_work
 from ..consensus.serialization import deserialize_block, deserialize_block_header, serialize_block, serialize_block_header
 from ..consensus.utxo import UtxoEntry
@@ -98,6 +99,10 @@ def _snapshot_body(payload: dict[str, object]) -> dict[str, object]:
         "reward_attestation_bundles": payload.get("reward_attestation_bundles", []),
         "epoch_settlements": payload.get("epoch_settlements", []),
     }
+
+
+def _snapshot_state_hash(records: object) -> str:
+    return hashlib.sha256(canonical_json_dumps(records)).hexdigest()
 
 
 def canonicalize_snapshot_payload(payload: dict[str, object], *, include_checksum: bool = True) -> dict[str, object]:
@@ -300,6 +305,9 @@ def decode_snapshot_payload(
         raise ValueError("unsupported snapshot format version")
     if metadata.get("network") != network:
         raise ValueError("snapshot network does not match configured node network")
+    network_config = get_network_config(network)
+    if metadata.get("chain_id") != network_config.chain_id:
+        raise ValueError("snapshot chain id does not match configured node chain")
     expected_checksum = metadata.get("checksum_sha256")
     if not isinstance(expected_checksum, str) or not expected_checksum:
         raise ValueError("snapshot checksum is required")
@@ -332,6 +340,11 @@ def decode_snapshot_payload(
                 cumulative_work=int(raw_record["cumulative_work"]),
             )
         )
+    embedded_genesis_hash = headers[0].header.block_hash()
+    if metadata.get("genesis_hash") != embedded_genesis_hash:
+        raise ValueError("snapshot genesis metadata does not match embedded headers")
+    if network_config.canonical_genesis_hash is not None and embedded_genesis_hash != network_config.canonical_genesis_hash:
+        raise ValueError("snapshot genesis does not match configured canonical genesis")
     _validate_snapshot_headers(headers, params=params)
     anchor_height = int(metadata.get("snapshot_height", -1))
     anchor_hash = metadata.get("snapshot_block_hash")
@@ -339,6 +352,20 @@ def decode_snapshot_payload(
         raise ValueError("snapshot height does not match header chain height")
     if anchor_hash != headers[-1].header.block_hash():
         raise ValueError("snapshot anchor hash does not match last header")
+    required_identity = network == "mainnet"
+    identity_checks = {
+        "p2p_magic_hex": network_config.magic.hex(),
+        "consensus_params_sha256": consensus_params_fingerprint(params),
+        "snapshot_cumulative_work": str(headers[-1].cumulative_work),
+        "utxo_sha256": _snapshot_state_hash(payload.get("utxos")),
+        "node_registry_sha256": _snapshot_state_hash(payload.get("node_registry")),
+    }
+    for field, expected in identity_checks.items():
+        actual = metadata.get(field)
+        if actual is None and not required_identity:
+            continue
+        if actual != expected:
+            raise ValueError(f"snapshot {field} does not match expected chainstate")
 
     raw_utxos = payload.get("utxos")
     if not isinstance(raw_utxos, list):
@@ -493,19 +520,28 @@ def build_snapshot_payload(
     if len(blocks) != len(headers):
         raise ValueError("snapshot blocks must match embedded header count")
     tip_record = headers[-1]
+    network_config = get_network_config(network)
+    genesis_hash = headers[0].header.block_hash()
     payload = {
         "metadata": {
             "kind": SNAPSHOT_KIND,
             "format_version": format_version,
             "network": network,
+            "chain_id": network_config.chain_id,
+            "genesis_hash": genesis_hash,
+            "p2p_magic_hex": network_config.magic.hex(),
+            "consensus_params_sha256": consensus_params_fingerprint(params),
             "snapshot_height": tip_record.height,
             "snapshot_block_hash": tip_record.header.block_hash(),
+            "snapshot_cumulative_work": str(tip_record.cumulative_work),
             "snapshot_block_timestamp": tip_record.header.timestamp,
             "created_at": created_at,
             "header_count": len(headers),
             "block_count": len(blocks),
             "utxo_count": len(utxos),
             "node_registry_count": len(node_registry_records),
+            "utxo_sha256": None,
+            "node_registry_sha256": None,
             "reward_attestation_bundle_count": len(reward_attestation_bundles),
             "epoch_settlement_count": len(epoch_settlements),
             "consensus": {
@@ -633,6 +669,8 @@ def build_snapshot_payload(
             "min_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1,
             "preferred_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1,
         }
+    payload["metadata"]["utxo_sha256"] = _snapshot_state_hash(payload["utxos"])
+    payload["metadata"]["node_registry_sha256"] = _snapshot_state_hash(payload["node_registry"])
     payload["metadata"]["checksum_sha256"] = snapshot_checksum(payload)
     return payload
 

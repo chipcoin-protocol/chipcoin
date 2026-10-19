@@ -25,6 +25,8 @@ MAINNET_PARAMS = replace(
     genesis_bits=0x207FFFFF,
     require_pq_standard_transactions=False,
     reward_node_signature_scheme_id=0,
+    genesis_miner_subsidy_chipbits=50 * 100_000_000,
+    genesis_node_epoch_reward_chipbits=None,
 )
 
 
@@ -89,6 +91,33 @@ def test_snapshot_export_import_roundtrip_preserves_anchor_and_utxo_state() -> N
         assert target.chainstate.list_utxos() == source.chainstate.list_utxos()
         assert target.node_registry.list_records() == source.node_registry.list_records()
         assert metadata["format_version"] == 2
+
+
+def test_snapshot_export_reads_one_sqlite_transaction() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 1, "CHCminer-source")
+        assert source.connection is not None
+        assert not source.connection.in_transaction
+        payload = source.export_snapshot_payload()
+        assert payload["metadata"]["snapshot_cumulative_work"] == payload["headers"][-1]["cumulative_work"]
+        assert payload["metadata"]["checksum_sha256"] == snapshot_checksum(payload)
+        assert not source.connection.in_transaction
+
+
+def test_finalized_mainnet_import_rejects_disabled_trust_without_mutation(monkeypatch) -> None:
+    from chipcoin.config import get_network_config
+    import chipcoin.node.service as service_module
+
+    with TemporaryDirectory() as tempdir:
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_000_000)
+        original_tip = target.chain_tip()
+        config = replace(get_network_config("mainnet"), genesis_finalized=True)
+        original = service_module.get_network_config
+        monkeypatch.setattr(service_module, "get_network_config", lambda name: config if name == "mainnet" else original(name))
+        with pytest.raises(ValueError, match="enforced trust"):
+            target.import_snapshot_file(Path(tempdir) / "missing.snapshot", trust_mode="off")
+        assert target.chain_tip() == original_tip
 
 
 def test_snapshot_import_honors_target_block_time_activation_schedule() -> None:
@@ -545,8 +574,12 @@ def test_tampered_signed_snapshot_is_rejected() -> None:
         write_snapshot_file(snapshot_path, signed)
 
         target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        original_tip = target.chain_tip()
+        original_utxos = target.chainstate.list_utxos()
         with pytest.raises(ValueError, match="signature is invalid"):
             target.import_snapshot_file(snapshot_path, trust_mode="enforce", trusted_keys=(public_key,))
+        assert target.chain_tip() == original_tip
+        assert target.chainstate.list_utxos() == original_utxos
 
 
 def test_tampered_v2_snapshot_container_is_rejected() -> None:

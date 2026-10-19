@@ -480,6 +480,25 @@ class NodeService:
     def export_snapshot_payload(self, *, format_version: int = 2) -> dict[str, object]:
         """Return a deterministic snapshot payload for fast bootstrap."""
 
+        if self.connection is not None:
+            lock = getattr(self.connection, "_chipcoin_lock", None)
+            if lock is not None:
+                with lock:
+                    return self._export_snapshot_payload_consistent(format_version=format_version)
+            return self._export_snapshot_payload_consistent(format_version=format_version)
+        return self._build_snapshot_payload(format_version=format_version)
+
+    def _export_snapshot_payload_consistent(self, *, format_version: int) -> dict[str, object]:
+        assert self.connection is not None
+        if self.connection.in_transaction:
+            raise ValueError("snapshot export requires an idle SQLite connection")
+        self.connection.execute("BEGIN")
+        try:
+            return self._build_snapshot_payload(format_version=format_version)
+        finally:
+            self.connection.rollback()
+
+    def _build_snapshot_payload(self, *, format_version: int) -> dict[str, object]:
         tip = self.chain_tip()
         if tip is None:
             raise ValueError("cannot export a snapshot from an empty chain")
@@ -533,6 +552,9 @@ class NodeService:
     ) -> dict[str, object]:
         """Load a snapshot from disk and replace local chainstate with its anchor state."""
 
+        if self.network == "mainnet" and get_network_config("mainnet").genesis_finalized and (trust_mode != "enforce" or not trusted_keys):
+            raise ValueError("mainnet snapshot import requires enforced trust and a trusted signer")
+
         loaded = load_snapshot_file(
             path,
             network=self.network,
@@ -555,7 +577,13 @@ class NodeService:
         if self.connection is None:
             raise ValueError("snapshot import requires a writable SQLite-backed node service")
         existing_tip = self.chain_tip()
-        if existing_tip is not None and not reset_existing:
+        canonical_genesis_only = (
+            existing_tip is not None
+            and existing_tip.height == 0
+            and self.canonical_genesis is not None
+            and existing_tip.block_hash == self.canonical_genesis.block_hash()
+        )
+        if existing_tip is not None and not reset_existing and not canonical_genesis_only:
             raise ValueError("snapshot import requires an empty chain or reset_existing=True")
         with sqlite_transaction(self.connection, phase="snapshot_import"):
             self.connection.execute("DELETE FROM mempool_transactions")

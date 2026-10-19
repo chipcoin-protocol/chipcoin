@@ -64,7 +64,14 @@ def main(argv: list[str] | None = None) -> int:
         service = None if args.command in {"wallet-generate", "wallet-import", "wallet-address", "mine", "submit-raw-tx", "snapshot-sign", "pq-smoke", "pq-benchmark", "pq-audit-report", "pq-dress-rehearsal", "pq-operational-readiness", "verify-pq-activation"} else NodeService.open_sqlite(data_path, network=args.network)
 
         if service is not None and getattr(args, "snapshot_file", None) and args.command in {"run", "start"}:
-            if getattr(args, "snapshot_reset", False) or service.chain_tip() is None:
+            tip = service.chain_tip()
+            canonical_genesis_only = (
+                tip is not None
+                and tip.height == 0
+                and service.canonical_genesis is not None
+                and tip.block_hash == service.canonical_genesis.block_hash()
+            )
+            if getattr(args, "snapshot_reset", False) or tip is None or canonical_genesis_only:
                 snapshot_metadata = service.import_snapshot_file(
                     Path(args.snapshot_file),
                     reset_existing=getattr(args, "snapshot_reset", False),

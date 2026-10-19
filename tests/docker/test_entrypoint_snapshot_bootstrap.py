@@ -197,6 +197,53 @@ cat "$TMPDIR/chipcoin-args.txt"
     assert "--snapshot-trust-mode warn" in result.stdout
 
 
+def test_mainnet_snapshot_bootstrap_rejects_missing_trust_anchor_before_import(tmp_path: Path) -> None:
+    script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+chipcoin() {{ printf 'unexpected import\\n' >&2; exit 99; }}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "CHIPCOIN_NETWORK": "mainnet",
+        "NODE_BOOTSTRAP_MODE": "snapshot",
+        "NODE_SNAPSHOT_FILE": str(tmp_path / "snapshot"),
+        "SQLITE_UNDER_TEST": str(tmp_path / "node.sqlite3"),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+    env.pop("NODE_SNAPSHOT_TRUSTED_KEYS_FILE", None)
+    result = subprocess.run(["bash", "-lc", script], cwd=REPO_ROOT, env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert "requires a nonempty trusted keys file" in result.stderr
+    assert "unexpected import" not in result.stderr
+
+
+def test_auto_mode_discards_failed_snapshot_import_before_full_sync(tmp_path: Path) -> None:
+    script = f"""
+set -euo pipefail
+source "{ENTRYPOINT}"
+download_snapshot_file() {{ : > "$2"; }}
+chipcoin() {{ : > "$SQLITE_UNDER_TEST"; printf '%s\\n' '{{"ok":true}}'; }}
+prepare_snapshot_bootstrap_if_needed "$SQLITE_UNDER_TEST"
+test ! -e "$SQLITE_UNDER_TEST"
+"""
+    env = {
+        **os.environ,
+        "CHIPCOIN_ENTRYPOINT_SOURCE_ONLY": "1",
+        "CHIPCOIN_NETWORK": "testnet",
+        "NODE_BOOTSTRAP_MODE": "auto",
+        "NODE_SNAPSHOT_FILE": str(tmp_path / "snapshot"),
+        "NODE_SNAPSHOT_SELECTED_URL": "https://example.invalid/snapshot",
+        "SQLITE_UNDER_TEST": str(tmp_path / "node.sqlite3"),
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+    }
+    result = subprocess.run(["bash", "-lc", script], cwd=REPO_ROOT, env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert "Falling back to full sync" in result.stderr
+
+
 def test_entrypoint_restores_snapshot_without_replacing_sqlite_symlink(tmp_path: Path) -> None:
     template_db = tmp_path / "restored.sqlite3"
     target_path = tmp_path / "configured.sqlite3"
