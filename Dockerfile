@@ -1,4 +1,8 @@
-FROM python:3.11-slim AS builder
+ARG SOURCE_DATE_EPOCH=1792069138
+
+FROM python:3.11.17-trixie@sha256:50cfccc707e8721201ee018bfd7f6a85d8eacf49c4f9f75833a2aba09a10411f AS builder
+
+ARG SOURCE_DATE_EPOCH
 
 WORKDIR /app
 
@@ -8,13 +12,16 @@ ENV PYTHONUNBUFFERED=1
 COPY pyproject.toml setup.py MANIFEST.in README.md ./
 COPY src ./src
 COPY vendor ./vendor
+COPY docker/requirements-build.lock ./requirements-build.lock
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libc6-dev \
-    && python -m pip wheel --no-cache-dir --wheel-dir /wheels . \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    command -v gcc; \
+    dpkg-query -W -f='${binary:Package}=${Version}\n' gcc libc6-dev; \
+    python -m pip wheel --no-cache-dir --require-hashes --wheel-dir /wheels -r requirements-build.lock; \
+    python -m pip install --no-compile --no-index --find-links=/wheels setuptools==68.1.2 wheel==0.42.0; \
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -m pip wheel --no-cache-dir --no-build-isolation --no-deps --wheel-dir /wheels .
 
-FROM python:3.11-slim AS runtime
+FROM python:3.11.17-slim-trixie@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce AS runtime
 
 WORKDIR /app
 
@@ -22,10 +29,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 COPY --from=builder /wheels /wheels
+COPY docker/requirements-build.lock /app/requirements-build.lock
 COPY docker/entrypoint.sh /usr/local/bin/chipcoin-entrypoint
 
 RUN set -eux; \
-    python -m pip install --no-cache-dir --no-index --find-links=/wheels chipcoin-v2; \
+    python -m pip install --no-compile --no-cache-dir --no-index --find-links=/wheels --require-hashes -r /app/requirements-build.lock; \
     python -m pip check; \
     python -m pip uninstall -y setuptools wheel; \
     rm -rf /wheels /root/.cache/pip; \

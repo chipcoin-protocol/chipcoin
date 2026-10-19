@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 from setuptools import Extension, setup
 
 
 ROOT = Path(__file__).parent
 MLDSA_ROOT = ROOT / "vendor" / "mldsa-native" / "mldsa"
+SOURCE_PREFIX_MAP = (
+    [
+        f"-ffile-prefix-map={ROOT.resolve()}=.",
+        f"-fdebug-prefix-map={ROOT.resolve()}=.",
+    ]
+    if sys.platform.startswith("linux")
+    else []
+)
 
 
 def mldsa44_extension() -> Extension:
@@ -30,6 +39,7 @@ def mldsa44_extension() -> Extension:
             ("MLD_CONFIG_NO_RANDOMIZED_API", "1"),
             ("MLD_CONFIG_NO_SUPERCOP", "1"),
         ],
+        extra_compile_args=SOURCE_PREFIX_MAP,
     )
 
 
