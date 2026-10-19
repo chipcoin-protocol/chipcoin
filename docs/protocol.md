@@ -8,17 +8,21 @@
 
 ## Special Transactions
 
-Chipcoin v2 defines two consensus-validated special transactions outside the UTXO spend model:
+Chipcoin v2 defines two consensus-validated node-control transaction families:
 
-- `register_node`
-- `renew_node`
+- legacy registry control: `register_node`, `renew_node`
+- reward-node control: `register_reward_node`, `renew_reward_node`
 
 Both are:
 
 - non-coinbase
-- deterministic from on-chain metadata only
 - signed by the node owner key
 - effective from the next block, never the same block
+
+Legacy forms are metadata-only. Funded v2 reward-node forms also contain
+ordinary UTXO inputs and owner-only change outputs. Once a network's
+`funded_reward_node_activation_height` is reached, consensus requires funded
+v2 and rejects metadata-only forms.
 
 `register_node` metadata:
 
@@ -52,7 +56,8 @@ Consensus rules:
 - `node_id` is unique
 - only one active registration exists for a given `owner_pubkey`
 - `renew_node` is the standard path to keep a registered node active
-- bootstrap fees default to zero for both actions
+- the canonical registration or renewal fee is derived from the parent
+  registry, not from transactions earlier in the same block
 
 ## Node Rewards
 
@@ -61,19 +66,20 @@ Per-block subsidy is split into:
 - miner base subsidy
 - deterministic node reward pool
 
-At genesis-era parameters:
+At mainnet genesis-era parameters:
 
-- miner subsidy: `20 CHC`
-- node reward pool: `2 CHC`
-- total subsidy: `22 CHC`
-- explicit terminal correction: one final miner-only block mints the remaining `0.06250000 CHC`
+- height `0`: no spendable output and no subsidy
+- ordinary miner subsidy from height `1`: `50 CHC`
+- node reward pool: `50 CHC` only at an epoch-closing block
+- ordinary non-closing block subsidy: `50 CHC`
+- maximum closing-block subsidy before fees: `100 CHC`
 
 Epoch and reward parameters:
 
 - mainnet:
   - epoch length: `100` blocks
   - retarget window: `1000` blocks
-  - target block time: `300` seconds
+  - target block time: `600` seconds
   - coinbase maturity: `100` blocks
   - halving interval: `111000` blocks
   - max supply: `11000000 CHC`
@@ -110,26 +116,58 @@ Terminal supply rule:
 - the node reward pool is `0` for that correction block
 - all later blocks mint `0`
 
-A node is active at height `H` when:
+Reward registration, activation, eligibility, settlement, and payout are
+separate protocol states:
 
-- it exists in the on-chain node registry
-- its last valid `register_node` or `renew_node` belongs to epoch `H // 1000`
-- that last action occurred before height `H`
+- reward-node registration is allowed before `node_reward_activation_height`
+- warmup completes in `registration_epoch + reward_node_warmup_epochs`; this
+  calculation continues before reward activation
+- a registration or completed warmup does not by itself make a node eligible
+  for a reward
+- valid on-chain reward attestations and epoch settlements are rejected before
+  `node_reward_activation_height`
+- after activation, an active node must have a canonical registration or
+  renewal in the current epoch, and that action must precede the evaluated
+  height
+- settlement eligibility additionally requires the assigned availability
+  checks, valid verifier attestations, committee quorum, final-window
+  confirmation, and the applicable concentration rules
+- the settlement is included at the epoch-closing height; its ordered reward
+  entries become node-reward outputs in that block's coinbase
 
-Winner selection for block `H`:
+The reward activation heights are network-specific: devnet uses `300`, testnet
+uses `600`, and mainnet uses `1000`. A transaction-format activation, such as
+the TEST-ONLY funded registration/renewal v2 activation at height `300`, is not
+a reward activation and does not enable attestations, settlements, or payouts.
 
-1. reconstruct active nodes from chain state only
-2. compute `score = hash(prev_block_hash || node_id || payout_address)`
-3. sort by ascending score
-4. choose `K = min(10, active_nodes_count)`
-5. split node reward pool equally across the `K` winners
-6. any integer remainder goes to the miner
+On the final public mainnet, `funded_reward_node_activation_height = 0` makes
+the funded v2 format mandatory from the first operational block at height `1`.
+Every reward-node registration and renewal must spend mature owner UTXOs signed
+with ML-DSA-44, return any change to the owner's CHCQ address, and pay exactly
+the canonical registration or renewal fee as the difference between inputs and
+outputs. That effective fee is included in the block fee total and paid to the
+miner. A legacy input-free transaction or a transaction that only declares a
+fee in metadata is invalid on mainnet. This funding rule is independent of the
+height-`1000` reward activation boundary.
 
-Coinbase validation checks exact expected outputs:
+The TEST-ONLY rehearsal retains funded v2 activation at height `300` for its
+preserved history. Public testnet has no funded-v2 activation height until a
+separate coordinated rollout is approved.
 
-- first output is miner payout
-- following outputs are winner payouts in deterministic score order
-- wrong recipients, wrong amounts, or wrong output count are invalid
+For mainnet's 100-block epochs and two-epoch warmup, a node registered at
+height `302` is registered in epoch `3` and becomes warmup-complete at height
+`500` (epoch `5`). Reward processing remains disabled until height `1000`.
+With a canonical epoch-10 renewal included at height `1000`, the record can be
+active from height `1001`. Its first theoretical payout is the epoch-10 closing
+block at height `1099`, and only if the epoch's checks, attestations, committee,
+quorum, final confirmation, and concentration rules all pass. A registry with
+only one active node cannot form a verifier committee for that candidate, so it
+cannot produce an eligible reward entry.
+
+Coinbase validation checks the exact settlement-derived outputs: the first
+output is the miner subsidy plus transaction fees, followed by reward-node
+outputs in settlement rank order. Wrong recipients, amounts, ordering, or
+output count invalidate the block.
 
 ## Transport
 

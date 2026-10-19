@@ -72,6 +72,43 @@ The manifest must not contain secret values. Record the hash of a normalized,
 reviewed configuration where secrets are replaced by stable labels, not by
 their hashes if those hashes would assist guessing low-entropy credentials.
 
+## Reward Activation Boundary
+
+Reward nodes may register before mainnet reward activation at height `1000`.
+Their two-epoch warmup is measured from the registration epoch and may complete
+before activation. This does not authorize pre-activation reward traffic:
+on-chain attestation bundles and settlements are invalid below height `1000`,
+and no reward-node payout can be created there.
+
+Public mainnet requires funded v2 reward-node registration and renewal from the
+first operational block, height `1`. The consensus value is
+`funded_reward_node_activation_height = 0`; zero is retained because candidate
+height comparison uses `height >= activation`, and the canonical height-zero
+genesis contains no registration or renewal. Operators must fund the PQ owner
+wallet before either action. Each transaction spends mature owner UTXOs,
+returns change to the owner CHCQ address, and pays the exact canonical fee to
+the block miner. Input-free legacy operations and metadata-only fee declarations
+are invalid.
+
+After activation, reward eligibility still requires a canonical renewal in the
+current epoch, completed warmup, availability checks, valid attestations,
+committee quorum, final-window confirmation, and concentration-policy survival.
+Registration and warmup alone never guarantee eligibility or payout. Settlement
+and payout occur together in the epoch-closing block.
+
+For example, a node registered at height `302` is warmup-complete at height
+`500`. If its epoch-10 renewal is included at height `1000`, it can be active
+from height `1001`; its first theoretical payout is at height `1099`. That
+outcome remains conditional on the epoch-10 checks and quorum. A sole registered
+node has no independent verifier committee and cannot qualify for a reward.
+
+Do not confuse reward activation with funded special-transaction activation.
+The TEST-ONLY funded registration/renewal v2 boundary at height `300` changes
+how registration fees are paid; it does not activate node rewards. Reward
+activation remains network-specific: devnet `300`, testnet `600`, and mainnet
+`1000`. TEST-ONLY keeps its funded-v2 height `300` for historical compatibility;
+public testnet funding activation remains pending a separate rollout decision.
+
 ## Support Matrix And Host Prerequisites
 
 Only hosts listed in the RC manifest are supported. At minimum verify:
