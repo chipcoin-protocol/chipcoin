@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "scope": "PRE_FREEZE_SOURCE",
+  "source_commit": "FILL_WITH_REVIEWED_COMMIT_SHA40",
+  "source_tree_sha256": "FILL_WITH_REVIEWED_WORKTREE_SHA256",
+  "working_tree_clean": false,
+  "identity": {
+    "network": "mainnet",
+    "chain_id": "chipcoin-mainnet-1",
+    "genesis_hash": null
+  },
+  "event_journal": "events.jsonl",
+  "gates": {}
+}

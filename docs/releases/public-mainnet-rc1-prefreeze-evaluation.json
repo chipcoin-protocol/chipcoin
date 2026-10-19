@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "evaluated_at": "2026-10-19",
+  "scope": "PRE_FREEZE_TECHNICAL_ONLY",
+  "source_commit": "63de78592f1bc577df579a53281fac5ed515e422",
+  "working_tree_clean": false,
+  "matrix_sha256": "9f7e5e5bb997c73c2d5ab32d097f87b958e866f48ee91ccfab6dc3101e6fc9f4",
+  "catalog_sha256": "bc99a54ad4be63ce176362da5e566f13e5eff074341fcf736e1753089a2da64d",
+  "technical_evaluation_counts": {
+    "PASS": 20,
+    "FAIL": 0,
+    "BLOCKED": 70,
+    "NOT_RUN": 8
+  },
+  "formal_rc_gate_counts": {
+    "PASS": 0,
+    "FAIL": 0,
+    "BLOCKED": 0,
+    "NOT_RUN": 98
+  },
+  "evidence": {
+    "gate_graph_catalog_runner_tests": "34 PASS",
+    "source_configuration_identity_snapshot_tests": "49 PASS",
+    "browser_wallet_two_clean_runs": "178 PASS; Chrome and Firefox tree hashes pairwise identical",
+    "explorer_two_clean_runs": "74 PASS; 2 final-mainnet live tests intentionally skipped; typecheck/build PASS",
+    "production_npm_audits": "wallet 0; Explorer 0",
+    "docker_oci": "two byte-identical exports; sha256:37c88176e030ad7b4b8f513d8c99df119fd479cbb503f68f0337798ae6447f89"
+  },
+  "promotion_prohibited": true,
+  "reason": "Final genesis, clean frozen source, named artifacts, and canonical-chain evidence are not available."
+}

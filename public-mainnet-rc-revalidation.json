@@ -1,0 +1,2625 @@
+{
+  "chain_id": "chipcoin-mainnet-1",
+  "counts": {
+    "BLOCKED": 0,
+    "FAIL": 0,
+    "NOT_RUN": 98,
+    "PASS": 0,
+    "PENDING_HEIGHT": 0
+  },
+  "decision_rule": "READY only when all 98 RC_BLOCKING requirements are PASS on the new canonical chain.",
+  "genesis_hash": "PENDING_FINALIZATION",
+  "network": "mainnet",
+  "requirements": [
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "consensus_config",
+      "dependencies": [],
+      "description": "Canonical deterministic mainnet genesis is fixed in code/config.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-001",
+      "notes": "Code/config verification only.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "consensus_runtime",
+      "dependencies": [
+        "CONS-CFG-001"
+      ],
+      "description": "Independent nodes start from the same mainnet genesis hash and parameters.",
+      "historical_reference": {
+        "evidence": [
+          "E-MILESTONE-1"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-RUN-001",
+      "notes": "Docker runtime evidence.",
+      "required_evidence": [
+        "E-MILESTONE-1"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "consensus_config",
+      "dependencies": [],
+      "description": "Mainnet network ID and chain identity are distinct from testnet.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT",
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-002",
+      "notes": "Configuration and preflight.",
+      "required_evidence": [
+        "E-PREFLIGHT",
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "consensus_config",
+      "dependencies": [],
+      "description": "Target block time is frozen at 600 seconds with no legacy schedule.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-003",
+      "notes": "Runtime statistical validation continues in soak but does not alter the frozen value.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "consensus_config",
+      "dependencies": [],
+      "description": "Initial compact target is 0x1d1399ad.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-004",
+      "notes": "Code/config verification.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "economics_config",
+      "dependencies": [],
+      "description": "Maximum scheduled supply is 11,000,000 CHC.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-005",
+      "notes": "Code/config verification.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "economics_config",
+      "dependencies": [],
+      "description": "Initial miner block reward is 50 CHC.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-006",
+      "notes": "Code/config verification.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "economics_config",
+      "dependencies": [],
+      "description": "Halving interval is 111,000 blocks and emission terminates at the cap.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-007",
+      "notes": "Code/config verification.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "consensus_config",
+      "dependencies": [],
+      "description": "Coinbase maturity is exactly 100 blocks.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-CFG-008",
+      "notes": "Static consensus value; exact runtime boundary is a separate gate.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "consensus_runtime",
+      "dependencies": [
+        "FAULT-RUN-005"
+      ],
+      "description": "Cumulative-work chain selection is proven by a real multi-process reorg.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-RUN-002",
+      "notes": "Scenario A naturally selected branch B with work 36375193884 over A with work 30897002034.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "transactions_runtime",
+      "dependencies": [],
+      "description": "Fee accounting is correct in transaction outputs and miner coinbase.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-RUN-003",
+      "notes": "Real PQ transaction at block 104.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "transactions_runtime",
+      "dependencies": [],
+      "description": "Canonical UTXO validation and state transition are correct.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-RUN-004",
+      "notes": "Input consumed, outputs/change and balances reconciled.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "transactions_runtime",
+      "dependencies": [
+        "FAULT-RUN-012"
+      ],
+      "description": "Conflicting mainnet double spend is rejected across a real partition/reorg.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-B-CLOSURE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-RUN-005",
+      "notes": "Real Docker branches confirmed conflicting spends of one mature outpoint. B won by cumulative work; only B2 remains canonical. Post-recovery block 219 and A/B/C convergence verified.",
+      "required_evidence": [
+        "E-FAULT-B-CLOSURE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "recovery_runtime",
+      "dependencies": [],
+      "description": "Controlled restart preserves state and catches up over P2P.",
+      "historical_reference": {
+        "evidence": [
+          "E-RESTART"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-RUN-006",
+      "notes": "node-c restart and convergence at height 83.",
+      "required_evidence": [
+        "E-RESTART"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "sync_runtime",
+      "dependencies": [],
+      "description": "A node with an empty DB completes full sync from genesis over P2P.",
+      "historical_reference": {
+        "evidence": [
+          "E-FULLSYNC"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "CONS-RUN-007",
+      "notes": "No snapshot or DB copy; converged at height 83.",
+      "required_evidence": [
+        "E-FULLSYNC"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_config",
+      "dependencies": [],
+      "description": "ML-DSA-44 transaction policy is active from mainnet genesis.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT",
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-CFG-001",
+      "notes": "Code/config verification.",
+      "required_evidence": [
+        "E-PREFLIGHT",
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_config",
+      "dependencies": [],
+      "description": "CHCQ outputs are required from mainnet genesis.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT",
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-CFG-002",
+      "notes": "No legacy mainnet output fallback.",
+      "required_evidence": [
+        "E-PREFLIGHT",
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_config",
+      "dependencies": [],
+      "description": "ML-DSA-44 uses scheme_id 10.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT",
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-CFG-003",
+      "notes": "Static and runtime evidence.",
+      "required_evidence": [
+        "E-PREFLIGHT",
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_runtime",
+      "dependencies": [
+        "PQ-CFG-002"
+      ],
+      "description": "Mainnet coinbase outputs are PQ/CHCQ.",
+      "historical_reference": {
+        "evidence": [
+          "E-MILESTONE-1",
+          "E-MILESTONE-10"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-RUN-001",
+      "notes": "Observed in Docker rehearsal.",
+      "required_evidence": [
+        "E-MILESTONE-1",
+        "E-MILESTONE-10"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_runtime",
+      "dependencies": [
+        "PQ-CFG-001"
+      ],
+      "description": "A normal CHCQ-to-CHCQ ML-DSA-44 transaction is accepted and confirmed.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-RUN-002",
+      "notes": "TXID 234011c56a21dc12c2917245c67e081ac8198405bd4ea52347314e27253735cf.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_runtime",
+      "dependencies": [
+        "PQ-RUN-002"
+      ],
+      "description": "A real mainnet PQ multi-input transaction is accepted and confirmed.",
+      "historical_reference": {
+        "evidence": [
+          "E-PQ-MULTI-INPUT"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-RUN-003",
+      "notes": "Real two-input version-2 transaction with ML-DSA-44 scheme 10 on every input; propagated through A/B/C and confirmed exactly once in canonical block 278 with UTXO, change, fee/coinbase and final-state reconciliation.",
+      "required_evidence": [
+        "E-PQ-MULTI-INPUT"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_wallets",
+      "dependencies": [],
+      "description": "Mainnet miner wallet is ML-DSA-44/CHCQ and mounted read-only.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-OPS-001",
+      "notes": "Preflight and write-denial/checksum hygiene.",
+      "required_evidence": [
+        "E-PREFLIGHT"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_wallets",
+      "dependencies": [],
+      "description": "Reward owner wallet is separate ML-DSA-44/CHCQ and mounted read-only.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-OPS-002",
+      "notes": "Cryptographic format and secret hygiene verified; lifecycle is separate.",
+      "required_evidence": [
+        "E-PREFLIGHT"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "pq_wallets",
+      "dependencies": [],
+      "description": "Reward attestation wallet is separate ML-DSA-44/CHCQ and mounted read-only.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-OPS-003",
+      "notes": "Cryptographic format and secret hygiene verified; runtime attestations pending height.",
+      "required_evidence": [
+        "E-PREFLIGHT"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "negative_runtime",
+      "dependencies": [
+        "PQ-CFG-001"
+      ],
+      "description": "Mainnet rejects legacy/ECDSA outputs, transactions, coinbase and special signatures in Docker runtime.",
+      "historical_reference": {
+        "evidence": [
+          "E-PQ-LEGACY-REJECTION"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-NEG-001",
+      "notes": "Isolated Docker mainnet production paths rejected all mandatory legacy/non-PQ cases for their exact policy reasons; valid ML-DSA-44/CHCQ controls passed before and after, with no rejected-case state mutation.",
+      "required_evidence": [
+        "E-PQ-LEGACY-REJECTION"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "negative_runtime",
+      "dependencies": [],
+      "description": "Mainnet rejects wrong-network wallets and cross-network replay/login signatures.",
+      "historical_reference": {
+        "evidence": [
+          "E-PQ-CROSS-NETWORK"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-NEG-002",
+      "notes": "Both signed-login and unchanged serialized ML-DSA-44 transaction artifacts were accepted only in their source network domain and rejected in the opposite domain. Endpoint mismatch and persisted-state isolation passed without rehearsal injection.",
+      "required_evidence": [
+        "E-PQ-CROSS-NETWORK"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [],
+      "description": "Browser Wallet creates ML-DSA-44 signatures for mainnet transactions.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER",
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-BW-001",
+      "notes": "Accepted browser/PQ E2E evidence.",
+      "required_evidence": [
+        "E-BROWSER",
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [],
+      "description": "Signed-login uses ML-DSA-44 and network-bound domain separation.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "PQ-BW-002",
+      "notes": "Existing signed-login tests; runtime public integration is not implied.",
+      "required_evidence": [
+        "E-BROWSER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "maturity_runtime",
+      "dependencies": [
+        "CONS-CFG-008"
+      ],
+      "description": "A mature coinbase spend is accepted at a later mainnet height.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "TX-RUN-001",
+      "notes": "Positive mature-spend gate only.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "maturity_runtime",
+      "dependencies": [
+        "CONS-CFG-008"
+      ],
+      "description": "The same raw transaction is rejected for candidate block 99 and accepted for candidate block 100.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ",
+          "E-MATURITY-BOUNDARY"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "TX-RUN-002",
+      "notes": "Exact production boundary: same ML-DSA-44 TXID/raw hash, candidate 99 rejected specifically as immature and candidate 100 accepted by consensus, block-stateful and node mempool paths.",
+      "required_evidence": [
+        "E-MATURITY-PQ",
+        "E-MATURITY-BOUNDARY"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "transactions_runtime",
+      "dependencies": [
+        "PQ-RUN-002"
+      ],
+      "description": "Mempool propagation occurs across independent mainnet nodes.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "TX-RUN-003",
+      "notes": "Observed on A/B/C before inclusion.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "transactions_runtime",
+      "dependencies": [
+        "TX-RUN-003"
+      ],
+      "description": "PQ transaction is included in a mined block and confirmed.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "TX-RUN-004",
+      "notes": "Block 104.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "transactions_runtime",
+      "dependencies": [
+        "TX-RUN-004"
+      ],
+      "description": "Amount, fee and change match the signed transaction manifest.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "TX-RUN-005",
+      "notes": "1 CHC destination, 48.99999 CHC change, 0.00001 CHC fee.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "transactions_runtime",
+      "dependencies": [
+        "TX-RUN-004"
+      ],
+      "description": "Input consumption, output creation and balances converge on A/B/C.",
+      "historical_reference": {
+        "evidence": [
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "TX-RUN-006",
+      "notes": "Supply and UTXO transition reconciled.",
+      "required_evidence": [
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "explorer_integration",
+      "dependencies": [
+        "TX-RUN-004"
+      ],
+      "description": "Private Explorer displays the real confirmed PQ transaction and matching UTXO/balance data.",
+      "historical_reference": {
+        "evidence": [
+          "E-EXPLORER",
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "TX-EXP-001",
+      "notes": "Private read-only integration, not public deployment.",
+      "required_evidence": [
+        "E-EXPLORER",
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "fault_recovery",
+      "dependencies": [],
+      "description": "Controlled node restart and persistence recovery.",
+      "historical_reference": {
+        "evidence": [
+          "E-RESTART"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-001",
+      "notes": "Separate accepted report.",
+      "required_evidence": [
+        "E-RESTART"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "fault_recovery",
+      "dependencies": [
+        "FAULT-RUN-001"
+      ],
+      "description": "Restarted node catches up automatically over P2P.",
+      "historical_reference": {
+        "evidence": [
+          "E-RESTART"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-002",
+      "notes": "Final fingerprint matched peers.",
+      "required_evidence": [
+        "E-RESTART"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "fault_recovery",
+      "dependencies": [],
+      "description": "Full sync from an empty database without snapshot or DB copy.",
+      "historical_reference": {
+        "evidence": [
+          "E-FULLSYNC"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-003",
+      "notes": "Separate accepted report.",
+      "required_evidence": [
+        "E-FULLSYNC"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [],
+      "description": "Docker partition provides verified bidirectional P2P isolation.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A",
+          "E-FAULT-READY"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-004",
+      "notes": "Observed in current Scenario A; overall scenario remains in progress.",
+      "required_evidence": [
+        "E-FAULT-A",
+        "E-FAULT-READY"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-004"
+      ],
+      "description": "Both isolated branches produce different blocks after a known common ancestor.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-005",
+      "notes": "Real fork observed; no reorg result inferred.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-005"
+      ],
+      "description": "Scenario A valid TX is confirmed only on the branch intended to lose.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-006",
+      "notes": "Current execution reached SCENARIO_A_TX_CONFIRMED.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-006"
+      ],
+      "description": "Scenario A selects the higher cumulative-work branch after natural reconnect.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-007",
+      "notes": "Natural P2P reconnect selected branch B by cumulative work.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-007"
+      ],
+      "description": "Orphan blocks and orphan coinbase UTXOs/supply are rolled back.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-008",
+      "notes": "All 15 losing A blocks became non-canonical; orphan coinbases, TX outputs, supply and UTXO state reconciled.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-007"
+      ],
+      "description": "Orphaned but still-valid TX re-enters mempool after reconcile.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-009",
+      "notes": "ORPHAN_TX_REENTERED_MEMPOOL observed for TX-A on A/B/C without manual resubmission.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-009"
+      ],
+      "description": "Re-entered Scenario A TX is reconfirmed exactly once on canonical chain.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-010",
+      "notes": "Same TXID reconfirmed exactly once in canonical block 166.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-010"
+      ],
+      "description": "Scenario A completes with A/B/C convergence and SQLite integrity.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-A"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-011",
+      "notes": "FINAL_CONVERGENCE at height 166 with equal tip/work/supply/UTXO/reward state and clean SQLite checks.",
+      "required_evidence": [
+        "E-FAULT-A"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "partition_reorg",
+      "dependencies": [
+        "FAULT-RUN-011"
+      ],
+      "description": "Scenario B confirms conflicting spends on separate branches and rejects losing orphan after reorg.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-B-CLOSURE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-012",
+      "notes": "A2 confirmed at A:212; B2 at B:216. Natural reorg to B:218 rejects A2 without resubmit; block 219 extends B. Finalize lock-transition issue is separate and recovered with existing harness; no consensus change or retest required.",
+      "required_evidence": [
+        "E-FAULT-B-CLOSURE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "fault_recovery",
+      "dependencies": [],
+      "description": "SIGKILL crash recovery preserves DB integrity and canonical state.",
+      "historical_reference": {
+        "evidence": [
+          "E-SIGKILL-RECOVERY"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-013",
+      "notes": "Real docker kill --signal KILL of node-c produced exit 137. Same container, image, runtime and SQLite DB reopened in WAL mode; handshake in 2808 ms, convergence in 4212 ms after three-block downtime, with continuation at 228.",
+      "required_evidence": [
+        "E-SIGKILL-RECOVERY"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "storage_runtime",
+      "dependencies": [
+        "FAULT-RUN-012",
+        "FAULT-RUN-013"
+      ],
+      "description": "SQLite quick_check and foreign_key_check pass after all fault scenarios.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-B-CLOSURE",
+          "E-SIGKILL-RECOVERY"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-RUN-014",
+      "notes": "A/B/C quick_check returned ok and foreign_key_check returned empty after Scenario B and again after node-c SIGKILL/WAL recovery and block 228 continuation.",
+      "required_evidence": [
+        "E-FAULT-B-CLOSURE",
+        "E-SIGKILL-RECOVERY"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "fault_harness",
+      "dependencies": [],
+      "description": "Fault monitor lifecycle is session-owned, health-gated, and reusable across consecutive fault sessions without manual cleanup.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-STATE-MODEL"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-OPS-001",
+      "notes": "Immutable session identity, 17 interruption/recovery checkpoints, orchestrator process-kill recovery, and consecutive ephemeral Docker sessions passed with zero manual cleanup.",
+      "required_evidence": [
+        "E-FAULT-STATE-MODEL"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "p2p_reliability",
+      "dependencies": [],
+      "description": "After shared-network restoration, nodes resume P2P handshakes and reconnect scheduling without requiring a process restart.",
+      "historical_reference": {
+        "evidence": [
+          "E-P2P-RECONNECT",
+          "E-P2P-RECONNECT-LIVE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-OPS-002",
+      "notes": "Fix deployed by controlled C/B/A rolling restart. Live node-c connectivity/DNS loss produced bounded connection_failed backoff with no reputation/misbehavior penalty, exposed connect_loops=1, and reconnected in 913 ms without restart; final A/B/C convergence and SQLite integrity passed.",
+      "required_evidence": [
+        "E-P2P-RECONNECT",
+        "E-P2P-RECONNECT-LIVE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "fault_harness",
+      "dependencies": [
+        "FAULT-OPS-001"
+      ],
+      "description": "Scenario activation returns success only after verified partition state is durably persisted and synchronously reread, with no delayed post-return lifecycle transition.",
+      "historical_reference": {
+        "evidence": [
+          "E-FAULT-ACTIVATION-ATOMICITY"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FAULT-OPS-003",
+      "notes": "Activation command owns the transition. Completion barrier verifies monitor health, topology evidence, immutable session ownership, fault lock state and lifecycle state after fsync/reread. Artificial-delay tests, 10 consecutive Docker cycles and 17 crash checkpoints passed.",
+      "required_evidence": [
+        "E-FAULT-ACTIVATION-ATOMICITY"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_code",
+      "dependencies": [],
+      "description": "Snapshot format includes deterministic mainnet network/genesis/height/tip/work metadata.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-CODE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-CFG-001",
+      "notes": "Code/test verification only.",
+      "required_evidence": [
+        "E-SNAPSHOT-CODE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_code",
+      "dependencies": [],
+      "description": "Snapshot checksum, authorized signature and enforced trust-anchor validation exist.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-CODE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-CFG-002",
+      "notes": "Code/test verification only.",
+      "required_evidence": [
+        "E-SNAPSHOT-CODE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_runtime",
+      "dependencies": [
+        "SNAP-CFG-002"
+      ],
+      "description": "Mainnet runtime rejects unsigned, invalid-signature and untrusted-signer snapshots.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-REHEARSAL"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-NEG-001",
+      "notes": "Isolated copies were rejected in enforce mode; the rehearsal artifact was not modified.",
+      "required_evidence": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_runtime",
+      "dependencies": [
+        "SNAP-CFG-001"
+      ],
+      "description": "Mainnet runtime rejects wrong-network or wrong-genesis snapshot.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-REHEARSAL"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-NEG-002",
+      "notes": "Wrong network failed identity validation; altered genesis/header failed proof-of-work validation.",
+      "required_evidence": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_runtime",
+      "dependencies": [
+        "SNAP-CFG-001",
+        "SNAP-CFG-002"
+      ],
+      "description": "A signed snapshot is produced atomically from real rehearsal mainnet state.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-REHEARSAL"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-RUN-001",
+      "notes": "Canonical mainnet state at height 249, block 0000000c241482e41fdbb85ecb21334c887cf4225bc9f071fc2b043d1d81c2b4.",
+      "required_evidence": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_runtime",
+      "dependencies": [
+        "SNAP-RUN-001"
+      ],
+      "description": "Snapshot contains no wallet, seed, private key or unrelated runtime secret.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-REHEARSAL",
+          "E-SNAPSHOT-SIGNER-SECURITY"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-RUN-002",
+      "notes": "Actual artifact, metadata, logs and evidence passed the private-key/secret scan.",
+      "required_evidence": [
+        "E-SNAPSHOT-REHEARSAL",
+        "E-SNAPSHOT-SIGNER-SECURITY"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_runtime",
+      "dependencies": [
+        "SNAP-RUN-001"
+      ],
+      "description": "Empty node restores trusted snapshot and delta-syncs to tip.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-REHEARSAL"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-RUN-003",
+      "notes": "Empty Docker path E restored height 249 and applied a real ten-block P2P delta to height 259.",
+      "required_evidence": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_runtime",
+      "dependencies": [
+        "SNAP-RUN-003"
+      ],
+      "description": "Snapshot+delta final state equals full-sync node state.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-REHEARSAL",
+          "E-FULLSYNC"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-RUN-004",
+      "notes": "At height 268, restored path E exactly matched A/B/C genesis-derived canonical state for tip/work/supply/UTXO hash/balances/reward state and SQLite integrity. This gate is an input to, and does not depend on, final A-E convergence in FINAL-RUN-001.",
+      "required_evidence": [
+        "E-SNAPSHOT-REHEARSAL",
+        "E-FULLSYNC"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "snapshot_operations",
+      "dependencies": [
+        "SNAP-RUN-003"
+      ],
+      "description": "Snapshot failure falls back safely to full sync without corrupting state.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-FALLBACK"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SNAP-OPS-001",
+      "notes": "Production auto bootstrap rejected a checksum-tampered snapshot atomically, selected full mode in the same invocation, synchronized from genesis over P2P, matched A/B/C deterministically, and accepted the next canonical block.",
+      "required_evidence": [
+        "E-SNAPSHOT-FALLBACK"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_config",
+      "dependencies": [],
+      "description": "Reward activation is height 1000 with two 100-block warmup epochs and max 25 rewarded nodes.",
+      "historical_reference": {
+        "evidence": [
+          "E-CONFIG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-CFG-001",
+      "notes": "Frozen code/config verification.",
+      "required_evidence": [
+        "E-CONFIG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_runtime",
+      "dependencies": [
+        "REWARD-CFG-001"
+      ],
+      "description": "Activation boundary behavior changes correctly at height 1000.",
+      "historical_reference": {
+        "evidence": [
+          "E-REWARD-REGISTRATION",
+          "E-REWARD-LIFECYCLE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-RUN-001",
+      "notes": "Canonical heights 999/1000/1001 demonstrate the configured activation transition, renewals at 1000 and eligibility/attestation traffic from 1001.",
+      "required_evidence": [
+        "E-REWARD-REGISTRATION",
+        "E-REWARD-LIFECYCLE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_runtime",
+      "dependencies": [
+        "REWARD-RUN-001"
+      ],
+      "description": "Two reward nodes register with ML-DSA-44 owners and CHCQ payout addresses.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT",
+          "E-REWARD-REGISTRATION"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-RUN-002",
+      "notes": "Two real pre-activation registrations propagated through A/B/C and were confirmed in canonical mainnet block 275; distinct scheme-10 owner/attestation identities, CHCQ payouts, registry convergence and inactive warmup state verified.",
+      "required_evidence": [
+        "E-PREFLIGHT",
+        "E-REWARD-REGISTRATION"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_runtime",
+      "dependencies": [
+        "REWARD-RUN-002"
+      ],
+      "description": "ML-DSA-44 attestations, committee/quorum and two-epoch warmup produce eligibility.",
+      "historical_reference": {
+        "evidence": [
+          "E-REWARD-REGISTRATION",
+          "E-REWARD-LIFECYCLE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-RUN-003",
+      "notes": "Two nodes completed the unshortened warmup, became eligible at height 1001 and passed all assigned attestation windows and final confirmations in epochs 10 and 11.",
+      "required_evidence": [
+        "E-REWARD-REGISTRATION",
+        "E-REWARD-LIFECYCLE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_runtime",
+      "dependencies": [
+        "REWARD-RUN-003"
+      ],
+      "description": "Real settlement produces the configured payout amount to CHCQ recipients.",
+      "historical_reference": {
+        "evidence": [
+          "E-REWARD-LIFECYCLE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-RUN-004",
+      "notes": "Canonical auto settlements at heights 1099 and 1199 paid exactly 25 CHC to each of two CHCQ recipients per epoch, with zero undistributed amount.",
+      "required_evidence": [
+        "E-REWARD-LIFECYCLE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_runtime",
+      "dependencies": [
+        "REWARD-RUN-004"
+      ],
+      "description": "No duplicate payout and payout maturity/accounting are correct.",
+      "historical_reference": {
+        "evidence": [
+          "E-REWARD-LIFECYCLE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-RUN-005",
+      "notes": "Exactly one settlement and one payout per node per epoch; 100 CHC materialized total, height-1099 outputs mature, height-1199 outputs immature, and A/B/C supply/UTXO fingerprints match.",
+      "required_evidence": [
+        "E-REWARD-LIFECYCLE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_runtime",
+      "dependencies": [
+        "REWARD-RUN-004"
+      ],
+      "description": "Reward registry, settlement and payout survive restart.",
+      "historical_reference": {
+        "evidence": [
+          "E-REWARD-LIFECYCLE",
+          "E-REWARD-RESTART"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-RUN-006",
+      "notes": "Node C restarted on the same DB at height 1220, reconnected and converged in 4 seconds with unchanged registry, two settlements and 100 CHC payout accounting; A/B/C remained equal through height 1223.",
+      "required_evidence": [
+        "E-REWARD-LIFECYCLE",
+        "E-REWARD-RESTART"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "reward_runtime",
+      "dependencies": [
+        "REWARD-RUN-004",
+        "FAULT-RUN-011"
+      ],
+      "description": "Reward state remains safe through applicable reorg and converges on A/B/C.",
+      "historical_reference": {
+        "evidence": [
+          "E-REWARD-REORG"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "REWARD-RUN-007",
+      "notes": "Real reward-era fork at common ancestor 1227: B won with work 269746166694 over A at 269527039020; A naturally adopted B, orphan coinbases were removed, reward registry/attestation/settlement/payout fingerprints converged, and A/B/C remained equal through block 1231.",
+      "required_evidence": [
+        "E-REWARD-REORG"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "final_convergence",
+      "dependencies": [
+        "FAULT-RUN-011",
+        "FAULT-RUN-012",
+        "SNAP-RUN-004",
+        "REWARD-RUN-007"
+      ],
+      "description": "Paths A normal, B partition/reorg, C restart, D full-sync and E snapshot+delta converge on one canonical state.",
+      "historical_reference": {
+        "evidence": [
+          "E-FINAL-A-E"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "FINAL-RUN-001",
+      "notes": "A-E converged exactly at height 1234 and remained equal through canonical continuation block 1235 for tip/work/supply/UTXO/selected balances/registry/attestations/settlements/payouts and SQLite integrity.",
+      "required_evidence": [
+        "E-FINAL-A-E"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [],
+      "description": "Chrome production build completes from locked dependencies.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-BUILD-001",
+      "notes": "Existing rehearsal build evidence.",
+      "required_evidence": [
+        "E-BROWSER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [],
+      "description": "Firefox production build completes from locked dependencies.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-BUILD-002",
+      "notes": "Existing rehearsal build evidence.",
+      "required_evidence": [
+        "E-BROWSER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [],
+      "description": "Mainnet/testnet switch separates state and fails closed on endpoint network mismatch.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-NET-001",
+      "notes": "Existing network-support regression evidence.",
+      "required_evidence": [
+        "E-BROWSER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [],
+      "description": "Mainnet path has no hardcoded testnet API/explorer dependency.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-NET-002",
+      "notes": "Configuration/endpoint audit evidence.",
+      "required_evidence": [
+        "E-BROWSER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [
+        "PQ-BW-001",
+        "PQ-BW-002"
+      ],
+      "description": "Mainnet refuses legacy signing and uses ML-DSA-44 for transaction/login signing.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER",
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-SEC-001",
+      "notes": "Runtime transaction plus regression evidence.",
+      "required_evidence": [
+        "E-BROWSER",
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [],
+      "description": "Extension permission audit is complete for Chrome and Firefox manifests.",
+      "historical_reference": {
+        "evidence": [
+          "E-BROWSER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-SEC-002",
+      "notes": "Existing manifest review.",
+      "required_evidence": [
+        "E-BROWSER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [
+        "BW-BUILD-001",
+        "BW-BUILD-002"
+      ],
+      "description": "Clean install preserves correct network defaults and creates/imports PQ wallet.",
+      "historical_reference": {
+        "evidence": [
+          "E-BW-CLEAN-FIREFOX",
+          "E-BW-CLEAN-CHROMIUM"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-OPS-001",
+      "notes": "Firefox 156 clean create/import and Chromium 153 named-artifact clean create passed with ML-DSA-44 scheme 10, CHCQ, complete-restart persistence, mainnet-testnet-mainnet isolation, API identity fail-closed checks, and secret hygiene. Canonical rebuilt Firefox matched the validated artifact byte-for-byte.",
+      "required_evidence": [
+        "E-BW-CLEAN-FIREFOX",
+        "E-BW-CLEAN-CHROMIUM"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "browser_wallet",
+      "dependencies": [
+        "BW-BUILD-001",
+        "BW-BUILD-002"
+      ],
+      "description": "Upgrade/migration preserves encrypted wallet and network-scoped state where applicable.",
+      "historical_reference": {
+        "evidence": [
+          "E-BW-MIGRATION-NOT-APPLICABLE"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "BW-OPS-002",
+      "notes": "NOT_APPLICABLE: this is the first supported mainnet/PQ browser-wallet release. No supported predecessor or migration contract exists; devnet/testnet artifacts and stale named builds are not migration sources. Legacy wallets are not silently promoted to mainnet, and mainnet requires explicit PQ create/import. PASS closes the permitted applicability branch and does not claim a runtime migration test.",
+      "required_evidence": [
+        "E-BW-MIGRATION-NOT-APPLICABLE"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "explorer_integration",
+      "dependencies": [],
+      "description": "Chipcoin Central verifies API network and fails closed on mismatch or missing network.",
+      "historical_reference": {
+        "evidence": [
+          "E-EXPLORER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "EXP-INT-001",
+      "notes": "Private integration; separate repository.",
+      "required_evidence": [
+        "E-EXPLORER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "explorer_integration",
+      "dependencies": [],
+      "description": "Private mainnet Explorer shows MAINNET indicator and real block/coinbase/CHCQ data.",
+      "historical_reference": {
+        "evidence": [
+          "E-EXPLORER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "EXP-INT-002",
+      "notes": "Read-only rehearsal integration.",
+      "required_evidence": [
+        "E-EXPLORER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "explorer_integration",
+      "dependencies": [
+        "TX-EXP-001"
+      ],
+      "description": "Private Explorer shows real PQ transaction, fee, maturity, UTXO and balances matching node API.",
+      "historical_reference": {
+        "evidence": [
+          "E-EXPLORER",
+          "E-MATURITY-PQ"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "EXP-INT-003",
+      "notes": "Accepted private E2E.",
+      "required_evidence": [
+        "E-EXPLORER",
+        "E-MATURITY-PQ"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "explorer_integration",
+      "dependencies": [
+        "REWARD-RUN-004"
+      ],
+      "description": "Private Explorer shows real reward settlement and payout correctly.",
+      "historical_reference": {
+        "evidence": [
+          "E-EXPLORER",
+          "E-REWARD-LIFECYCLE",
+          "E-EXPLORER-REWARD"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "EXP-INT-004",
+      "notes": "Private production build and Chromium E2E displayed the real epoch-11 settlement, two CHCQ payouts, ML-DSA-44 labels, amounts, height and final-confirmation state; no fixtures or public deployment.",
+      "required_evidence": [
+        "E-EXPLORER",
+        "E-REWARD-LIFECYCLE",
+        "E-EXPLORER-REWARD"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "release_integrity",
+      "dependencies": [],
+      "description": "RC source has an immutable version and Git commit/tag.",
+      "historical_reference": {
+        "evidence": [
+          "E-RC-FINALIZATION"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-REL-001",
+      "notes": "Version 0.1.2 RC.1 is frozen by annotated tag mainnet-v0.1.2-rc.1 at commit 698816e15e4397dd2f5bba320b88ca5dd3e28830; the tag is annotated but not cryptographically signed.",
+      "required_evidence": [
+        "E-RC-FINALIZATION"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "RELEASE_FINALIZATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "release_integrity",
+      "dependencies": [
+        "SEC-REL-001"
+      ],
+      "description": "RC working tree is clean or every diff is explicitly inventoried and frozen.",
+      "historical_reference": {
+        "evidence": [
+          "E-RC-FINALIZATION"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-REL-002",
+      "notes": "All source changes were inventoried before the freeze commit; the tree was clean after tag creation and the image was built from git archive of that tag. Subsequent tracked changes are release-evidence documentation only.",
+      "required_evidence": [
+        "E-RC-FINALIZATION"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "RELEASE_FINALIZATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "release_integrity",
+      "dependencies": [],
+      "description": "Dependency lockfiles are present and used by builds.",
+      "historical_reference": {
+        "evidence": [
+          "apps/browser-wallet/package-lock.json",
+          "E-BROWSER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-REL-003",
+      "notes": "Other deployed components must retain equivalent locks/build pinning.",
+      "required_evidence": [
+        "apps/browser-wallet/package-lock.json",
+        "E-BROWSER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "RELEASE_FINALIZATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "release_integrity",
+      "dependencies": [
+        "SEC-REL-001"
+      ],
+      "description": "Release Docker images are recorded by immutable digest.",
+      "historical_reference": {
+        "evidence": [
+          "E-RC-FINALIZATION"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-REL-004",
+      "notes": "Node image is frozen locally by content-addressed image ID sha256:25f3dca52fabad5f7b818e17132e994ef6d3ee5f6f169427d9533002eac1e3eb and exported tar SHA-256 cdcb917a9151c9854ee78554d1d39e882d6116f291535abbb05d0f35a8c49cb5. Registry digest must be recorded when published.",
+      "required_evidence": [
+        "E-RC-FINALIZATION"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "RELEASE_FINALIZATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "release_integrity",
+      "dependencies": [
+        "SEC-REL-001",
+        "SEC-REL-003",
+        "SEC-REL-004"
+      ],
+      "description": "Build procedure is reproducible or traceable from commit, locks and image digest.",
+      "historical_reference": {
+        "evidence": [
+          "E-RC-FINALIZATION"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-REL-005",
+      "notes": "Traceability is complete from tag/commit through source archive, browser lock and named artifacts, resolved base digest, build log, OCI labels, final image ID and exported-image checksum. Python compatible ranges mean byte-for-byte future reproducibility is not claimed.",
+      "required_evidence": [
+        "E-RC-FINALIZATION"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "RELEASE_FINALIZATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "secret_hygiene",
+      "dependencies": [],
+      "description": "No secrets/wallet seeds are tracked in Git or copied into Docker images/layers.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-SECRET-001",
+      "notes": "Preflight secret-hygiene gate.",
+      "required_evidence": [
+        "E-PREFLIGHT"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "secret_hygiene",
+      "dependencies": [],
+      "description": "Runtime wallet mounts are read-only, checksummed, separate from RW runtime and absent from logs/backups/snapshots.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-SECRET-002",
+      "notes": "Snapshot artifact must still pass SNAP-RUN-002.",
+      "required_evidence": [
+        "E-PREFLIGHT"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "secret_hygiene",
+      "dependencies": [
+        "SNAP-CFG-002"
+      ],
+      "description": "Snapshot signing private key is never supplied through command-line arguments and is not exposed through normal process listings, shell history, logs or generated artifacts.",
+      "historical_reference": {
+        "evidence": [
+          "E-SNAPSHOT-SIGNER-SECURITY"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-SNAP-KEY-001",
+      "notes": "Protected regular-file input is owner-only and no-follow; canary process/output/artifact checks, permission rejection, signing, tamper, and untrusted-signer tests passed. Real rehearsal snapshot gates remain separate.",
+      "required_evidence": [
+        "E-SNAPSHOT-SIGNER-SECURITY"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "ISOLATED_CHAIN_RUNTIME",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "configuration_security",
+      "dependencies": [],
+      "description": "Mainnet/testnet DB, ports, chain identity, APIs and wallet state are separated and validated.",
+      "historical_reference": {
+        "evidence": [
+          "E-PREFLIGHT",
+          "E-BROWSER",
+          "E-EXPLORER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-CONF-001",
+      "notes": "No public exposure implied.",
+      "required_evidence": [
+        "E-PREFLIGHT",
+        "E-BROWSER",
+        "E-EXPLORER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "dependency_security",
+      "dependencies": [],
+      "description": "Production dependency vulnerabilities are reviewed for reachability and no unresolved production-reachable blocker remains.",
+      "historical_reference": {
+        "evidence": [
+          "E-EXPLORER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-DEP-001",
+      "notes": "Residual Vite/esbuild finding classified build/dev only; dev server must not be public.",
+      "required_evidence": [
+        "E-EXPLORER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "dependency_security",
+      "dependencies": [],
+      "description": "Known residual vulnerabilities and deferred major upgrades are documented with reachability and risk.",
+      "historical_reference": {
+        "evidence": [
+          "E-EXPLORER"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "SEC-DEP-002",
+      "notes": "Vite/esbuild major upgrade remains separate from mainnet freeze.",
+      "required_evidence": [
+        "E-EXPLORER"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "runbooks",
+      "dependencies": [],
+      "description": "Mainnet first-node startup and joining-node procedures are documented.",
+      "historical_reference": {
+        "evidence": [
+          "E-RUNBOOK"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "RUNBOOK-001",
+      "notes": "DOCUMENTED. Runtime startup/sync validation remains in separate gates.",
+      "required_evidence": [
+        "E-RUNBOOK"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "runbooks",
+      "dependencies": [],
+      "description": "Backup, restore, full-sync and snapshot-bootstrap procedures are documented.",
+      "historical_reference": {
+        "evidence": [
+          "E-RUNBOOK"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "RUNBOOK-002",
+      "notes": "DOCUMENTED with secret exclusions, WAL handling and enforced snapshot trust. Runtime drills remain separate.",
+      "required_evidence": [
+        "E-RUNBOOK"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "runbooks",
+      "dependencies": [],
+      "description": "Corrupted DB, stuck/out-of-sync node and accidental-fork recovery procedures are documented.",
+      "historical_reference": {
+        "evidence": [
+          "E-RUNBOOK"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "RUNBOOK-003",
+      "notes": "DOCUMENTED; does not promote fault/sync/storage runtime gates.",
+      "required_evidence": [
+        "E-RUNBOOK"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "runbooks",
+      "dependencies": [],
+      "description": "Safe shutdown, emergency stop and evidence/log collection procedures are documented.",
+      "historical_reference": {
+        "evidence": [
+          "E-RUNBOOK"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "RUNBOOK-004",
+      "notes": "DOCUMENTED with consensus-incident fail-safe ordering.",
+      "required_evidence": [
+        "E-RUNBOOK"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    },
+    {
+      "blocking": "RC_BLOCKING",
+      "category": "runbooks",
+      "dependencies": [],
+      "description": "Wallet/reward key compromise and snapshot signing-key compromise procedures are documented.",
+      "historical_reference": {
+        "evidence": [
+          "E-RUNBOOK"
+        ],
+        "inherited_as_pass": false,
+        "status": "PASS"
+      },
+      "id": "RUNBOOK-005",
+      "notes": "DOCUMENTED with separate owner/attestation custody and snapshot publication halt.",
+      "required_evidence": [
+        "E-RUNBOOK"
+      ],
+      "required_identity": {
+        "chain_id": "chipcoin-mainnet-1",
+        "genesis_hash": "PENDING_FINALIZATION",
+        "network": "mainnet"
+      },
+      "revalidation_class": "SOURCE_REVALIDATION",
+      "status": "NOT_RUN"
+    }
+  ],
+  "schema_version": 1
+}
