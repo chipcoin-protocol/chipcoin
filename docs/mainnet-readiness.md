@@ -61,15 +61,17 @@ pre-mainnet risk register.
   - `target_block_time_activation_height == 0`
   - `legacy_target_block_time_seconds is None`
 
-### Frozen Mainnet Economic Profile
+### RC4 Mainnet Candidate Profile
 
-The following values are frozen for the mainnet genesis candidate:
+The following consensus values remain unchanged apart from the initial target
+candidate below. Source freeze does not by itself approve the public release:
 
 - `600` second target block time with no legacy schedule
 - `1,000` block retarget window
-- initial compact target `0x1d1399ad`, calibrated from the three-miner public
-  testnet hashrate to target approximately `390` seconds per block during the
-  first retarget window
+- initial compact target `0x1e0537e7`, approximately `3,215,030` expected hashes
+  per block; at the measured Tobia miner-a rate (`~3,572 H/s`), three equivalent
+  miners target `~300.02s` expected blocks, while consensus spacing remains
+  `600s`
 - `100` block reward epochs and coinbase maturity
 - `111,000` block halving interval
 - `11,000,000 CHC` hard maximum scheduled supply
@@ -91,9 +93,14 @@ The following values are frozen for the mainnet genesis candidate:
 The scheduled subsidy reaches the hard cap at height `643,297` and becomes zero
 from height `643,298`. Node rewards that are not distributed remain permanently
 unissued, so materialized circulating supply may finish below the hard maximum.
-The initial target is intentionally faster than the steady-state `600` second
-target; if launch hashrate remains comparable to the measured testnet hashrate,
-the first retarget moves subsequent blocks toward `600` seconds.
+At the stated three-miner rate, blocks average about half the 600-second
+target before the first retarget. At candidate height 1000, the existing
+retarget uses the observed genesis-to-height-999 span, clamps it to 1/4..4x
+the 600,000-second target span, and caps the result at the genesis target.
+The span has 999 intervals; at exactly 300 seconds each, the 299,700-second
+observation yields `0x1e029b48` after compact quantization, about 600.65 seconds
+at the same aggregate hashrate. This is a model based on the measured
+single-miner rate, not a guarantee of realized block times.
 
 ## PQ Defaults For Mainnet
 

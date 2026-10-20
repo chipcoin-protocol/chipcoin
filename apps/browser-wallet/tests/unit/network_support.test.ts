@@ -41,7 +41,7 @@ function nodeStatus(network: "mainnet" | "devnet" | "testnet"): NodeStatus {
     network_magic_hex: network === "mainnet" ? "c0897c0d" : network === "testnet" ? "fab4c0de" : "fac3b6da",
     chain_id: `chipcoin-${network}-1`,
     genesis_hash: network === "mainnet"
-      ? "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+      ? "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f"
       : null,
     height: network === "testnet" ? 1801 : 6539,
     tip_hash: network === "testnet"
@@ -163,7 +163,7 @@ describe("browser wallet network support", () => {
   });
 
   it("rejects a mainnet endpoint with a different genesis", async () => {
-    installFetch("mainnet", "ff".repeat(32));
+    installFetch("mainnet", "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d");
     const session = await import("../../src/background/session");
 
     await session.createPqWallet("phase12-password");

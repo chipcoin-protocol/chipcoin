@@ -51,7 +51,7 @@ MANUAL_SOURCE = {
 AUTOMATED_CHECKS: dict[str, list[dict[str, str]]] = {
     "CONS-CFG-002": [{"id": "mainnet_identity_distinct", "assertion": "test_public_mainnet_identity_is_distinct_and_deterministic passes."}],
     "CONS-CFG-003": [{"id": "target_spacing_600", "assertion": "test_mainnet_consensus_profile_is_frozen asserts 600-second target and no legacy schedule."}],
-    "CONS-CFG-004": [{"id": "genesis_bits_1d1399ad", "assertion": "test_mainnet_consensus_profile_is_frozen asserts genesis_bits=0x1d1399ad."}],
+    "CONS-CFG-004": [{"id": "genesis_bits_1e0537e7", "assertion": "test_mainnet_consensus_profile_is_frozen asserts genesis_bits=0x1e0537e7."}],
     "CONS-CFG-005": [{"id": "supply_cap_11m", "assertion": "test_mainnet_consensus_profile_is_frozen and test_mainnet_emission_ends_at_the_frozen_hard_cap assert the 11M cap."}],
     "CONS-CFG-006": [{"id": "initial_subsidy_50_chc", "assertion": "test_mainnet_consensus_profile_is_frozen asserts initial miner subsidy is 50 CHC."}],
     "CONS-CFG-007": [{"id": "halving_111000_and_cap", "assertion": "profile and hard-cap tests assert 111000 interval and exact terminal emission."}],
@@ -191,7 +191,7 @@ def entry(gate: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--matrix", type=Path, default=Path("public-mainnet-rc-revalidation.json"))
-    parser.add_argument("--output", type=Path, default=Path("docs/releases/public-mainnet-rc1-gate-catalog.json"))
+    parser.add_argument("--output", type=Path, default=Path("docs/releases/public-mainnet-rc4-gate-catalog.json"))
     args = parser.parse_args()
     matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
     gates = [entry(gate) for gate in matrix["requirements"]]

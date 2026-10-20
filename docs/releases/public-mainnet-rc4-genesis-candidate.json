@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "release_candidate": "mainnet-v0.1.4-rc.4",
+  "status": "GENESIS_CANDIDATE_NOT_FROZEN",
+  "source_base": {
+    "core_commit": "3e959bc51fc52cdc7ef9c07dfb3bf0c3521f2101",
+    "central_commit": "9862dd8a185edaee42b00288502c5aa6344a0315"
+  },
+  "identity": {
+    "chain_id": "chipcoin-mainnet-1",
+    "p2p_magic_hex": "c0897c0d",
+    "timestamp_utc": "2026-10-20T21:00:00Z",
+    "timestamp_unix": 1792530000,
+    "genesis_bits_hex": "0x1e0537e7",
+    "genesis_bits_decimal": 503658471,
+    "nonce": 5671737,
+    "block_hash": "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f",
+    "transaction_id": "6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77",
+    "merkle_root": "6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77",
+    "serialized_block_sha256": "484b630c988988bb58b0f0cde171a9e666c15decc6e063cd7704527795a652a4"
+  },
+  "calibration": {
+    "measured_hashrate_hps_per_miner": 3572,
+    "miners": 3,
+    "expected_hashes_per_block": 3215030,
+    "expected_seconds": {"one_miner": 900.0644, "two_miners": 450.0322, "three_miners": 300.0215},
+    "target_spacing_seconds": 600,
+    "retarget_interval_blocks": 1000,
+    "first_retarget_projection": {
+      "candidate_height": 1000,
+      "observed_intervals": 999,
+      "observed_timespan_seconds": 299700,
+      "retargeted_bits": "0x1e029b48",
+      "expected_seconds_at_three_miners": 600.6455
+    },
+    "assumption": "Three equivalent miners maintain the measured single-miner rate; expected time is probabilistic, not guaranteed."
+  },
+  "artifact_sha256": {
+    "genesis-block.hex": "08d5207804f5056258a0f562d7bd12542484e58972777b111e021f3e6e4e1eb9",
+    "genesis-manifest.json": "197b00fc552bdee5d552b615fec17c47ffe3d836c2f14f657d522ff74f0fda6b",
+    "genesis-constants.txt": "a62a4f14e950b6cc22c789ed930169fec8e7579e26243dd62bf41b19d6fe8121"
+  },
+  "verification": {
+    "parallel_builder_workers_2": "PASS",
+    "serial_builder_workers_1_byte_comparison": "PASS",
+    "independent_standard_library_pow_serialization_checksums": "PASS",
+    "independent_lower_nonce_scan_workers_2": "PASS",
+    "formal_rc_gates": "NOT_RUN",
+    "second_host_reproduction": "NOT_RUN"
+  }
+}

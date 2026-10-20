@@ -22,7 +22,7 @@ from chipcoin.consensus.validation import (
 
 def test_accelerated_profile_changes_only_approved_test_only_parameters() -> None:
     assert MAINNET_TEST_ONLY_PARAMS.genesis_bits == 0x207FFFFF
-    assert MAINNET_PARAMS.genesis_bits == 0x1D1399AD
+    assert MAINNET_PARAMS.genesis_bits == 0x1E0537E7
     assert {
         key: value
         for key, value in MAINNET_TEST_ONLY_PARAMS.__dict__.items()

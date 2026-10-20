@@ -52,7 +52,7 @@ function status(network: "mainnet" | "testnet"): NodeStatus {
     network_magic_hex: network === "mainnet" ? "c0897c0d" : "fab4c0de",
     chain_id: network === "mainnet" ? "chipcoin-mainnet-1" : "chipcoin-testnet-1",
     genesis_hash: network === "mainnet"
-      ? "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+      ? "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f"
       : null,
     height: 100,
     tip_hash: network === "mainnet" ? "11".repeat(32) : "22".repeat(32),

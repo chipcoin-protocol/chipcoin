@@ -30,12 +30,12 @@ def test_accelerated_rehearsal_identity_is_distinct() -> None:
         DEVNET_CONFIG.magic,
     }
     assert MAINNET_TEST_ONLY_CONFIG.params.genesis_bits == 0x207FFFFF
-    assert MAINNET_CONFIG.params.genesis_bits == 0x1D1399AD
+    assert MAINNET_CONFIG.params.genesis_bits == 0x1E0537E7
 
 
-def test_public_mainnet_startup_uses_approved_canonical_genesis() -> None:
+def test_public_mainnet_startup_uses_rc4_candidate_genesis() -> None:
     assert MAINNET_CONFIG.canonical_genesis_hash == CANONICAL_GENESIS_HASH
-    assert MAINNET_CONFIG.canonical_genesis_timestamp == 1_792_519_200
+    assert MAINNET_CONFIG.canonical_genesis_timestamp == 1_792_530_000
     assert MAINNET_CONFIG.genesis_finalized is True
     require_finalized_public_mainnet("mainnet")
 

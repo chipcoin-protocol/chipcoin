@@ -21,7 +21,7 @@ def test_mainnet_consensus_profile_is_frozen() -> None:
     assert params.difficulty_adjustment_window == 1_000
     assert params.target_block_time_activation_height == 0
     assert params.legacy_target_block_time_seconds is None
-    assert params.genesis_bits == 0x1D1399AD
+    assert params.genesis_bits == 0x1E0537E7
     assert params.coinbase_maturity == 100
     assert params.epoch_length_blocks == 100
     assert params.halving_interval == 111_000

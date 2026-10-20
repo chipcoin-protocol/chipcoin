@@ -149,13 +149,13 @@ def test_http_api_health_status_and_tip() -> None:
         tip_status, _, tip_body = _call_wsgi(app, method="GET", path="/v1/tip")
 
         assert health_status == "200 OK"
-        assert health_body == {"status": "ok", "api_version": "v1", "network": "mainnet", "chain_id": "chipcoin-mainnet-1", "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"}
+        assert health_body == {"status": "ok", "api_version": "v1", "network": "mainnet", "chain_id": "chipcoin-mainnet-1", "genesis_hash": "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f"}
         assert status_status == "200 OK"
         assert status_body["api_version"] == "v1"
         assert status_body["network"] == "mainnet"
         assert status_body["network_magic_hex"] == MAINNET_CONFIG.magic.hex()
         assert status_body["chain_id"] == "chipcoin-mainnet-1"
-        assert status_body["genesis_hash"] == "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+        assert status_body["genesis_hash"] == "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f"
         assert status_body["sync"]["mode"] == "idle"
         assert status_body["supply"]["minted_supply_chipbits"] == 0
         assert status_body["supply"]["scheduled_supply_chipbits"] == 0

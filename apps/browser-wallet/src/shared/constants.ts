@@ -36,7 +36,7 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     httpSafetyNote: "Use the wallet-safe public mainnet API or a trusted local node. Verify the connected network before signing.",
     chainId: "chipcoin-mainnet-1",
     networkMagicHex: "c0897c0d",
-    canonicalGenesisHash: "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d",
+    canonicalGenesisHash: "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f",
   },
   {
     id: "devnet",

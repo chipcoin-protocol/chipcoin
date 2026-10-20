@@ -1,7 +1,8 @@
 # Chipcoin Public Mainnet Genesis Specification
 
-Status: founder-approved genesis candidate integrated locally; source freeze,
-release artifacts, Explorer pinning, and public launch remain pending.
+Status: RC4 recalibrated genesis candidate. This specification is not release
+approval; immutable artifacts, Explorer pinning, and public launch remain
+separate decisions.
 
 ## Canonical Identity
 
@@ -11,12 +12,24 @@ release artifacts, Explorer pinning, and public launch remain pending.
   `SHA-256("chipcoin:p2p-magic:chipcoin-mainnet-1")`, equal to `c0897c0d`
 - Previous block hash: 32 zero bytes
 - Header version: `1`
-- Initial compact target: `0x1d1399ad`
-- Timestamp: `2026-10-20T18:00:00Z` (`1792519200`)
-- Nonce: `468059814` (lowest valid nonce, independently verified on Tobia)
-- Genesis hash: `00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d`
+- Initial compact target: `0x1e0537e7`
+- Timestamp: `2026-10-20T21:00:00Z` (`1792530000`)
+- Nonce: `5671737` (lowest valid nonce, independently scanned by the standard-library verifier)
+- Genesis hash: `00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f`
 - TXID / Merkle root: `6ec15ed32ddd62c6134b0c867c33f8fa72ba265b4551d327a57b63721cf34c77`
-- Serialized block SHA-256: `4ecbeda4c457a50052d5999fe3ac7d851a0d602769e123ea8200e151e55f8255`
+- Serialized block SHA-256: `484b630c988988bb58b0f0cde171a9e666c15decc6e063cd7704527795a652a4`
+
+With the measured miner-a rate of approximately `3572 H/s`, this compact
+target represents `3215030` expected hashes: approximately `900.06s` with one
+equivalent miner, `450.03s` with two, and `300.02s` with three. These are
+expectations, not guaranteed intervals; measured miner throughput can vary.
+The consensus target spacing remains `600s`, and the retarget window remains
+`1000` blocks. The initial three-miner bootstrap calibration is intended to
+produce about 300 seconds per block; the first retarget responds to observed
+intervals using the unchanged clamp and genesis-target cap. The genesis-to-
+height-999 span contains 999 intervals: at exactly 300 seconds each it is
+299,700 seconds, yielding compact bits `0x1e029b48` and about `600.65s` per
+block at the same aggregate hashrate after quantization.
 
 The public magic is distinct from rehearsal (`f9beb4d9`), testnet
 (`fab4c0de`), and devnet (`fac3b6da`). The chain ID, magic, and canonical
@@ -78,7 +91,7 @@ After the founder approves one UTC Unix timestamp, an offline operator runs:
   --acknowledge-founder-approved-timestamp
 ```
 
-The builder uses the fixed transaction, header fields, and initial target and
+The builder uses the fixed transaction, header fields, and RC4 initial target and
 selects the lowest valid nonce. It emits the serialized block, a canonical JSON
 manifest, an embedding snippet, and `SHA256SUMS`. Repeating the command from the
 same source with the same timestamp must produce byte-identical output.
@@ -90,8 +103,8 @@ node startup path derives timestamp, nonce, or genesis content at runtime.
 
 ## Enforcement
 
-The candidate is embedded in this local worktree, but no source freeze, public
-artifact, Explorer deployment, or mainnet launch has occurred. In the frozen
+The candidate is embedded in the RC4 source. Source freeze does not itself
+approve public artifacts, Explorer deployment, or mainnet launch. In the frozen
 release:
 
 1. an empty database installs the embedded genesis atomically;

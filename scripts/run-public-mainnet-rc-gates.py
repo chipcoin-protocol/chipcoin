@@ -310,7 +310,7 @@ def validate_inputs(matrix: dict[str, Any], plan: dict[str, Any], blocking_class
     unknown = sorted(set(plans) - set(requirements))
     if unknown:
         raise ValueError(f"plan includes unknown gate ids: {unknown}")
-    catalog_path = Path(__file__).resolve().parents[1] / "docs/releases/public-mainnet-rc1-gate-catalog.json"
+    catalog_path = Path(__file__).resolve().parents[1] / "docs/releases/public-mainnet-rc4-gate-catalog.json"
     catalog = read_json(catalog_path) if catalog_path.is_file() else {"gates": []}
     catalog_gates = {item["id"]: item for item in catalog.get("gates", [])}
     manual_ids = {gate_id for gate_id, item in catalog_gates.items()
@@ -439,7 +439,7 @@ def run(args: argparse.Namespace) -> int:
     plan["blocking_class"] = args.blocking_class
     plan["plan_sha256"] = hashlib.sha256(canonical({key: value for key, value in plan.items() if key != "plan_sha256"})).hexdigest()
     root = args.evidence_dir.resolve()
-    catalog_path = Path(__file__).resolve().parents[1] / "docs/releases/public-mainnet-rc1-gate-catalog.json"
+    catalog_path = Path(__file__).resolve().parents[1] / "docs/releases/public-mainnet-rc4-gate-catalog.json"
     catalog_entries = read_json(catalog_path).get("gates", []) if catalog_path.is_file() else []
     manual_catalog_ids = {item["id"] for item in catalog_entries if item.get("execution_mode") == "MANUAL_ATTESTATION"}
     plan["evidence_root"] = str(root)

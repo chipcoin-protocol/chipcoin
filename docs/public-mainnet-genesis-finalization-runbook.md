@@ -9,7 +9,7 @@ approved difficulty or economic parameters.
 1. Record the approved timestamp in UTC and Unix form. Confirm it is not later
    than the intended public start and assess its effect on the first retarget.
 2. Freeze the source commit and verify `chipcoin-mainnet-1`, magic `c0897c0d`,
-   bits `0x1d1399ad`, zero genesis reward, and the exact 37-byte UTF-8 message.
+   RC4 candidate bits `0x1e0537e7`, zero genesis reward, and the exact 37-byte UTF-8 message.
 3. Choose an empty output directory on an offline host. Record Python, OS, CPU,
    source commit, lock hashes, and the worker count.
 
@@ -47,11 +47,11 @@ compact target and PoW, and asserts no inputs, outputs or initial supply.
 
 ## Freeze And Incorporation
 
-The founder-approved candidate is integrated in the isolated RC1 worktree. Its
-timestamp is `2026-10-20T18:00:00Z`, nonce `468059814`, and block hash
-`00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d`.
+The RC4 candidate is integrated in the isolated RC4 worktree. Its timestamp is
+`2026-10-20T21:00:00Z`, nonce `5671737`, and block hash
+`00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f`.
 Before source freeze, review the integration diff against
-`docs/releases/public-mainnet-rc1-genesis-provenance.json` and rerun only the
+`docs/releases/public-mainnet-rc4-genesis-candidate.json` and rerun the
 targeted identity checks. Do not regenerate or change the candidate values.
 
 1. Confirm the integration diff and provenance checksums on the primary host.

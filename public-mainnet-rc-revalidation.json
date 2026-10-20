@@ -119,7 +119,7 @@
       "blocking": "RC_BLOCKING",
       "category": "consensus_config",
       "dependencies": [],
-      "description": "Initial compact target is 0x1d1399ad.",
+      "description": "Initial compact target is 0x1e0537e7 for RC4; target spacing remains 600 seconds.",
       "historical_reference": {
         "evidence": [
           "E-CONFIG"

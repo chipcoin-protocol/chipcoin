@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "release_id": "mainnet-v0.1.4-rc.4",
+  "status": "CANDIDATE_NOT_RELEASE_APPROVED",
+  "source": {
+    "core_base_commit": "3e959bc51fc52cdc7ef9c07dfb3bf0c3521f2101",
+    "central_base_commit": "9862dd8a185edaee42b00288502c5aa6344a0315",
+    "candidate_revision": "resolved by the containing Git tag; full commit/tree identities are recorded in the external dual-source compatibility manifest"
+  },
+  "identity": {
+    "network": "mainnet",
+    "chain_id": "chipcoin-mainnet-1",
+    "genesis_hash": "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f",
+    "genesis_timestamp_utc": "2026-10-20T21:00:00Z",
+    "genesis_bits": "0x1e0537e7",
+    "network_magic_hex": "c0897c0d"
+  },
+  "consensus": {
+    "changed_from_rc3": true,
+    "changes": ["mainnet genesis_bits and genesis-dependent identity only"],
+    "target_block_time_seconds": 600,
+    "difficulty_adjustment_window": 1000,
+    "funded_reward_node_activation_height": 0,
+    "node_reward_activation_height": 1000
+  },
+  "candidate_artifacts": {
+    "genesis_directory": "/tmp/chipcoin-rc4-genesis-candidate-20261020T210000Z",
+    "genesis_hash": "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f",
+    "serialized_block_sha256": "484b630c988988bb58b0f0cde171a9e666c15decc6e063cd7704527795a652a4",
+    "formal_gates": "NOT_RUN",
+    "source_freeze": "NOT_DONE",
+    "release_approval": "NOT_GRANTED",
+    "public_deployment": "NOT_AUTHORIZED"
+  },
+  "container_image": {
+    "status": "NOT_BUILT_FOR_RC4",
+    "rc3_image_must_not_be_used": true
+  }
+}

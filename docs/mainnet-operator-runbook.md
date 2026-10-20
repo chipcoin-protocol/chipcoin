@@ -49,7 +49,7 @@ alongside the source tag. It must contain at least:
   "consensus": {
     "target_block_time_seconds": 600,
     "retarget_window_blocks": 1000,
-    "initial_compact_target": "0x1d1399ad",
+    "initial_compact_target": "0x1e0537e7",
     "coinbase_maturity": 100,
     "halving_interval": 111000,
     "max_supply_chc": 11000000,
