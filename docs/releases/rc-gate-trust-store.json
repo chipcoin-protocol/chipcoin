@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "signature_algorithm": "Ed25519",
+  "max_age_seconds": 2592000,
+  "authorized_signers": []
+}

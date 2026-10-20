@@ -27,7 +27,7 @@ services:
       - node_a_data:/data
     ports:
       - "18444:18444"
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     restart: unless-stopped
 
   node-b:
@@ -60,7 +60,7 @@ services:
       - node_b_data:/data
     ports:
       - "18445:18445"
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     depends_on:
       - node-a
     restart: unless-stopped

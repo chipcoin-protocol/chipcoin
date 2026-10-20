@@ -4,7 +4,7 @@ import logging
 import socket
 from contextlib import redirect_stdout
 from dataclasses import replace
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -31,6 +31,7 @@ from chipcoin.wallet.signer import TransactionSigner
 from tests.helpers import put_wallet_utxo, signed_payment, wallet_key
 
 
+# These synthetic query fixtures are not public-mainnet consensus fixtures.
 MAINNET_PARAMS = replace(
     PRODUCTION_MAINNET_PARAMS,
     genesis_bits=0x207FFFFF,
@@ -39,11 +40,12 @@ MAINNET_PARAMS = replace(
     genesis_miner_subsidy_chipbits=50 * 100_000_000,
     genesis_node_epoch_reward_chipbits=None,
 )
+CLI_FIXTURE_PARAMS = replace(MAINNET_PARAMS, genesis_miner_subsidy_chipbits=0)
 
 
 def _make_service(database_path: Path) -> NodeService:
     timestamps = iter(range(1_700_000_000, 1_700_000_200))
-    return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(database_path, params=CLI_FIXTURE_PARAMS, time_provider=lambda: next(timestamps))
 
 
 def _install_test_public_genesis(service: NodeService) -> None:
@@ -178,8 +180,22 @@ def _materialize_native_reward_payout(service: NodeService, *, miner_address: st
 
 def _run_cli(argv: list[str]) -> tuple[int, object]:
     stdout = StringIO()
-    with redirect_stdout(stdout):
-        code = main(argv)
+    if "--network" in argv:
+        with redirect_stdout(stdout):
+            code = main(argv)
+    else:
+        original_descriptor = cli_module.NodeService.__dict__["open_sqlite"]
+        original_open = cli_module.NodeService.open_sqlite
+
+        def open_synthetic_fixture(path, *, network="mainnet", **kwargs):
+            return original_open(path, network=network, params=CLI_FIXTURE_PARAMS, **kwargs)
+
+        cli_module.NodeService.open_sqlite = open_synthetic_fixture
+        try:
+            with redirect_stdout(stdout):
+                code = main(argv)
+        finally:
+            cli_module.NodeService.open_sqlite = original_descriptor
     output = stdout.getvalue().strip()
     return code, json.loads(output)
 
@@ -189,8 +205,22 @@ def _run_cli_with_stderr(argv: list[str]) -> tuple[int, str, str]:
 
     stdout = StringIO()
     stderr = StringIO()
-    with redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-        code = main(argv)
+    if "--network" in argv:
+        with redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = main(argv)
+    else:
+        original_descriptor = cli_module.NodeService.__dict__["open_sqlite"]
+        original_open = cli_module.NodeService.open_sqlite
+
+        def open_synthetic_fixture(path, *, network="mainnet", **kwargs):
+            return original_open(path, network=network, params=CLI_FIXTURE_PARAMS, **kwargs)
+
+        cli_module.NodeService.open_sqlite = open_synthetic_fixture
+        try:
+            with redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = main(argv)
+        finally:
+            cli_module.NodeService.open_sqlite = original_descriptor
     return code, stdout.getvalue().strip(), stderr.getvalue().strip()
 
 
@@ -338,6 +368,109 @@ def test_cli_status_and_tip() -> None:
         assert tip_payload["block_hash"] == mined.block_hash()
         assert tip_payload["bits"] == mined.header.bits
         assert tip_payload["transaction_count"] == len(mined.transactions)
+
+
+def test_wallet_import_reads_private_key_from_mode_600_file() -> None:
+    with TemporaryDirectory() as tempdir:
+        owner = wallet_key(0)
+        key_path = Path(tempdir) / "wallet-key.hex"
+        key_path.write_text(serialize_private_key_hex(owner.private_key) + "\n", encoding="ascii")
+        key_path.chmod(0o600)
+        wallet_file = Path(tempdir) / "wallet.json"
+
+        code, payload = _run_cli(
+            ["wallet-import", "--wallet-file", str(wallet_file), "--private-key-file", str(key_path)]
+        )
+
+        assert code == 0
+        assert payload["address"] == owner.address
+        assert "private_key_hex" in payload
+
+
+def test_wallet_import_reads_key_from_noninteractive_stdin(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        owner = wallet_key(0)
+        class NonInteractiveInput(BytesIO):
+            @property
+            def buffer(self):
+                return self
+
+            def isatty(self):
+                return False
+
+        monkeypatch.setattr(
+            cli_module.sys,
+            "stdin",
+            NonInteractiveInput((serialize_private_key_hex(owner.private_key) + "\n").encode("ascii")),
+        )
+        code, payload = _run_cli(
+            ["wallet-import", "--wallet-file", str(Path(tempdir) / "wallet.json"), "--private-key-stdin"]
+        )
+        assert code == 0
+        assert payload["address"] == owner.address
+
+
+def test_wallet_import_rejects_group_readable_private_key_file() -> None:
+    with TemporaryDirectory() as tempdir:
+        key_path = Path(tempdir) / "wallet-key.hex"
+        key_path.write_text(serialize_private_key_hex(wallet_key(0).private_key) + "\n", encoding="ascii")
+        key_path.chmod(0o640)
+        code, _stdout, stderr = _run_cli_with_stderr(
+            ["wallet-import", "--wallet-file", str(Path(tempdir) / "wallet.json"), "--private-key-file", str(key_path)]
+        )
+        assert code == 1
+        assert "Wallet private-key file must not be accessible by group or other users." in stderr
+
+
+def test_wallet_import_quiet_mode_does_not_print_private_key_json() -> None:
+    with TemporaryDirectory() as tempdir:
+        key_path = Path(tempdir) / "wallet-key.hex"
+        key_path.write_text(serialize_private_key_hex(wallet_key(0).private_key) + "\n", encoding="ascii")
+        key_path.chmod(0o600)
+        code, stdout, _stderr = _run_cli_with_stderr(
+            [
+                "wallet-import",
+                "--wallet-file",
+                str(Path(tempdir) / "wallet.json"),
+                "--private-key-file",
+                str(key_path),
+                "--quiet",
+            ]
+        )
+        assert code == 0
+        assert stdout == ""
+
+
+def test_wallet_import_rejects_symlink_private_key_file() -> None:
+    with TemporaryDirectory() as tempdir:
+        target = Path(tempdir) / "wallet-key.hex"
+        target.write_text(serialize_private_key_hex(wallet_key(0).private_key) + "\n", encoding="ascii")
+        target.chmod(0o600)
+        symlink = Path(tempdir) / "wallet-key-link.hex"
+        symlink.symlink_to(target)
+        code, _stdout, stderr = _run_cli_with_stderr(
+            ["wallet-import", "--wallet-file", str(Path(tempdir) / "wallet.json"), "--private-key-file", str(symlink)]
+        )
+        assert code == 1
+        assert "Wallet private-key file could not be opened securely." in stderr
+
+
+def test_wallet_import_rejects_interactive_private_key_stdin(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        class InteractiveInput(StringIO):
+            @property
+            def buffer(self):
+                return BytesIO(self.getvalue().encode("ascii"))
+
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(cli_module.sys, "stdin", InteractiveInput("unused"))
+        code, _stdout, stderr = _run_cli_with_stderr(
+            ["wallet-import", "--wallet-file", str(Path(tempdir) / "wallet.json"), "--private-key-stdin"]
+        )
+        assert code == 1
+        assert "Private-key stdin must be non-interactive." in stderr
 
 
 def test_cli_register_reward_node_and_mine_local_block_persists_native_registry_fields() -> None:
@@ -2563,12 +2696,9 @@ def test_cli_operator_check_human_output_is_readable() -> None:
         db_path = Path(tempdir) / "chipcoin.sqlite3"
         service = _make_service(db_path)
         service.apply_block(_mine_block(service.build_candidate_block("CHCminer").block))
-        stdout = StringIO()
-        with redirect_stdout(stdout):
-            code = main(["--data", str(db_path), "operator-check"])
+        code, output, _stderr = _run_cli_with_stderr(["--data", str(db_path), "operator-check"])
 
         assert code == 0
-        output = stdout.getvalue()
         assert "operator-check: warn" in output
         assert "[OK] chain:" in output
         assert "[WARN] peers:" in output

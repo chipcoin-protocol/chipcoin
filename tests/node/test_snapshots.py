@@ -32,7 +32,12 @@ MAINNET_PARAMS = replace(
 
 def _make_service(database_path: Path, *, start_time: int, params=None) -> NodeService:
     timestamps = iter(range(start_time, start_time + 50_000))
-    return NodeService.open_sqlite(database_path, params=MAINNET_PARAMS if params is None else params, time_provider=lambda: next(timestamps))
+    return NodeService.open_sqlite(
+        database_path,
+        network="devnet",
+        params=MAINNET_PARAMS if params is None else params,
+        time_provider=lambda: next(timestamps),
+    )
 
 
 def _mine_block(block: Block) -> Block:
@@ -110,7 +115,7 @@ def test_finalized_mainnet_import_rejects_disabled_trust_without_mutation(monkey
     import chipcoin.node.service as service_module
 
     with TemporaryDirectory() as tempdir:
-        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_000_000)
+        target = NodeService.open_sqlite(Path(tempdir) / "target.sqlite3", network="mainnet")
         original_tip = target.chain_tip()
         config = replace(get_network_config("mainnet"), genesis_finalized=True)
         original = service_module.get_network_config

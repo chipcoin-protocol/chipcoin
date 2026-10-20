@@ -625,10 +625,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "wallet-import":
-            wallet_key = wallet_key_from_private_key(parse_private_key_hex(args.private_key_hex))
+            private_key_hex = (
+                args.private_key_hex
+                if args.private_key_hex is not None
+                else (
+                    _read_wallet_import_private_key_file(Path(args.private_key_file))
+                    if args.private_key_file is not None
+                    else _read_wallet_import_private_key_stdin()
+                )
+            )
+            wallet_key = wallet_key_from_private_key(parse_private_key_hex(private_key_hex))
             _save_wallet_key(Path(args.wallet_file), wallet_key)
-            _warn_wallet_private_key_output("wallet-import")
-            _print_json(_format_wallet_private_key(wallet_key))
+            if not args.quiet:
+                _warn_wallet_private_key_output("wallet-import")
+                _print_json(_format_wallet_private_key(wallet_key))
             return 0
 
         if args.command == "wallet-address":
@@ -887,6 +897,53 @@ def _load_snapshot_signing_private_key(path: Path) -> bytes:
     return parse_ed25519_private_key_hex(value)
 
 
+def _read_wallet_import_private_key_file(path: Path) -> str:
+    """Read wallet import material from a private regular file, never a symlink."""
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("Wallet private-key file could not be opened securely.") from exc
+    try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("Wallet private-key input must be a regular file.")
+        if file_stat.st_uid != os.geteuid():
+            raise ValueError("Wallet private-key file must be owned by the current user.")
+        if file_stat.st_mode & 0o077:
+            raise ValueError("Wallet private-key file must not be accessible by group or other users.")
+        if not file_stat.st_mode & stat.S_IRUSR:
+            raise ValueError("Wallet private-key file must be readable by its owner.")
+        encoded = os.read(descriptor, 4097)
+        if len(encoded) > 4096:
+            raise ValueError("Wallet private-key file is unexpectedly large.")
+    finally:
+        os.close(descriptor)
+    try:
+        value = encoded.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise ValueError("Wallet private-key file must contain ASCII hex.") from exc
+    if not value:
+        raise ValueError("Wallet private-key file is empty.")
+    return value
+
+
+def _read_wallet_import_private_key_stdin() -> str:
+    if sys.stdin.isatty():
+        raise ValueError("Private-key stdin must be non-interactive.")
+    encoded = sys.stdin.buffer.read(4097)
+    if len(encoded) > 4096:
+        raise ValueError("Wallet private-key input is unexpectedly large.")
+    try:
+        value = encoded.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise ValueError("Wallet private-key input must contain ASCII hex.") from exc
+    if not value:
+        raise ValueError("Wallet private-key input is empty.")
+    return value
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser."""
 
@@ -1130,7 +1187,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     wallet_import = subparsers.add_parser("wallet-import")
     wallet_import.add_argument("--wallet-file", required=True)
-    wallet_import.add_argument("--private-key-hex", required=True)
+    wallet_import_key = wallet_import.add_mutually_exclusive_group(required=True)
+    wallet_import_key.add_argument("--private-key-hex")
+    wallet_import_key.add_argument(
+        "--private-key-file",
+        help="Protected file containing one private key in hex; avoid passing key material in argv.",
+    )
+    wallet_import_key.add_argument(
+        "--private-key-stdin",
+        action="store_true",
+        help="Read one private key in hex from non-interactive stdin.",
+    )
+    wallet_import.add_argument("--quiet", action="store_true", help="Suppress imported private-key JSON output.")
 
     wallet_address = subparsers.add_parser("wallet-address")
     wallet_address.add_argument("--wallet-file", required=True)
@@ -1693,6 +1761,9 @@ async def _run_runtime(service: NodeService, args) -> None:
         http_host=getattr(args, "http_host", None),
         http_port=getattr(args, "http_port", None),
         reward_automation=load_reward_node_automation_config_from_env(),
+        bootstrap_url=os.getenv("NODE_BOOTSTRAP_URL", os.getenv("BOOTSTRAP_URL", "")).strip() or None,
+        bootstrap_refresh_interval_seconds=float(os.getenv("BOOTSTRAP_REFRESH_INTERVAL_SECONDS", "60")),
+        bootstrap_peer_limit=int(os.getenv("BOOTSTRAP_PEER_LIMIT", "16")),
         logger=None,
     )
     configured_peer_source = getattr(args, "peer_source", "manual")

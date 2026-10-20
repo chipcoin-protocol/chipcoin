@@ -406,11 +406,9 @@ Check listeners:
 sudo ss -ltnp | grep -E ':28444|:28081'
 ```
 
-If you see `0.0.0.0:28081`, set:
-
-```dotenv
-NODE_HTTP_PUBLISH_HOST=127.0.0.1
-```
+If you see `0.0.0.0:28081`, the node is running an older or locally modified
+Compose mapping. The current shared Compose file fixes the host API binding to
+`127.0.0.1`; an environment variable cannot widen it.
 
 Restart:
 
@@ -446,7 +444,7 @@ If `sync_phase` is `synced`, the tip matches other nodes, and
 Regenerate `.env` with the wizard or verify these values:
 
 ```bash
-grep -E '^(CHIPCOIN_NETWORK|NODE_P2P_BIND_PORT|NODE_HTTP_BIND_PORT|NODE_HTTP_PUBLISH_HOST|MINING_NODE_URLS|MINING_MIN_INTERVAL_SECONDS)=' .env
+grep -E '^(CHIPCOIN_NETWORK|NODE_P2P_BIND_PORT|NODE_HTTP_BIND_PORT|NODE_HTTP_PUBLISH_PORT|MINING_NODE_URLS|MINING_MIN_INTERVAL_SECONDS)=' .env
 ```
 
 Expected:
@@ -455,7 +453,7 @@ Expected:
 CHIPCOIN_NETWORK=testnet
 NODE_P2P_BIND_PORT=28444
 NODE_HTTP_BIND_PORT=28081
-NODE_HTTP_PUBLISH_HOST=127.0.0.1
+NODE_HTTP_PUBLISH_PORT=28081
 MINING_NODE_URLS=http://node:28081
 MINING_MIN_INTERVAL_SECONDS=10.0
 ```

@@ -26,6 +26,7 @@ from ..consensus.models import Transaction
 from ..consensus.nodes import current_epoch, reward_node_is_active
 from ..crypto.keys import parse_private_key_hex, serialize_public_key_hex
 from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44
+from ..interfaces.seed_client import SeedClient, SeedClientError
 from ..consensus.validation import ContextualValidationError, StatelessValidationError, ValidationError
 from ..interfaces.http_api import (
     HttpApiApp,
@@ -249,6 +250,9 @@ class NodeRuntime:
         http_host: str | None = None,
         http_port: int | None = None,
         reward_automation: RewardNodeAutomationConfig | None = None,
+        bootstrap_url: str | None = None,
+        bootstrap_refresh_interval_seconds: float = 60.0,
+        bootstrap_peer_limit: int = 16,
         logger: logging.Logger | None = None,
     ) -> None:
         self.service = service
@@ -315,6 +319,9 @@ class NodeRuntime:
         self.http_host = http_host
         self.http_port = http_port
         self.reward_automation = reward_automation
+        self.bootstrap_url = (bootstrap_url or "").strip() or None
+        self.bootstrap_refresh_interval_seconds = min(3600.0, max(0.5, float(bootstrap_refresh_interval_seconds)))
+        self.bootstrap_peer_limit = min(64, max(1, int(bootstrap_peer_limit)))
         self.logger = logger or logging.getLogger("chipcoin.node.runtime")
         self.sync_manager = SyncManager(node=service)
         self.sync_manager.max_headers = max_headers_per_message
@@ -412,6 +419,17 @@ class NodeRuntime:
         self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop", category="mempool")
         if self.headers_sync_enabled:
             self._spawn_task(self._sync_scheduler_loop(), "sync-scheduler-loop", category="sync")
+        if self.bootstrap_url is not None:
+            try:
+                bootstrap_client = SeedClient(self.bootstrap_url, timeout=5.0)
+            except ValueError as exc:
+                self.logger.warning("optional bootstrap discovery disabled: %s", exc)
+            else:
+                self._spawn_task(
+                    self._bootstrap_discovery_loop(bootstrap_client),
+                    "bootstrap-discovery-loop",
+                    category="discovery",
+                )
         if self.reward_automation is not None and (self.reward_automation.auto_renew_enabled or self.reward_automation.auto_attest_enabled):
             self._spawn_task(self._reward_automation_loop(), "reward-automation-loop", category="reward")
         if self.memory_metrics_interval_seconds > 0:
@@ -1088,6 +1106,34 @@ class NodeRuntime:
                 finally:
                     self._pending_outbound_peers.discard(peer)
             await asyncio.sleep(self.connect_interval)
+
+    async def _bootstrap_discovery_loop(self, client: SeedClient) -> None:
+        """Refresh optional untrusted peer hints; P2P handshake remains authoritative."""
+
+        while self._running:
+            try:
+                peers = await asyncio.to_thread(client.list_peers, self.service.network)
+                accepted = 0
+                for peer in peers[: self.bootstrap_peer_limit]:
+                    if peer.network != self.service.network:
+                        continue
+                    if not peer.host or any(character.isspace() for character in peer.host):
+                        continue
+                    endpoint = OutboundPeer(peer.host, peer.port)
+                    if not 1 <= endpoint.port <= 65535:
+                        continue
+                    self.service.add_peer(endpoint.host, endpoint.port, source="seed")
+                    self._outbound_target_sources[(endpoint.host, endpoint.port)] = "seed"
+                    accepted += 1
+                if accepted:
+                    self.logger.info(
+                        "optional bootstrap supplied peer candidates network=%s count=%s; candidates remain untrusted until P2P handshake",
+                        self.service.network,
+                        accepted,
+                    )
+            except (SeedClientError, OSError, ValueError) as exc:
+                self.logger.debug("optional bootstrap discovery failed: %s", exc)
+            await asyncio.sleep(self.bootstrap_refresh_interval_seconds)
 
     async def _ping_loop(self) -> None:
         """Periodically ping active peers and clean up dead sessions."""

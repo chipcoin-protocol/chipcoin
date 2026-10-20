@@ -13,7 +13,7 @@ docker() {
 }
 
 MINER_ADDRESS="CHCCXakSkRDA63xWXKo2wEmrKvr9JeDzdoic3"
-MINER_PRIVATE_KEY_HEX="d52844c5f9f5483513b926dd262fcc2e3fbbaba22fdf5b3327c9e0fe908f53bd"
+MINER_PRIVATE_KEY_FILE="${MINER_PRIVATE_KEY_FILE:-}"
 TX_AMOUNT_CHIPBITS=500000000
 TX_FEE_CHIPBITS=1000
 NODE_ID="smoke-node-1"
@@ -174,10 +174,13 @@ else
 fi
 
 step miner_wallet_import
-show_cmd "docker compose exec -T miner chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex <redacted>"
-miner_import_json=$(docker compose exec -T miner chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex "$MINER_PRIVATE_KEY_HEX") || fail miner_wallet_import
-show_cmd "docker compose exec -T node-a chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex <redacted>"
-docker compose exec -T node-a chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-hex "$MINER_PRIVATE_KEY_HEX" >/dev/null || fail miner_wallet_import
+[[ -n "$MINER_PRIVATE_KEY_FILE" && -f "$MINER_PRIVATE_KEY_FILE" && ! -L "$MINER_PRIVATE_KEY_FILE" ]] || fail miner_wallet_import
+[[ "$(stat -c '%a' "$MINER_PRIVATE_KEY_FILE")" == "600" ]] || fail miner_wallet_import
+show_cmd "docker compose exec -T miner chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-stdin --quiet < protected-file"
+docker compose exec -T miner chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-stdin --quiet <"$MINER_PRIVATE_KEY_FILE" || fail miner_wallet_import
+miner_import_json=$(docker compose exec -T miner chipcoin wallet-address --wallet-file /data/miner-wallet.json) || fail miner_wallet_import
+show_cmd "docker compose exec -T node-a chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-stdin --quiet < protected-file"
+docker compose exec -T node-a chipcoin wallet-import --wallet-file /data/miner-wallet.json --private-key-stdin --quiet <"$MINER_PRIVATE_KEY_FILE" || fail miner_wallet_import
 info "wallet miner address=$MINER_ADDRESS"
 if printf '%s' "$miner_import_json" | json_eval 'data["address"] == "'"$MINER_ADDRESS"'"'; then
   pass miner_wallet_import

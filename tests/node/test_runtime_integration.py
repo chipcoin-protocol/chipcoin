@@ -7,8 +7,10 @@ from tempfile import TemporaryDirectory
 from urllib import request
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from chipcoin.config import MAINNET_CONFIG
+from chipcoin.config import MAINNET_CONFIG, get_network_config
 from chipcoin.consensus.models import OutPoint
 from chipcoin.consensus.params import DEVNET_PARAMS, MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
@@ -18,6 +20,9 @@ from chipcoin.miner.worker import MinerWorker
 from chipcoin.node.messages import EmptyPayload, MessageEnvelope
 from chipcoin.node.p2p.codec import encode_message
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer
+from chipcoin.interfaces.seed_client import SeedPeer
+import chipcoin.node.runtime as runtime_module
+from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, write_snapshot_file
 from chipcoin.node.service import NodeService
 from tests.helpers import signed_payment, wallet_key
 
@@ -81,6 +86,53 @@ def test_two_runtimes_complete_handshake_and_sync_blockchain() -> None:
             try:
                 await _wait_until(lambda: source_runtime.connected_peer_count() == 1 and target_runtime.connected_peer_count() == 1)
                 await _wait_until(lambda: target_service.chain_tip() is not None and target_service.chain_tip().block_hash == mined_block.block_hash())
+            finally:
+                await target_runtime.stop()
+                await source_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_uses_optional_seed_candidates_but_still_requires_p2p_handshake(monkeypatch) -> None:
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            source_service = _make_service(Path(tempdir) / "seed-source.sqlite3", start_time=1_700_000_000)
+            target_service = _make_service(Path(tempdir) / "seed-target.sqlite3", start_time=1_700_001_000)
+            source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
+            await source_runtime.start()
+
+            class FakeSeedClient:
+                def __init__(self, _url: str, *, timeout: float):
+                    assert timeout == 5.0
+
+                def list_peers(self, _network: str):
+                    return [
+                        SeedPeer("127.0.0.1", source_runtime.bound_port, "mainnet", "untrusted-hint", "test", 1),
+                        SeedPeer("127.0.0.1", source_runtime.bound_port, "testnet", "wrong-network", "test", 1),
+                    ]
+
+            monkeypatch.setattr(runtime_module, "SeedClient", FakeSeedClient)
+            target_runtime = NodeRuntime(
+                service=target_service,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                connect_interval=0.1,
+                ping_interval=0.2,
+                bootstrap_url="https://seed.example",
+                bootstrap_refresh_interval_seconds=0.5,
+            )
+            await target_runtime.start()
+            try:
+                await _wait_until(
+                    lambda: source_runtime.connected_peer_count() == 1
+                    and target_runtime.connected_peer_count() == 1,
+                    timeout=6.0,
+                )
+                peers = target_service.list_peers()
+                assert [(peer.host, peer.port, peer.network, peer.source) for peer in peers] == [
+                    ("127.0.0.1", source_runtime.bound_port, "mainnet", "seed")
+                ]
+                assert target_runtime.connected_peer_count() == 1
             finally:
                 await target_runtime.stop()
                 await source_runtime.stop()
@@ -1134,7 +1186,9 @@ def test_template_miner_fails_over_to_secondary_node_runtime() -> None:
     asyncio.run(scenario())
 
 
-def test_runtime_bootstraps_from_snapshot_and_syncs_only_post_anchor_delta() -> None:
+def test_runtime_bootstraps_from_snapshot_and_syncs_only_post_anchor_delta(monkeypatch) -> None:
+    import chipcoin.node.snapshots as snapshots_module
+
     async def scenario() -> None:
         with TemporaryDirectory() as tempdir:
             source_service = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
@@ -1142,11 +1196,35 @@ def test_runtime_bootstraps_from_snapshot_and_syncs_only_post_anchor_delta() -> 
                 source_service.apply_block(_mine_block(source_service.build_candidate_block("CHCsource").block))
             snapshot_path = Path(tempdir) / "chain.snapshot.json"
             source_service.export_snapshot_file(snapshot_path)
+            signer = ed25519.Ed25519PrivateKey.from_private_bytes(bytes([37]) * 32)
+            signer_private = signer.private_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PrivateFormat.Raw,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            signer_public = signer.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            original_config_lookup = snapshots_module.get_network_config
+            test_mainnet_config = replace(
+                get_network_config("mainnet"),
+                canonical_genesis_hash=str(read_snapshot_payload(snapshot_path)["metadata"]["genesis_hash"]),
+            )
+            monkeypatch.setattr(
+                snapshots_module,
+                "get_network_config",
+                lambda network: test_mainnet_config if network == "mainnet" else original_config_lookup(network),
+            )
+            write_snapshot_file(
+                snapshot_path,
+                sign_snapshot_payload(read_snapshot_payload(snapshot_path), private_key=signer_private),
+            )
             for _ in range(2):
                 source_service.apply_block(_mine_block(source_service.build_candidate_block("CHCsource").block))
 
             target_service = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
-            target_service.import_snapshot_file(snapshot_path)
+            target_service.import_snapshot_file(snapshot_path, trust_mode="enforce", trusted_keys=(signer_public,))
 
             source_runtime = NodeRuntime(service=source_service, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
             await source_runtime.start()

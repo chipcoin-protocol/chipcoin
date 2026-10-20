@@ -9,6 +9,17 @@ ARTIFACTS_DIR="${REPO_ROOT}/build/browser-wallet"
 UNSIGNED_XPI="${ARTIFACTS_DIR}/chipcoin-browser-wallet-firefox-unsigned.xpi"
 WEB_EXT_BIN="${SCRIPT_DIR}/node_modules/.bin/web-ext"
 WEB_EXT_RELEASE="${SCRIPT_DIR}/scripts/web-ext-release.sh"
+SIGN_CONFIG_DIR=""
+
+cleanup_sign_config() {
+  if [[ -n "${SIGN_CONFIG_DIR}" ]]; then
+    rm -rf -- "${SIGN_CONFIG_DIR}"
+  fi
+}
+trap cleanup_sign_config EXIT
+trap 'cleanup_sign_config; exit 129' HUP
+trap 'cleanup_sign_config; exit 130' INT
+trap 'cleanup_sign_config; exit 143' TERM
 
 cd "${SCRIPT_DIR}"
 
@@ -45,12 +56,19 @@ echo "The unsigned XPI is useful for Developer Edition/Nightly or policy-control
 if [[ -n "${AMO_JWT_ISSUER:-}" && -n "${AMO_JWT_SECRET:-}" ]]; then
   echo
   echo "[3/3] Signing Firefox XPI through AMO as unlisted..."
+  SIGN_CONFIG_DIR="$(mktemp -d)"
+  chmod 700 "${SIGN_CONFIG_DIR}"
+  amo_jwt_secret="${AMO_JWT_SECRET}"
+  unset AMO_JWT_SECRET
+  printf '%s' "${amo_jwt_secret}" | node "${SCRIPT_DIR}/scripts/create-web-ext-sign-config.mjs" "${SIGN_CONFIG_DIR}/web-ext.config.cjs"
+  unset amo_jwt_secret
   "${WEB_EXT_RELEASE}" sign \
+    --config "${SIGN_CONFIG_DIR}/web-ext.config.cjs" \
+    --no-config-discovery \
     --source-dir "${DIST_DIR}" \
     --artifacts-dir "${ARTIFACTS_DIR}" \
     --channel unlisted \
-    --api-key "${AMO_JWT_ISSUER}" \
-    --api-secret "${AMO_JWT_SECRET}"
+    --api-key "${AMO_JWT_ISSUER}"
 else
   echo
   echo "[3/3] Signing skipped."

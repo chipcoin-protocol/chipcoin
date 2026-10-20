@@ -15,6 +15,7 @@ COPY vendor ./vendor
 COPY docker/requirements-build.lock ./requirements-build.lock
 
 RUN set -eux; \
+    umask 022; \
     command -v gcc; \
     dpkg-query -W -f='${binary:Package}=${Version}\n' gcc libc6-dev; \
     python -m pip wheel --no-cache-dir --require-hashes --wheel-dir /wheels -r requirements-build.lock; \

@@ -43,7 +43,7 @@ def test_quick_mode_same_host_defaults_node_remote_miner_local_http() -> None:
     wizard._apply_setup_mode(env_values, "quick", "both")
 
     assert env_values["NODE_DIRECT_PEERS"] == ""
-    assert env_values["NODE_BOOTSTRAP_URL"] == "http://chipcoinprotocol.com:28080"
+    assert env_values["NODE_BOOTSTRAP_URL"] == "https://bootstrap.chipcoinprotocol.com"
     assert env_values["MINING_NODE_URLS"] == "http://node:8081"
     assert env_values["DIRECT_PEERS"] == ""
     assert env_values["BOOTSTRAP_URL"] == ""
@@ -57,7 +57,7 @@ def test_quick_mode_miner_only_defaults_to_remote_peer() -> None:
     wizard._apply_setup_mode(env_values, "quick", "miner")
 
     assert env_values["NODE_DIRECT_PEERS"] == ""
-    assert env_values["NODE_BOOTSTRAP_URL"] == "http://chipcoinprotocol.com:28080"
+    assert env_values["NODE_BOOTSTRAP_URL"] == "https://bootstrap.chipcoinprotocol.com"
     assert env_values["MINING_NODE_URLS"] == "https://api.chipcoinprotocol.com"
 
 
@@ -84,9 +84,11 @@ def test_testnet_network_defaults_use_public_testnet_bootstrap_and_snapshot() ->
     assert env_values["NODE_DATA_PATH"] == "/var/lib/chipcoin/data/node-testnet.sqlite3"
     assert env_values["NODE_SNAPSHOT_FILE"] == "/var/lib/chipcoin/data/node-testnet.snapshot"
     assert env_values["NODE_P2P_BIND_PORT"] == "28444"
+    assert env_values["NODE_P2P_PUBLISH_HOST"] == "0.0.0.0"
     assert env_values["NODE_PUBLIC_P2P_PORT"] == "28444"
     assert env_values["NODE_HTTP_BIND_PORT"] == "28081"
-    assert env_values["NODE_HTTP_PUBLISH_HOST"] == "127.0.0.1"
+    assert env_values["NODE_HTTP_PUBLISH_PORT"] == "28081"
+    assert "NODE_HTTP_PUBLISH_HOST" not in env_values
     assert env_values["MINING_MIN_INTERVAL_SECONDS"] == "10.0"
     assert env_values["MINING_NONCE_BATCH_SIZE"] == "50000"
     assert env_values["MINING_WORKER_COUNT"] == "1"
@@ -111,8 +113,36 @@ def test_mainnet_defaults_use_isolated_full_sync_profile() -> None:
     assert env_values["NODE_P2P_BIND_PORT"] == "8333"
     assert env_values["NODE_P2P_PUBLISH_HOST"] == "127.0.0.1"
     assert env_values["NODE_HTTP_BIND_PORT"] == "8080"
+    assert env_values["NODE_HTTP_PUBLISH_PORT"] == "38084"
+    assert env_values["MINING_NODE_URLS"] == "http://node:8080"
+    assert env_values["NODE_BOOTSTRAP_URL"] == "https://mainnet-bootstrap.chipcoinprotocol.com"
+    assert env_values["DEFAULT_EXPLORER_URL"] == "https://explorer.chipcoinprotocol.com/api/mainnet"
     assert env_values["DEFAULT_BOOTSTRAP_PEER"] == ""
     assert env_values["DEFAULT_NODE_ENDPOINT"] == "https://mainnet-api.chipcoinprotocol.com"
+
+
+def test_mainnet_compose_exposure_is_private_by_default() -> None:
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    mainnet_env = (REPO_ROOT / ".env.mainnet.example").read_text(encoding="utf-8")
+
+    assert '${NODE_P2P_PUBLISH_HOST:-127.0.0.1}' in compose
+    assert '127.0.0.1:${NODE_HTTP_PUBLISH_PORT:-${NODE_HTTP_BIND_PORT}}:${NODE_HTTP_BIND_PORT}' in compose
+    assert "NODE_HTTP_PUBLISH_HOST" not in compose
+    assert "NODE_P2P_PUBLISH_HOST=127.0.0.1" in mainnet_env
+    assert "NODE_P2P_BIND_PORT=8333" in mainnet_env
+    assert "NODE_HTTP_BIND_PORT=8080" in mainnet_env
+    assert "NODE_HTTP_PUBLISH_PORT=38084" in mainnet_env
+
+
+def test_mainnet_local_wizard_endpoints_use_host_and_container_ports() -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+
+    wizard._apply_network_defaults(env_values, "mainnet")
+    wizard._apply_setup_mode(env_values, "local", "both", network="mainnet")
+
+    assert env_values["DEFAULT_NODE_ENDPOINT"] == "http://127.0.0.1:38084"
+    assert env_values["MINING_NODE_URLS"] == "http://node:8080"
 
 
 def test_mainnet_wallet_import_writes_canonical_pq_wallet(monkeypatch, tmp_path: Path) -> None:
@@ -205,7 +235,8 @@ def test_write_env_supports_dedicated_testnet_env_file(monkeypatch) -> None:
         content = env_path.read_text(encoding="utf-8")
         assert "CHIPCOIN_NETWORK=testnet" in content
         assert "NODE_P2P_BIND_PORT=28444" in content
-        assert "NODE_HTTP_PUBLISH_HOST=127.0.0.1" in content
+        assert "NODE_P2P_PUBLISH_HOST=0.0.0.0" in content
+        assert "NODE_HTTP_PUBLISH_PORT=28081" in content
         assert "MINING_NODE_URLS=http://node:8081" not in content
 
 
@@ -310,7 +341,7 @@ def test_env_examples_expose_service_specific_discovery_defaults() -> None:
         content = env_path.read_text(encoding="utf-8")
         assert "NODE_DIRECT_PEERS=" in content
         assert "NODE_BOOTSTRAP_URL=" in content
-        assert "NODE_HTTP_PUBLISH_HOST=127.0.0.1" in content
+        assert "NODE_HTTP_PUBLISH_HOST" not in content
         assert "NODE_P2P_BIND_PORT=28444" in content
         assert "NODE_HTTP_BIND_PORT=28081" in content
         assert "MINING_MIN_INTERVAL_SECONDS=10.0" in content
@@ -343,7 +374,7 @@ def test_configure_node_discovery_defaults_to_bootstrap_and_public_standard_port
     wizard._configure_node_discovery(env_values, setup_mode="quick")
 
     assert env_values["NODE_DIRECT_PEERS"] == ""
-    assert env_values["NODE_BOOTSTRAP_URL"] == "http://chipcoinprotocol.com:28080"
+    assert env_values["NODE_BOOTSTRAP_URL"] == "https://bootstrap.chipcoinprotocol.com"
     assert env_values["BOOTSTRAP_ANNOUNCE_ENABLED"] == "true"
     assert env_values["NODE_PUBLIC_HOST"] == "node.example.com"
     assert env_values["NODE_PUBLIC_P2P_PORT"] == env_values["NODE_P2P_BIND_PORT"] == "18444"

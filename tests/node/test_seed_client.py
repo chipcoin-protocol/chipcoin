@@ -10,8 +10,9 @@ def test_seed_client_lists_peers_and_announces() -> None:
         def __init__(self, payload: dict) -> None:
             self.payload = payload
 
-        def read(self) -> bytes:
-            return json.dumps(self.payload, sort_keys=True).encode("utf-8")
+        def read(self, size: int = -1) -> bytes:
+            encoded = json.dumps(self.payload, sort_keys=True).encode("utf-8")
+            return encoded if size < 0 else encoded[:size]
 
         def __enter__(self):
             return self
@@ -82,7 +83,7 @@ def test_seed_client_lists_peers_and_announces() -> None:
 
 def test_seed_client_wraps_http_error_body() -> None:
     class FakeErrorBody:
-        def read(self) -> bytes:
+        def read(self, size: int = -1) -> bytes:
             return json.dumps({"error": {"code": "invalid_peer", "message": "peer is not reachable"}}).encode("utf-8")
 
         def close(self) -> None:
@@ -109,3 +110,49 @@ def test_seed_client_wraps_http_error_body() -> None:
             raise AssertionError("Expected SeedClientError")
     finally:
         seed_client_module.urlopen = original_urlopen
+
+
+def test_seed_client_rejects_cross_network_or_malformed_candidates(monkeypatch) -> None:
+    class FakeResponse:
+        def read(self, size: int = -1) -> bytes:
+            body = json.dumps(
+                {"network": "testnet", "peers": [{"host": "node.example", "port": 1, "network": "mainnet"}]}
+            ).encode()
+            return body[:size]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(seed_client_module, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    try:
+        SeedClient("https://seed.example").list_peers("mainnet")
+    except SeedClientError as exc:
+        assert "invalid peer list" in str(exc)
+    else:
+        raise AssertionError("Expected cross-network bootstrap response to be rejected")
+
+
+def test_seed_client_rejects_unsafe_url_and_oversized_response(monkeypatch) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match=r"HTTP\(S\) origin"):
+        SeedClient("file:///tmp/peers")
+    with pytest.raises(ValueError, match="embedded credentials"):
+        SeedClient("https://user:password@seed.example")
+
+    class FakeResponse:
+        def read(self, size: int) -> bytes:
+            return b"x" * size
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(seed_client_module, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    with pytest.raises(SeedClientError, match="size limit"):
+        SeedClient("https://seed.example").health()

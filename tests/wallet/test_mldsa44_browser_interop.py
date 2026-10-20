@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -39,20 +40,38 @@ def test_browser_mldsa44_fixture_matches_python_backend() -> None:
 
 
 def test_browser_mldsa44_signature_verifies_with_python_backend() -> None:
+    if shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome"):
+        browser_name = "chromium"
+    elif shutil.which("firefox") or shutil.which("firefox-esr"):
+        browser_name = "firefox"
+    else:
+        pytest.skip("A supported headless browser is required for ML-DSA interoperability.")
     result = subprocess.run(
-        ["node_modules/.bin/vite-node", "scripts/mldsa44-browser-sign-vector.ts", "tests/fixtures/mldsa44-browser-vector-1.json"],
+        ["node", "scripts/run-mldsa44-browser-test.mjs", "--browser", browser_name],
         cwd=Path("apps/browser-wallet"),
         check=True,
         capture_output=True,
         text=True,
     )
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    payload = json.loads(result.stdout)
-    public_key = bytes.fromhex(payload["public_key_hex"])
+    payload = None
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(result.stdout):
+        if character != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(result.stdout[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and candidate.get("browser") == browser_name:
+            payload = candidate
+    assert payload is not None, result.stdout
+    public_key = bytes.fromhex(fixture["public_key_hex"])
     message = bytes.fromhex(fixture["message_hex"])
-    signature = bytes.fromhex(payload["signature_hex"])
+    signature = bytes.fromhex(fixture["signature_hex"])
 
-    assert payload["signature_verifies"] is True
-    assert payload["public_key_hex"] == fixture["public_key_hex"]
-    assert payload["signature_hex"] == fixture["signature_hex"]
+    assert payload["ok"] is True
+    assert payload["publicKeyMatches"] is True
+    assert payload["signatureMatches"] is True
+    assert payload["pythonSignatureVerifies"] is True
     assert verify_mldsa44(public_key, message, signature) is True

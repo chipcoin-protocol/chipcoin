@@ -6,6 +6,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from chipcoin.consensus.economics import subsidy_split_chipbits
 from chipcoin.consensus.epoch_settlement import RewardAttestation
@@ -17,6 +19,7 @@ from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.validation import ContextualValidationError
 from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.node.service import NodeService
+from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, write_snapshot_file
 from chipcoin.node.sync import SyncManager
 from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed
 from tests.helpers import spend_candidates_for_wallet, wallet_key
@@ -428,7 +431,10 @@ def test_mainnet_funded_registration_rolls_back_and_returns_to_mempool_after_reo
         assert node_a.chainstate.list_utxos() == node_b.chainstate.list_utxos()
 
 
-def test_mainnet_pq_snapshot_roundtrip_and_delta_sync() -> None:
+def test_mainnet_pq_snapshot_roundtrip_and_delta_sync(monkeypatch) -> None:
+    import chipcoin.node.snapshots as snapshots_module
+    from chipcoin.config import get_network_config
+
     with TemporaryDirectory() as tempdir:
         root = Path(tempdir)
         source = _make_service(root / "source.sqlite3")
@@ -436,9 +442,31 @@ def test_mainnet_pq_snapshot_roundtrip_and_delta_sync() -> None:
         initial_blocks = _mine_chain(source, 3, miner.address)
         snapshot_path = root / "mainnet-pq.snapshot"
         metadata = source.export_snapshot_file(snapshot_path)
+        signer = ed25519.Ed25519PrivateKey.from_private_bytes(bytes([31]) * 32)
+        signer_private = signer.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        signer_public = signer.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        write_snapshot_file(snapshot_path, sign_snapshot_payload(read_snapshot_payload(snapshot_path), private_key=signer_private))
+
+        original_config_lookup = snapshots_module.get_network_config
+        test_mainnet_config = replace(
+            get_network_config("mainnet"),
+            canonical_genesis_hash=source.canonical_genesis.block_hash(),
+        )
+        monkeypatch.setattr(
+            snapshots_module,
+            "get_network_config",
+            lambda network: test_mainnet_config if network == "mainnet" else original_config_lookup(network),
+        )
 
         target = _make_service(root / "target.sqlite3")
-        imported = target.import_snapshot_file(snapshot_path)
+        imported = target.import_snapshot_file(snapshot_path, trust_mode="enforce", trusted_keys=(signer_public,))
         assert imported["checksum_sha256"] == metadata["checksum_sha256"]
         assert target.chain_tip() == source.chain_tip()
         assert target.chainstate.list_utxos() == source.chainstate.list_utxos()

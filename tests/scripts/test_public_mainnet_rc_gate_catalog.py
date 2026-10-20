@@ -30,6 +30,9 @@ def test_automated_entries_have_commands_and_manual_entries_do_not_auto_pass() -
     automated = [gate for gate in gates if gate["execution_mode"] == "AUTOMATED_PRE_FREEZE"]
     manual = [gate for gate in gates if gate["execution_mode"] == "MANUAL_ATTESTATION"]
     assert automated and all(gate["command"] for gate in automated)
+    assert len(automated) == 20
+    assert all(gate["automated_contract"] and gate["pass_criteria"] for gate in automated)
+    assert all(gate["automated_contract"][0]["check_id"] in gate["pass_criteria"][2] for gate in automated)
     assert manual and all(gate["manual_attestation"]["runner_auto_pass"] is False for gate in manual)
     manifest = next(gate for gate in automated if gate["id"] == "BW-SEC-002")
     assert (ROOT / manifest["cwd"] / manifest["command"][-1]).is_file()

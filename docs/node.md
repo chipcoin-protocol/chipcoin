@@ -973,6 +973,8 @@ Basic validation:
 - `NODE_DIRECT_PEERS` is the preferred way to define one or more explicit startup peers for the node.
 - `NODE_DIRECT_PEER` remains supported for compatibility with older configs.
 - `NODE_BOOTSTRAP_URL` is the preferred bootstrap helper setting for the node.
+- When set, the node runtime refreshes bounded, network-labeled peer candidates from this optional service; startup does not depend on it.
+- Bootstrap records are untrusted hints. The normal P2P handshake still checks network magic, chain ID, and genesis before a peer session is accepted.
 - `BOOTSTRAP_ANNOUNCE_ENABLED=true` makes the node announce itself to the bootstrap seed on startup and then refresh periodically.
 - `NODE_PUBLIC_HOST` and `NODE_PUBLIC_P2P_PORT` must point at the node's real public P2P endpoint when bootstrap announce is enabled.
 - `BOOTSTRAP_REFRESH_INTERVAL_SECONDS` should stay comfortably below the bootstrap seed TTL so the record does not expire.

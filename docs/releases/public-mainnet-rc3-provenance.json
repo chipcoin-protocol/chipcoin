@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "status": "PRE_FREEZE_CANDIDATE",
+  "release_id": "mainnet-v0.1.2-rc.3",
+  "source": {
+    "base_commit": "5de4080e2c32162aaf923ee6ac250b0a74288496",
+    "base_tag": "mainnet-v0.1.2-rc.2",
+    "candidate_commit": null,
+    "candidate_branch": "rc3-candidate",
+    "candidate_worktree_clean": false,
+    "candidate_changes": [
+      ".env.devnet.example", ".env.example", "Dockerfile",
+      "apps/browser-wallet/package-firefox.sh",
+      "apps/browser-wallet/scripts/create-web-ext-sign-config.mjs",
+      "apps/browser-wallet/tests/create-web-ext-sign-config.test.mjs",
+      "config/env/.env.example", "docker-compose.yml",
+      "docker/compose/docker-compose.devnet-test.yml", "docs/docker.md",
+      "docs/mainnet-network-ports.md", "docs/node.md",
+      "docs/public-mainnet-rc1-gate-runner.md",
+      "docs/releases/mainnet-v0.1.2-rc.3-candidate-manifest.json",
+      "docs/releases/public-mainnet-launch-gate-catalog.json",
+      "docs/releases/public-mainnet-launch-gate-plan.example.json",
+      "docs/releases/public-mainnet-rc1-gate-catalog.json",
+      "docs/releases/public-mainnet-rc3-gate-plan.example.json",
+      "docs/releases/public-mainnet-rc3-post-freeze-validation.md",
+      "docs/releases/public-mainnet-rc3-provenance.json",
+      "docs/releases/rc-gate-trust-store.json",
+      "docs/releases/rc3-gate-evidence-and-attestation.md", "docs/setup-wizard.md",
+      "docs/testnet-fast-join.md", "docs/testnet.md",
+      "scripts/build-public-mainnet-launch-gate-catalog.py",
+      "scripts/build-public-mainnet-rc-gate-catalog.py",
+      "scripts/build-public-mainnet-rc3-gate-plan.py", "scripts/devnet_smoke_test.sh",
+      "scripts/run-public-mainnet-rc-gates.py", "scripts/setup/wizard.py",
+      "src/chipcoin/interfaces/cli.py", "src/chipcoin/interfaces/seed_client.py",
+      "src/chipcoin/node/runtime.py", "tests/config/test_setup_wizard.py",
+      "tests/node/test_cli.py", "tests/node/test_http_api.py",
+      "tests/node/test_mainnet_pq_end_to_end.py", "tests/node/test_runtime_integration.py",
+      "tests/node/test_seed_client.py", "tests/node/test_snapshot_signer_security.py",
+      "tests/node/test_snapshots.py", "tests/scripts/test_public_mainnet_launch_gate_catalog.py",
+      "tests/scripts/test_public_mainnet_rc_gate_catalog.py",
+      "tests/scripts/test_public_mainnet_rc_gate_runner.py",
+      "tests/wallet/test_mldsa44_browser_interop.py"
+    ]
+  },
+  "identity": {
+    "network": "mainnet",
+    "chain_id": "chipcoin-mainnet-1",
+    "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+  },
+  "docker_builds": {
+    "build_command": "docker buildx build --builder chipcoin-rc1-repro-builder --no-cache --pull --platform linux/amd64 --build-arg SOURCE_DATE_EPOCH=1792069138 --output type=oci,dest=<artifact>,rewrite-timestamp=true .",
+    "builder": "Docker Buildx 0.30.1 / BuildKit 0.26.2",
+    "base_builder_digest": "sha256:50cfccc707e8721201ee018bfd7f6a85d8eacf49c4f9f75833a2aba09a10411f",
+    "base_runtime_digest": "sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce",
+    "source_date_epoch": 1792069138,
+    "oci_manifest_digest": "sha256:bee9b05322104db7aaa542a1813b444d4c0075b303f6e468648ac04374b5f431",
+    "oci_config_digest": "sha256:ad775182f153fbc7fff17029bcaeb37b69789efadb0b5ae8b37cc8c4cec4b231",
+    "oci_archive_sha256": "9b4a8602471dff4ca13a34806150853b6ce11dbc4af9401463736166e93faf1d",
+    "independent_exports_byte_identical": true,
+    "release_artifact": false
+  },
+  "test_run": {
+    "command": "pytest -q --tb=short tests/node/test_cli.py tests/node/test_http_api.py tests/node/test_snapshots.py tests/node/test_transport_protocol.py tests/miner/test_worker.py",
+    "result": "PASS",
+    "passed": 175,
+    "failed": 0,
+    "skipped": 2,
+    "formal_gate_status": "NOT_RUN"
+  },
+  "formal_gates": {
+    "catalog_path": "docs/releases/public-mainnet-rc1-gate-catalog.json",
+    "catalog_sha256": "4a0f9138ebe180e95fe8c49ab8f310c84af61b753a7f728c543ab4fd5a4411bf",
+    "gate_count": 98,
+    "status": "NOT_RUN",
+    "test_only_evidence_promoted": false,
+    "runner_path": "scripts/run-public-mainnet-rc-gates.py",
+    "executable_plan_ready": false
+  },
+  "public_launch_gates": {
+    "catalog_path": "docs/releases/public-mainnet-launch-gate-catalog.json",
+    "catalog_sha256": "9248b63a3f3d88707f4e420fdbc3a34017f69da26dbc9c74e48797b8646d637f",
+    "gate_count": 7,
+    "status": "NOT_RUN",
+    "manual_review_only": true,
+    "runner_requires_current_rc_report_sha256": true,
+    "runner_requires_rc_journal_and_evidence_checksums": true,
+    "reviewer_signature_verifier": "NOT_IMPLEMENTED; human attestations remain out-of-band and cannot be auto-promoted",
+    "historical_or_test_only_pass_promotion": false
+  },
+  "explorer": {
+    "original_repository": "/home/komarek/Documents/CODEX/chipcoin-central",
+    "original_worktree_preserved": true,
+    "isolated_copy": "/tmp/chipcoin-central-rc3-identity",
+    "branch": "rc3-mainnet-identity",
+    "base_commit": "17a19e9e6f5d7b816e4854dd90baf1333085b066",
+    "identity": {"network": "mainnet", "chain_id": "chipcoin-mainnet-1", "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d", "network_magic_hex": "c0897c0d"},
+    "test_results": {"passed": 39, "failed": 0, "skipped": 1},
+    "typecheck": "PASS",
+    "production_build": "PASS",
+    "commit_created": false,
+    "modified_paths": [
+      ".env.example",
+      "apps/explorer/src/App.tsx",
+      "apps/explorer/src/api.ts",
+      "apps/explorer/src/schemes.ts",
+      "apps/explorer/src/styles.css",
+      "apps/explorer/src/types.ts",
+      "apps/explorer/tests/api.test.mjs",
+      "apps/explorer/tests/live-mainnet-e2e.test.mjs",
+      "apps/explorer/tests/schemes.test.mjs",
+      "deploy/apache/README.md",
+      "deploy/apache/sites-available/explorer.chipcoinprotocol.com.conf",
+      "deploy/bin/build-explorer.sh"
+    ]
+  },
+  "central_candidate_paths": [
+    ".env.example", "apps/explorer/README.md", "apps/explorer/package-lock.json",
+    "apps/explorer/package.json", "apps/explorer/src/App.tsx", "apps/explorer/src/api.ts",
+    "apps/explorer/src/schemes.ts", "apps/explorer/src/styles.css", "apps/explorer/src/types.ts",
+    "apps/explorer/tests/api.test.mjs", "apps/explorer/tests/live-mainnet-e2e.test.mjs",
+    "apps/explorer/tests/schemes.test.mjs", "deploy/apache/README.md",
+    "deploy/apache/sites-available/README.md", "deploy/apache/sites-available/api.chipcoinprotocol.com.conf",
+    "deploy/apache/sites-available/bootstrap.chipcoinprotocol.com.conf",
+    "deploy/apache/sites-available/explorer.chipcoinprotocol.com.conf",
+    "deploy/apache/sites-available/mainnet-api.chipcoinprotocol.com.conf",
+    "deploy/apache/sites-available/mainnet-bootstrap.chipcoinprotocol.com.conf",
+    "deploy/bin/build-explorer.sh", "deploy/compose/README.md", "deploy/compose/central-stack.yml",
+    "deploy/compose/mainnet-bootstrap.env.example", "deploy/compose/mainnet-bootstrap.yml",
+    "ops/remote-devnet/tobia/.env.example", "ops/remote-devnet/tobia/README.md",
+    "ops/remote-devnet/tobia/common.sh", "ops/remote-devnet/tobia/import-miner-wallet.sh",
+    "ops/runbooks/bootstrap-service.md", "services/bootstrap-seed/Dockerfile",
+    "services/bootstrap-seed/README.md", "services/bootstrap-seed/src/bootstrap_seed/app.py",
+    "services/bootstrap-seed/src/bootstrap_seed/config.py", "tests/bootstrap_seed/test_app.py",
+    "tests/test_network_binding_configs.py"
+  ],
+  "cross_repository_compatibility": {
+    "core_base_commit": "5de4080e2c32162aaf923ee6ac250b0a74288496",
+    "central_base_commit": "17a19e9e6f5d7b816e4854dd90baf1333085b066",
+    "candidate_commits": null,
+    "network": "mainnet",
+    "chain_id": "chipcoin-mainnet-1",
+    "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d",
+    "freeze_approval_status": "NOT_APPROVED"
+  },
+  "remediation_validation": {
+    "execution_scope": "isolated_RC3_worktrees_only",
+  "core_global_suite": {
+      "command": "./.venv/bin/pytest -q --tb=short",
+    "result": "PASS",
+    "passed": 951,
+    "failed": 0,
+    "command_after_fixture_fix": "./.venv/bin/pytest -q --tb=short",
+    "post_remediation_targeted_tests": {
+      "command": "./.venv/bin/pytest -q --tb=short tests/node/test_cli.py -k wallet_import",
+      "passed": 6,
+      "failed": 0,
+      "result": "PASS"
+    },
+    "post_remediation_full_suite": "INCLUDED_IN_PASS_ABOVE"
+    },
+    "bootstrap_seed_tests": {"command": "PYTHONPATH=services/bootstrap-seed/src python3 -m pytest -q tests", "passed": 23, "failed": 0},
+    "browser_wallet": {
+      "unit_tests_passed": 97,
+      "unit_tests_failed": 0,
+      "chrome_build": "PASS",
+      "firefox_build": "PASS",
+      "chromium_python_mldsa_interop": "PASS",
+      "mldsa_bundle_check": "PASS",
+      "firefox_bidi_interop": "PASS"
+    },
+    "explorer": {"tests_passed": 39, "tests_skipped": 1, "typecheck": "PASS", "production_build": "PASS"},
+    "formal_gates_promoted": 0,
+    "test_only_evidence_promoted": false,
+    "active_network_operations": false,
+    "devnet_private_key": {
+      "removed_from_current_versioned_trees_core_and_central": true,
+      "historical_git_objects_retained_in_both_repositories": true,
+      "history_finding": "Central legacy reference confirmed in commit 7b96e52; history was not rewritten",
+      "secret_scanner_availability": "gitleaks/trufflehog unavailable; targeted current-tree patterns reviewed",
+      "rotation_performed": false
+    },
+    "amo_signing_secret": {
+      "cli_secret_argument_removed": true,
+      "secret_delivery_to_config_writer": "STDIN; NOT_ARGV_OR_CHILD_ENV",
+      "secret_config_file_permissions": "0600",
+      "web_ext_sign_config_integration_test": "PASS"
+    },
+    "bootstrap": {
+      "runtime_peer_discovery": "OPTIONAL; PEER_HINTS_UNTRUSTED_UNTIL_CANONICAL_P2P_HANDSHAKE",
+      "negative_security_tests": "PASS",
+      "base_image_digest": "sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89",
+      "local_image_build": "PASS; no service started",
+      "peerless_mainnet_configuration": "FAIL_CLOSED; Compose requires reviewed static peers"
+    }
+  },
+  "worktree_integrity": {
+    "core_base_commit_unchanged": "5de4080e2c32162aaf923ee6ac250b0a74288496",
+    "central_base_commit_unchanged": "17a19e9e6f5d7b816e4854dd90baf1333085b066",
+    "commits_created": false,
+    "tags_created": false,
+    "pushes": false
+  },
+  "artifact_publication": false,
+  "source_freeze": false,
+  "tag_created": false,
+  "deployment": false
+}

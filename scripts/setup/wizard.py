@@ -44,7 +44,7 @@ WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
 REWARD_WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "reward-node-wallet.json")
 PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
 PUBLIC_DEVNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:18444"
-PUBLIC_DEVNET_BOOTSTRAP_URL = "http://chipcoinprotocol.com:28080"
+PUBLIC_DEVNET_BOOTSTRAP_URL = "https://bootstrap.chipcoinprotocol.com"
 PUBLIC_DEVNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com"
 PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json"
 PUBLIC_TESTNET_WALLET_API_ENDPOINT = "https://testnet-api.chipcoinprotocol.com"
@@ -52,9 +52,10 @@ PUBLIC_TESTNET_BOOTSTRAP_PEER = "chipcoinprotocol.com:28444"
 PUBLIC_TESTNET_BOOTSTRAP_URL = "https://bootstrap.chipcoinprotocol.com"
 PUBLIC_TESTNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com/api/testnet"
 PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
+PUBLIC_MAINNET_BOOTSTRAP_URL = "https://mainnet-bootstrap.chipcoinprotocol.com"
 TESTNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:28081"
 PUBLIC_MAINNET_WALLET_API_ENDPOINT = "https://mainnet-api.chipcoinprotocol.com"
-MAINNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:8080"
+MAINNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:38084"
 PUBLIC_IP_DETECT_URLS = (
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
@@ -80,8 +81,9 @@ DEFAULTS = {
     "NODE_SNAPSHOT_SELECTED_HASH": "",
     "NODE_LOG_LEVEL": "INFO",
     "NODE_P2P_BIND_PORT": "28444",
+    "NODE_P2P_PUBLISH_HOST": "127.0.0.1",
     "NODE_HTTP_BIND_PORT": "28081",
-    "NODE_HTTP_PUBLISH_HOST": "127.0.0.1",
+    "NODE_HTTP_PUBLISH_PORT": "28081",
     "CHIPCOIN_HTTP_ALLOWED_ORIGINS": "",
     "MINER_LOG_LEVEL": "INFO",
     "MINER_WALLET_FILE": WALLET_PATH,
@@ -621,11 +623,12 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["NODE_P2P_PUBLISH_HOST"] = "127.0.0.1"
         env_values["NODE_PUBLIC_P2P_PORT"] = "8333"
         env_values["NODE_HTTP_BIND_PORT"] = "8080"
-        env_values["NODE_HTTP_PUBLISH_HOST"] = "127.0.0.1"
+        env_values["NODE_HTTP_PUBLISH_PORT"] = "38084"
+        env_values["MINING_NODE_URLS"] = "http://node:8080"
         env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
-        env_values["NODE_BOOTSTRAP_URL"] = ""
+        env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_MAINNET_BOOTSTRAP_URL
         env_values["DEFAULT_NODE_ENDPOINT"] = PUBLIC_MAINNET_WALLET_API_ENDPOINT
-        env_values["DEFAULT_EXPLORER_URL"] = "https://explorer.chipcoinprotocol.com"
+        env_values["DEFAULT_EXPLORER_URL"] = "https://explorer.chipcoinprotocol.com/api/mainnet"
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_MAINNET_WALLET_API_ENDPOINT
         env_values["MINING_MIN_INTERVAL_SECONDS"] = "10.0"
         env_values["MINING_NONCE_BATCH_SIZE"] = "50000"
@@ -635,9 +638,10 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["NODE_DATA_PATH"] = NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = NODE_SNAPSHOT_PATH
         env_values["NODE_P2P_BIND_PORT"] = "18444"
+        env_values["NODE_P2P_PUBLISH_HOST"] = "0.0.0.0"
         env_values["NODE_PUBLIC_P2P_PORT"] = "18444"
         env_values["NODE_HTTP_BIND_PORT"] = "8081"
-        env_values["NODE_HTTP_PUBLISH_HOST"] = "127.0.0.1"
+        env_values["NODE_HTTP_PUBLISH_PORT"] = "8081"
         env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = PUBLIC_DEVNET_SNAPSHOT_MANIFEST_URL
         env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_DEVNET_BOOTSTRAP_PEER
         env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_DEVNET_BOOTSTRAP_URL
@@ -652,9 +656,10 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["NODE_DATA_PATH"] = TESTNET_NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = TESTNET_NODE_SNAPSHOT_PATH
         env_values["NODE_P2P_BIND_PORT"] = "28444"
+        env_values["NODE_P2P_PUBLISH_HOST"] = "0.0.0.0"
         env_values["NODE_PUBLIC_P2P_PORT"] = "28444"
         env_values["NODE_HTTP_BIND_PORT"] = "28081"
-        env_values["NODE_HTTP_PUBLISH_HOST"] = "127.0.0.1"
+        env_values["NODE_HTTP_PUBLISH_PORT"] = "28081"
         env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL
         env_values["DEFAULT_BOOTSTRAP_PEER"] = PUBLIC_TESTNET_BOOTSTRAP_PEER
         env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_TESTNET_BOOTSTRAP_URL
@@ -684,7 +689,8 @@ def _same_compose_node_endpoint(env_values: dict[str, str]) -> str:
 
 
 def _local_node_endpoint(env_values: dict[str, str]) -> str:
-    return f"http://127.0.0.1:{env_values.get('NODE_HTTP_BIND_PORT', '8081')}"
+    port = env_values.get("NODE_HTTP_PUBLISH_PORT") or env_values.get("NODE_HTTP_BIND_PORT", "8081")
+    return f"http://127.0.0.1:{port}"
 
 
 def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str, *, network: str = "devnet") -> None:
@@ -834,7 +840,7 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
 
 def _print_public_reachability_note(*, network: str = "devnet") -> None:
     default_port = get_network_config(network).default_p2p_port
-    default_http_port = "28081" if network == "testnet" else "8081"
+    default_http_port = {"mainnet": "38084", "testnet": "28081"}.get(network, "8081")
     print()
     print("Public reachability note:")
     print("  - outbound-only nodes can still connect and sync")

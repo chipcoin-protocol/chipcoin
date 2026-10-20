@@ -1,0 +1,313 @@
+{
+  "gates": [
+    {
+      "assertions": [
+        "HTTP TLS chain is valid",
+        "API reports exact mainnet chain_id, genesis_hash and network_magic_hex",
+        "external monitor alert path is healthy"
+      ],
+      "blocker_criteria": [
+        "missing evidence",
+        "unavailable prerequisite",
+        "unsigned or stale reviewer attestation"
+      ],
+      "dependencies": [
+        "EXP-INT-004"
+      ],
+      "description": "Public mainnet Explorer is deployed and externally monitored.",
+      "execution_mode": "MANUAL_REVIEW",
+      "fail_criteria": [
+        "any required assertion fails",
+        "identity or evidence checksum mismatch"
+      ],
+      "id": "EXP-PUB-001",
+      "identity": [
+        "network",
+        "chain_id",
+        "genesis_hash",
+        "source_commit",
+        "source_tree_sha256",
+        "artifact_digest"
+      ],
+      "pass_criteria": [
+        "all listed assertions are supported by hashed evidence",
+        "dependencies have current verified PASS evidence",
+        "a named reviewer signs the evidence digest"
+      ],
+      "procedure": "Probe the deployed public Explorer over its production HTTPS origin and verify live monitoring.",
+      "required_evidence": [
+        "TLS probe output",
+        "API identity response",
+        "monitor status and alert test"
+      ],
+      "runner_auto_pass": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "assertions": [
+        "DNS targets match approved inventory",
+        "P2P endpoints are distinct from testnet",
+        "handshake reports canonical mainnet identity"
+      ],
+      "blocker_criteria": [
+        "missing evidence",
+        "unavailable prerequisite",
+        "unsigned or stale reviewer attestation"
+      ],
+      "dependencies": [
+        "FINAL-RUN-001"
+      ],
+      "description": "Public bootstrap/seed nodes, DNS and port separation are deployed and validated.",
+      "execution_mode": "MANUAL_REVIEW",
+      "fail_criteria": [
+        "any required assertion fails",
+        "identity or evidence checksum mismatch"
+      ],
+      "id": "PUB-001",
+      "identity": [
+        "network",
+        "chain_id",
+        "genesis_hash",
+        "source_commit",
+        "source_tree_sha256",
+        "artifact_digest"
+      ],
+      "pass_criteria": [
+        "all listed assertions are supported by hashed evidence",
+        "dependencies have current verified PASS evidence",
+        "a named reviewer signs the evidence digest"
+      ],
+      "procedure": "Resolve public DNS and probe each announced seed/bootstrap endpoint without connecting networks.",
+      "required_evidence": [
+        "DNS answers",
+        "port/firewall inventory",
+        "P2P handshake transcript"
+      ],
+      "runner_auto_pass": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "assertions": [
+        "TLS verification succeeds",
+        "only approved ports are reachable",
+        "rate limits reject excess requests",
+        "development servers are unreachable"
+      ],
+      "blocker_criteria": [
+        "missing evidence",
+        "unavailable prerequisite",
+        "unsigned or stale reviewer attestation"
+      ],
+      "dependencies": [
+        "PUB-001"
+      ],
+      "description": "TLS, firewall, API exposure controls and rate limiting are validated.",
+      "execution_mode": "MANUAL_REVIEW",
+      "fail_criteria": [
+        "any required assertion fails",
+        "identity or evidence checksum mismatch"
+      ],
+      "id": "PUB-002",
+      "identity": [
+        "network",
+        "chain_id",
+        "genesis_hash",
+        "source_commit",
+        "source_tree_sha256",
+        "artifact_digest"
+      ],
+      "pass_criteria": [
+        "all listed assertions are supported by hashed evidence",
+        "dependencies have current verified PASS evidence",
+        "a named reviewer signs the evidence digest"
+      ],
+      "procedure": "Run external TLS, firewall, API exposure and rate-limit probes against the approved public endpoints.",
+      "required_evidence": [
+        "TLS scan",
+        "port scan",
+        "rate-limit test report",
+        "dev-server exposure scan"
+      ],
+      "runner_auto_pass": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "assertions": [
+        "critical alerts reach the on-call path",
+        "backup restore matches recorded chain identity and checkpoint",
+        "recovery duration is within runbook limits"
+      ],
+      "blocker_criteria": [
+        "missing evidence",
+        "unavailable prerequisite",
+        "unsigned or stale reviewer attestation"
+      ],
+      "dependencies": [
+        "PUB-001"
+      ],
+      "description": "Production monitoring, alerts and backups are validated.",
+      "execution_mode": "MANUAL_REVIEW",
+      "fail_criteria": [
+        "any required assertion fails",
+        "identity or evidence checksum mismatch"
+      ],
+      "id": "PUB-003",
+      "identity": [
+        "network",
+        "chain_id",
+        "genesis_hash",
+        "source_commit",
+        "source_tree_sha256",
+        "artifact_digest"
+      ],
+      "pass_criteria": [
+        "all listed assertions are supported by hashed evidence",
+        "dependencies have current verified PASS evidence",
+        "a named reviewer signs the evidence digest"
+      ],
+      "procedure": "Exercise monitoring alerts and perform a documented backup restore drill.",
+      "required_evidence": [
+        "alert delivery evidence",
+        "backup/restore checksums",
+        "restore drill report"
+      ],
+      "runner_auto_pass": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "assertions": [
+        "signature and trusted signer validate",
+        "manifest identity matches canonical mainnet",
+        "snapshot metadata matches exported chainstate",
+        "incomplete publication is not observable"
+      ],
+      "blocker_criteria": [
+        "missing evidence",
+        "unavailable prerequisite",
+        "unsigned or stale reviewer attestation"
+      ],
+      "dependencies": [
+        "SNAP-RUN-004"
+      ],
+      "description": "Signed initial snapshot and download endpoints are published and verified.",
+      "execution_mode": "MANUAL_REVIEW",
+      "fail_criteria": [
+        "any required assertion fails",
+        "identity or evidence checksum mismatch"
+      ],
+      "id": "PUB-004",
+      "identity": [
+        "network",
+        "chain_id",
+        "genesis_hash",
+        "source_commit",
+        "source_tree_sha256",
+        "artifact_digest"
+      ],
+      "pass_criteria": [
+        "all listed assertions are supported by hashed evidence",
+        "dependencies have current verified PASS evidence",
+        "a named reviewer signs the evidence digest"
+      ],
+      "procedure": "Verify the published immutable snapshot and manifest using the production trusted signer and a clean bootstrap client.",
+      "required_evidence": [
+        "signed manifest",
+        "snapshot checksum",
+        "trusted-signer verification output",
+        "bootstrap validation report"
+      ],
+      "runner_auto_pass": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "assertions": [
+        "no mainnet faucet or unsupported funding claim is present",
+        "all endpoint, port and chain identity values match approved inventory"
+      ],
+      "blocker_criteria": [
+        "missing evidence",
+        "unavailable prerequisite",
+        "unsigned or stale reviewer attestation"
+      ],
+      "dependencies": [],
+      "description": "Public documentation explicitly has no mainnet faucet and correct endpoints/ports.",
+      "execution_mode": "MANUAL_REVIEW",
+      "fail_criteria": [
+        "any required assertion fails",
+        "identity or evidence checksum mismatch"
+      ],
+      "id": "PUB-005",
+      "identity": [
+        "network",
+        "chain_id",
+        "genesis_hash",
+        "source_commit",
+        "source_tree_sha256",
+        "artifact_digest"
+      ],
+      "pass_criteria": [
+        "all listed assertions are supported by hashed evidence",
+        "dependencies have current verified PASS evidence",
+        "a named reviewer signs the evidence digest"
+      ],
+      "procedure": "Review and hash the public documentation and endpoint inventory before release.",
+      "required_evidence": [
+        "documentation tree hash",
+        "endpoint/port review attestation"
+      ],
+      "runner_auto_pass": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "assertions": [
+        "all launch steps have named owners",
+        "rollback and emergency stop are executable",
+        "no unresolved critical action or unsafe dependency remains"
+      ],
+      "blocker_criteria": [
+        "missing evidence",
+        "unavailable prerequisite",
+        "unsigned or stale reviewer attestation"
+      ],
+      "dependencies": [
+        "PUB-001",
+        "PUB-002",
+        "PUB-003",
+        "PUB-004",
+        "PUB-005"
+      ],
+      "description": "Public launch sequence, rollback and emergency procedure are rehearsed.",
+      "execution_mode": "MANUAL_REVIEW",
+      "fail_criteria": [
+        "any required assertion fails",
+        "identity or evidence checksum mismatch"
+      ],
+      "id": "PUB-006",
+      "identity": [
+        "network",
+        "chain_id",
+        "genesis_hash",
+        "source_commit",
+        "source_tree_sha256",
+        "artifact_digest"
+      ],
+      "pass_criteria": [
+        "all listed assertions are supported by hashed evidence",
+        "dependencies have current verified PASS evidence",
+        "a named reviewer signs the evidence digest"
+      ],
+      "procedure": "Conduct and record a launch/rollback/emergency tabletop or controlled production-readiness drill.",
+      "required_evidence": [
+        "signed drill report",
+        "participant/role list",
+        "action log and closure evidence"
+      ],
+      "runner_auto_pass": false,
+      "status": "NOT_RUN"
+    }
+  ],
+  "runner_auto_pass": false,
+  "schema_version": 1,
+  "source_matrix": "mainnet-release-gate.json",
+  "source_matrix_sha256": "f782a072a42818eaeec953e2725aebbe90d67416c03cd4ab9b2ed8ff07463cf1"
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -24,9 +24,15 @@ class SeedPeer:
 class SeedClient:
     """HTTP client for the optional bootstrap seed service."""
 
-    def __init__(self, base_url: str, *, timeout: float = 5.0) -> None:
+    def __init__(self, base_url: str, *, timeout: float = 5.0, max_response_bytes: int = 65_536) -> None:
+        parsed = urlsplit(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("Bootstrap URL must be an HTTP(S) origin without embedded credentials.")
+        if parsed.query or parsed.fragment:
+            raise ValueError("Bootstrap URL must not include a query or fragment.")
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = min(30.0, max(0.1, float(timeout)))
+        self.max_response_bytes = min(1_048_576, max(1024, int(max_response_bytes)))
 
     def health(self) -> dict[str, str]:
         """Return service health information."""
@@ -37,7 +43,36 @@ class SeedClient:
         """Fetch peer candidates for a network."""
 
         payload = self._request_json("GET", f"/v1/peers?{urlencode({'network': network})}")
-        return [SeedPeer(**peer) for peer in payload.get("peers", [])]
+        raw_peers = payload.get("peers", [])
+        if payload.get("network") != network or not isinstance(raw_peers, list) or len(raw_peers) > 128:
+            raise SeedClientError("bootstrap returned an invalid peer list")
+        peers: list[SeedPeer] = []
+        for peer in raw_peers:
+            if not isinstance(peer, dict):
+                raise SeedClientError("bootstrap returned a malformed peer")
+            host = peer.get("host")
+            port = peer.get("port")
+            peer_network = peer.get("network")
+            node_id = peer.get("node_id", "")
+            version = peer.get("version", "")
+            last_seen = peer.get("last_seen", 0)
+            if (
+                not isinstance(host, str)
+                or not host
+                or len(host) > 253
+                or not isinstance(port, int)
+                or isinstance(port, bool)
+                or not 1 <= port <= 65535
+                or peer_network != network
+                or not isinstance(node_id, str)
+                or not isinstance(version, str)
+                or not isinstance(last_seen, int)
+                or isinstance(last_seen, bool)
+                or last_seen < 0
+            ):
+                raise SeedClientError("bootstrap returned a peer with invalid fields")
+            peers.append(SeedPeer(host, port, peer_network, node_id, version, last_seen))
+        return peers
 
     def announce(self, *, host: str, port: int, network: str, node_id: str, version: str, last_seen: int | None = None) -> SeedPeer:
         """Announce the local node to the bootstrap service."""
@@ -66,9 +101,15 @@ class SeedClient:
         )
         try:
             with urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read(self.max_response_bytes + 1)
+                if len(raw) > self.max_response_bytes:
+                    raise SeedClientError("bootstrap response exceeds the configured size limit")
+                decoded = json.loads(raw.decode("utf-8"))
+                if not isinstance(decoded, dict):
+                    raise SeedClientError("bootstrap returned a non-object JSON response")
+                return decoded
         except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
+            raw = exc.read(4097).decode("utf-8", errors="replace")[:4096]
             raise SeedClientError(f"HTTP {exc.code}: {_extract_error_message(raw)}") from exc
         except URLError as exc:
             raise SeedClientError(f"connection failed: {exc.reason}") from exc

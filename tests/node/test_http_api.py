@@ -122,10 +122,19 @@ def _block_from_template(template: dict[str, object]) -> Block:
     return _mine_block(block)
 
 
-def _run_cli(argv: list[str]) -> tuple[int, object]:
+def _run_cli(argv: list[str], *, service: NodeService | None = None) -> tuple[int, object]:
     stdout = StringIO()
-    with redirect_stdout(stdout):
-        code = cli_main(argv)
+    if service is None:
+        with redirect_stdout(stdout):
+            code = cli_main(argv)
+    else:
+        original_descriptor = NodeService.__dict__["open_sqlite"]
+        NodeService.open_sqlite = lambda *_args, **_kwargs: service
+        try:
+            with redirect_stdout(stdout):
+                code = cli_main(argv)
+        finally:
+            NodeService.open_sqlite = original_descriptor
     return code, json.loads(stdout.getvalue().strip())
 
 
@@ -298,7 +307,7 @@ def test_http_api_supply_matches_cli_and_status_on_same_tip() -> None:
 
         supply_status, _, supply_body = _call_wsgi(app, method="GET", path="/v1/supply")
         status_status, _, status_body = _call_wsgi(app, method="GET", path="/v1/status")
-        cli_code, cli_supply = _run_cli(["--data", str(db_path), "supply"])
+        cli_code, cli_supply = _run_cli(["--data", str(db_path), "supply"], service=service)
 
         assert status_status == "200 OK"
         assert supply_status == "200 OK"
@@ -1607,8 +1616,8 @@ def test_http_api_and_cli_surfaces_are_consistent_for_status_and_peer_summary() 
         service.add_peer("127.0.0.1", 18444, source="manual")
         app = HttpApiApp(service)
 
-        cli_status_code, cli_status = _run_cli(["--data", str(db_path), "status"])
-        cli_summary_code, cli_summary = _run_cli(["--data", str(db_path), "peer-summary"])
+        cli_status_code, cli_status = _run_cli(["--data", str(db_path), "status"], service=service)
+        cli_summary_code, cli_summary = _run_cli(["--data", str(db_path), "peer-summary"], service=service)
         http_status_code, _, http_status = _call_wsgi(app, method="GET", path="/v1/status")
         http_summary_code, _, http_summary = _call_wsgi(app, method="GET", path="/v1/peers/summary")
 

@@ -57,6 +57,12 @@ This mode uses public testnet defaults:
 - miner nonce batch size: `50000`
 - miner worker count: `1` by default
 
+The wizard marks testnet/devnet P2P publication explicitly. Mainnet is private
+by default: P2P stays on loopback until an operator deliberately changes
+`NODE_P2P_PUBLISH_HOST` to `0.0.0.0` and applies the reviewed firewall policy.
+Mainnet node HTTP maps container `8080` to host `127.0.0.1:38084`; the miner
+uses the in-network URL `http://node:8080`.
+
 This is the shortest path if you want to connect quickly to the public testnet
 candidate. Public testnet endpoints are provided for convenience and may change
 or become unavailable.

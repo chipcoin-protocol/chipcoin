@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "release_id": "mainnet-v0.1.2-rc.3",
+  "status": "CANDIDATE_NOT_FROZEN",
+  "source": {
+    "base_commit": "5de4080e2c32162aaf923ee6ac250b0a74288496",
+    "base_tag": "mainnet-v0.1.2-rc.2",
+    "candidate_commit": null,
+    "candidate_branch": "rc3-candidate",
+    "worktree_clean": false
+  },
+  "identity": {
+    "network": "mainnet",
+    "chain_id": "chipcoin-mainnet-1",
+    "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+  },
+  "consensus": {
+    "changed": false,
+    "funded_reward_node_activation_height": 0,
+    "node_reward_activation_height": 1000
+  },
+  "post_freeze_tests": {
+    "command": "pytest -q --tb=short tests/node/test_cli.py tests/node/test_http_api.py tests/node/test_snapshots.py tests/node/test_transport_protocol.py tests/miner/test_worker.py",
+    "passed": 175,
+    "failed": 0,
+    "skipped": 2,
+    "formal_rc_gates_promoted": 0
+  },
+  "docker_build": {
+    "status": "REPRODUCIBLE_LOCAL_CANDIDATE",
+    "platform": "linux/amd64",
+    "builder": "Docker Buildx 0.30.1 / BuildKit 0.26.2",
+    "source_date_epoch": 1792069138,
+    "oci_manifest_digest": "sha256:bee9b05322104db7aaa542a1813b444d4c0075b303f6e468648ac04374b5f431",
+    "oci_config_digest": "sha256:ad775182f153fbc7fff17029bcaeb37b69789efadb0b5ae8b37cc8c4cec4b231",
+    "oci_archive_sha256": "9b4a8602471dff4ca13a34806150853b6ce11dbc4af9401463736166e93faf1d",
+    "archive_byte_identical_builds": 2,
+    "release_artifact": false
+  },
+  "formal_gates": {
+    "total": 98,
+    "status": "NOT_RUN",
+    "historical_test_only_passes_reused": false,
+    "runner": "scripts/run-public-mainnet-rc-gates.py",
+    "execution_plan": "docs/releases/public-mainnet-rc3-gate-plan.example.json",
+    "runner_tests": {"passed": 30, "failed": 0},
+    "public_launch_gates": {"total": 7, "catalog": "docs/releases/public-mainnet-launch-gate-catalog.json", "catalog_sha256": "9248b63a3f3d88707f4e420fdbc3a34017f69da26dbc9c74e48797b8646d637f", "status": "NOT_RUN"}
+  },
+  "explorer": {
+    "original_repository_modified": false,
+    "isolated_copy_modified": true,
+    "isolated_copy": "/tmp/chipcoin-central-rc3-identity",
+    "branch": "rc3-mainnet-identity",
+    "integration_status": "IMPLEMENTED_AND_TESTED_NOT_COMMITTED",
+    "identity": {"chain_id": "chipcoin-mainnet-1", "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d", "network_magic_hex": "c0897c0d"},
+    "tests_passed": 39,
+    "tests_skipped": 1,
+    "typecheck": "PASS",
+    "production_build": "PASS"
+  },
+  "remediation_validation": {
+    "core_global_suite": {
+      "command": "./.venv/bin/pytest -q --tb=short",
+      "result": "PASS",
+      "passed": 951,
+      "failed": 0
+    },
+    "bootstrap_seed_tests": {"command": "PYTHONPATH=services/bootstrap-seed/src python3 -m pytest -q tests", "passed": 23, "failed": 0},
+    "browser_wallet": {
+      "unit_tests": {"command": "npm test", "passed": 97, "failed": 0},
+      "chrome_build": "PASS",
+      "firefox_build": "PASS",
+      "mldsa_bundle_check": "PASS",
+      "chromium_python_mldsa_interop": "PASS",
+      "firefox_python_mldsa_interop": "PASS"
+    },
+    "explorer": {"tests_passed": 39, "tests_skipped": 1, "typecheck": "PASS", "production_build": "PASS"},
+    "formal_gates_promoted": 0,
+    "test_only_evidence_promoted": false
+  },
+  "security_remediation": {
+    "devnet_private_key_current_tree": "REMOVED_FROM_VERSIONED_FILES_IN_CORE_AND_CENTRAL_CANDIDATES",
+    "devnet_private_key_git_history": "RETAINED_IN_BOTH_REPOSITORIES; TREAT_AS_COMPROMISED; NO_HISTORY_REWRITE",
+    "secret_scan_tooling": "GITLEAKS_AND_TRUFFLEHOG_UNAVAILABLE; TARGETED_CURRENT_TREE_PATTERN_REVIEW_ONLY",
+    "active_key_rotation": "NOT_PERFORMED",
+    "amo_api_secret_argv": "REMOVED; SECRET_PIPED_TO_CONFIG_WRITER; PRIVATE_TEMP_CONFIG_FILE",
+    "web_ext_adb_release_guard": "PRESERVED_AND_REGRESSION_TESTED",
+    "web_ext_node_forge_advisory": "REMAINS_VISIBLE; DEV_TOOLCHAIN_RISK_NOT_PATCHED"
+  },
+  "bootstrap_image": {
+    "base_reference_policy": "REQUIRES_VERIFIED_IMMUTABLE_IMAGE_DIGEST_BUILD_ARG",
+    "verified_digest": "sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89",
+    "build_status": "PASS_LOCAL_BUILD; NO_CONTAINER_OR_SERVICE_STARTED",
+    "dockerfile_default_pinned": true,
+    "compose_config_testnet_devnet": "PASS",
+    "compose_config_mainnet_placeholder_peers": "PASS; real peers remain unconfigured"
+  }
+}

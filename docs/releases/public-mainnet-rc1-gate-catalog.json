@@ -9,9 +9,13 @@
   },
   "gates": [
     {
+      "automated_contract": [],
       "blocker": "requires the approved canonical genesis in a clean frozen source revision",
       "category": "consensus_config",
       "command": null,
+      "command_evidence_refs": [
+        "E-CONFIG"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Canonical deterministic mainnet genesis is fixed in code/config.",
@@ -39,8 +43,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_SOURCE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -48,16 +54,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -80,9 +94,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "consensus_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MILESTONE-1"
+      ],
       "cwd": ".",
       "dependencies": [
         "CONS-CFG-001"
@@ -112,8 +130,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -121,16 +141,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -153,13 +181,23 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "test_public_mainnet_identity_is_distinct_and_deterministic passes.",
+          "check_id": "mainnet_identity_distinct"
+        }
+      ],
       "blocker": null,
       "category": "consensus_config",
       "command": [
         ".venv/bin/pytest",
         "-q",
         "tests/consensus/test_mainnet_profile.py",
-        "tests/config/test_network_config.py"
+        "tests/config/test_network_config.py",
+        "tests/consensus/test_network_identity.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -188,8 +226,12 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -197,20 +239,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check mainnet_identity_distinct is true: test_public_mainnet_identity_is_distinct_and_deterministic passes.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -230,6 +281,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "test_mainnet_consensus_profile_is_frozen asserts 600-second target and no legacy schedule.",
+          "check_id": "target_spacing_600"
+        }
+      ],
       "blocker": null,
       "category": "consensus_config",
       "command": [
@@ -237,6 +294,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -265,8 +325,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -274,20 +336,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check target_spacing_600 is true: test_mainnet_consensus_profile_is_frozen asserts 600-second target and no legacy schedule.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -306,6 +377,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "test_mainnet_consensus_profile_is_frozen asserts genesis_bits=0x1d1399ad.",
+          "check_id": "genesis_bits_1d1399ad"
+        }
+      ],
       "blocker": null,
       "category": "consensus_config",
       "command": [
@@ -313,6 +390,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -341,8 +421,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -350,20 +432,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check genesis_bits_1d1399ad is true: test_mainnet_consensus_profile_is_frozen asserts genesis_bits=0x1d1399ad.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -382,6 +473,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "test_mainnet_consensus_profile_is_frozen and test_mainnet_emission_ends_at_the_frozen_hard_cap assert the 11M cap.",
+          "check_id": "supply_cap_11m"
+        }
+      ],
       "blocker": null,
       "category": "economics_config",
       "command": [
@@ -389,6 +486,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -417,8 +517,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -426,20 +528,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check supply_cap_11m is true: test_mainnet_consensus_profile_is_frozen and test_mainnet_emission_ends_at_the_frozen_hard_cap assert the 11M cap.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -458,6 +569,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "test_mainnet_consensus_profile_is_frozen asserts initial miner subsidy is 50 CHC.",
+          "check_id": "initial_subsidy_50_chc"
+        }
+      ],
       "blocker": null,
       "category": "economics_config",
       "command": [
@@ -465,6 +582,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -493,8 +613,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -502,20 +624,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check initial_subsidy_50_chc is true: test_mainnet_consensus_profile_is_frozen asserts initial miner subsidy is 50 CHC.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -534,6 +665,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "profile and hard-cap tests assert 111000 interval and exact terminal emission.",
+          "check_id": "halving_111000_and_cap"
+        }
+      ],
       "blocker": null,
       "category": "economics_config",
       "command": [
@@ -541,6 +678,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -569,8 +709,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -578,20 +720,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check halving_111000_and_cap is true: profile and hard-cap tests assert 111000 interval and exact terminal emission.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -610,6 +761,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "test_mainnet_consensus_profile_is_frozen asserts maturity is 100 blocks.",
+          "check_id": "coinbase_maturity_100"
+        }
+      ],
       "blocker": null,
       "category": "consensus_config",
       "command": [
@@ -617,6 +774,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -645,8 +805,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -654,20 +816,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check coinbase_maturity_100 is true: test_mainnet_consensus_profile_is_frozen asserts maturity is 100 blocks.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -686,9 +857,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "consensus_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-005"
@@ -718,8 +893,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -727,16 +904,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -759,9 +944,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "transactions_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Fee accounting is correct in transaction outputs and miner coinbase.",
@@ -789,8 +978,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -798,16 +989,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -830,9 +1029,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "transactions_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Canonical UTXO validation and state transition are correct.",
@@ -860,8 +1063,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -869,16 +1074,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -901,9 +1114,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "transactions_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-B-CLOSURE"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-012"
@@ -933,8 +1150,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -942,16 +1161,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -974,9 +1201,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "recovery_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-RESTART"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Controlled restart preserves state and catches up over P2P.",
@@ -1004,8 +1235,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1013,16 +1246,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1045,9 +1286,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "sync_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-FULLSYNC"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "A node with an empty DB completes full sync from genesis over P2P.",
@@ -1075,8 +1320,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1084,16 +1331,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1116,6 +1371,12 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "mainnet profile tests assert PQ activation height zero and standard PQ transactions required.",
+          "check_id": "pq_active_from_genesis"
+        }
+      ],
       "blocker": null,
       "category": "pq_config",
       "command": [
@@ -1123,6 +1384,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -1151,8 +1415,12 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1160,20 +1428,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check pq_active_from_genesis is true: mainnet profile tests assert PQ activation height zero and standard PQ transactions required.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -1193,13 +1470,23 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "mainnet profile and network config tests assert canonical CHCQ output policy.",
+          "check_id": "chcq_required"
+        }
+      ],
       "blocker": null,
       "category": "pq_config",
       "command": [
         ".venv/bin/pytest",
         "-q",
         "tests/consensus/test_mainnet_profile.py",
-        "tests/config/test_network_config.py"
+        "tests/config/test_network_config.py",
+        "tests/node/test_mainnet_pq_end_to_end.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -1228,8 +1515,12 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1237,20 +1528,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check chcq_required is true: mainnet profile and network config tests assert canonical CHCQ output policy.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -1270,14 +1570,22 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "profile tests assert ML-DSA-44 signature scheme id 10.",
+          "check_id": "mldsa_scheme_10"
+        }
+      ],
       "blocker": null,
       "category": "pq_config",
       "command": [
         ".venv/bin/pytest",
         "-q",
         "tests/consensus/test_mainnet_profile.py",
-        "tests/config/test_network_config.py"
+        "tests/config/test_network_config.py",
+        "tests/node/test_mainnet_pq_end_to_end.py"
       ],
+      "command_evidence_refs": [],
       "cwd": ".",
       "dependencies": [],
       "description": "ML-DSA-44 uses scheme_id 10.",
@@ -1305,8 +1613,13 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [
+        "E-PREFLIGHT",
+        "E-MATURITY-PQ"
+      ],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1314,20 +1627,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check mldsa_scheme_10 is true: profile tests assert ML-DSA-44 signature scheme id 10.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -1347,9 +1669,14 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "pq_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MILESTONE-1",
+        "E-MILESTONE-10"
+      ],
       "cwd": ".",
       "dependencies": [
         "PQ-CFG-002"
@@ -1379,8 +1706,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1388,16 +1717,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1421,9 +1758,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "pq_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "PQ-CFG-001"
@@ -1453,8 +1794,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1462,16 +1805,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1494,9 +1845,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "pq_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-PQ-MULTI-INPUT"
+      ],
       "cwd": ".",
       "dependencies": [
         "PQ-RUN-002"
@@ -1526,8 +1881,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1535,16 +1892,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1567,9 +1932,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "pq_wallets",
       "command": null,
+      "command_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Mainnet miner wallet is ML-DSA-44/CHCQ and mounted read-only.",
@@ -1597,8 +1966,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1606,16 +1977,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1638,9 +2017,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "pq_wallets",
       "command": null,
+      "command_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Reward owner wallet is separate ML-DSA-44/CHCQ and mounted read-only.",
@@ -1668,8 +2051,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1677,16 +2062,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1709,9 +2102,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "pq_wallets",
       "command": null,
+      "command_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Reward attestation wallet is separate ML-DSA-44/CHCQ and mounted read-only.",
@@ -1739,8 +2136,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1748,16 +2147,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1780,9 +2187,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "negative_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-PQ-LEGACY-REJECTION"
+      ],
       "cwd": ".",
       "dependencies": [
         "PQ-CFG-001"
@@ -1812,8 +2223,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1821,16 +2234,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1853,9 +2274,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "negative_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-PQ-CROSS-NETWORK"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Mainnet rejects wrong-network wallets and cross-network replay/login signatures.",
@@ -1883,8 +2308,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1892,16 +2319,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1924,9 +2359,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "browser_wallet",
       "command": null,
+      "command_evidence_refs": [
+        "E-BROWSER",
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Browser Wallet creates ML-DSA-44 signatures for mainnet transactions.",
@@ -1954,8 +2394,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -1963,16 +2405,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -1996,9 +2446,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "browser_wallet",
       "command": null,
+      "command_evidence_refs": [
+        "E-BROWSER"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Signed-login uses ML-DSA-44 and network-bound domain separation.",
@@ -2026,8 +2480,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2035,16 +2491,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2067,9 +2531,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "maturity_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "CONS-CFG-008"
@@ -2099,8 +2567,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2108,16 +2578,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2140,9 +2618,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "maturity_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ",
+        "E-MATURITY-BOUNDARY"
+      ],
       "cwd": ".",
       "dependencies": [
         "CONS-CFG-008"
@@ -2172,8 +2655,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2181,16 +2666,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2214,9 +2707,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "transactions_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "PQ-RUN-002"
@@ -2246,8 +2743,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2255,16 +2754,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2287,9 +2794,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "transactions_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "TX-RUN-003"
@@ -2319,8 +2830,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2328,16 +2841,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2360,9 +2881,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "transactions_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "TX-RUN-004"
@@ -2392,8 +2917,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2401,16 +2928,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2433,9 +2968,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "transactions_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "TX-RUN-004"
@@ -2465,8 +3004,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2474,16 +3015,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2506,9 +3055,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "explorer_integration",
       "command": null,
+      "command_evidence_refs": [
+        "E-EXPLORER",
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "TX-RUN-004"
@@ -2538,8 +3092,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2547,16 +3103,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2580,9 +3144,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "fault_recovery",
       "command": null,
+      "command_evidence_refs": [
+        "E-RESTART"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Controlled node restart and persistence recovery.",
@@ -2610,8 +3178,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2619,16 +3189,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2651,9 +3229,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "fault_recovery",
       "command": null,
+      "command_evidence_refs": [
+        "E-RESTART"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-001"
@@ -2683,8 +3265,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2692,16 +3276,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2724,9 +3316,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "fault_recovery",
       "command": null,
+      "command_evidence_refs": [
+        "E-FULLSYNC"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Full sync from an empty database without snapshot or DB copy.",
@@ -2754,8 +3350,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2763,16 +3361,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2795,9 +3401,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A",
+        "E-FAULT-READY"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Docker partition provides verified bidirectional P2P isolation.",
@@ -2825,8 +3436,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2834,16 +3447,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2867,9 +3488,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-004"
@@ -2899,8 +3524,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2908,16 +3535,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -2940,9 +3575,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-005"
@@ -2972,8 +3611,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -2981,16 +3622,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3013,9 +3662,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-006"
@@ -3045,8 +3698,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3054,16 +3709,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3086,9 +3749,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-007"
@@ -3118,8 +3785,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3127,16 +3796,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3159,9 +3836,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-007"
@@ -3191,8 +3872,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3200,16 +3883,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3232,9 +3923,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-009"
@@ -3264,8 +3959,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3273,16 +3970,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3305,9 +4010,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-A"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-010"
@@ -3337,8 +4046,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3346,16 +4057,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3378,9 +4097,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "partition_reorg",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-B-CLOSURE"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-011"
@@ -3410,8 +4133,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3419,16 +4144,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3451,9 +4184,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "fault_recovery",
       "command": null,
+      "command_evidence_refs": [
+        "E-SIGKILL-RECOVERY"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "SIGKILL crash recovery preserves DB integrity and canonical state.",
@@ -3481,8 +4218,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3490,16 +4229,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3522,9 +4269,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "storage_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-B-CLOSURE",
+        "E-SIGKILL-RECOVERY"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-012",
@@ -3555,8 +4307,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3564,16 +4318,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3597,9 +4359,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "fault_harness",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-STATE-MODEL"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Fault monitor lifecycle is session-owned, health-gated, and reusable across consecutive fault sessions without manual cleanup.",
@@ -3627,8 +4393,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3636,16 +4404,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3668,9 +4444,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "p2p_reliability",
       "command": null,
+      "command_evidence_refs": [
+        "E-P2P-RECONNECT",
+        "E-P2P-RECONNECT-LIVE"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "After shared-network restoration, nodes resume P2P handshakes and reconnect scheduling without requiring a process restart.",
@@ -3698,8 +4479,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3707,16 +4490,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3740,9 +4531,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "fault_harness",
       "command": null,
+      "command_evidence_refs": [
+        "E-FAULT-ACTIVATION-ATOMICITY"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-OPS-001"
@@ -3772,8 +4567,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3781,16 +4578,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -3813,12 +4618,21 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "snapshot export metadata, anchor and UTXO state roundtrip from one consistent export.",
+          "check_id": "snapshot_metadata_same_export_state"
+        }
+      ],
       "blocker": null,
       "category": "snapshot_code",
       "command": [
         ".venv/bin/pytest",
         "-q",
         "tests/node/test_snapshots.py"
+      ],
+      "command_evidence_refs": [
+        "E-SNAPSHOT-CODE"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -3847,8 +4661,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3856,20 +4672,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check snapshot_metadata_same_export_state is true: snapshot export metadata, anchor and UTXO state roundtrip from one consistent export.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -3888,12 +4713,21 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "tests cover signed acceptance and rejection of unsigned, invalid, unknown-signer and tampered snapshots.",
+          "check_id": "snapshot_signature_trust_enforced"
+        }
+      ],
       "blocker": null,
       "category": "snapshot_code",
       "command": [
         ".venv/bin/pytest",
         "-q",
         "tests/node/test_snapshots.py"
+      ],
+      "command_evidence_refs": [
+        "E-SNAPSHOT-CODE"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -3922,8 +4756,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -3931,20 +4767,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check snapshot_signature_trust_enforced is true: tests cover signed acceptance and rejection of unsigned, invalid, unknown-signer and tampered snapshots.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -3963,9 +4808,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "snapshot_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-CFG-002"
@@ -3995,8 +4844,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4004,16 +4855,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4036,9 +4895,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "snapshot_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-CFG-001"
@@ -4068,8 +4931,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4077,16 +4942,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4109,9 +4982,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "snapshot_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-CFG-001",
@@ -4142,8 +5019,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4151,16 +5030,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4183,9 +5070,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "snapshot_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-REHEARSAL",
+        "E-SNAPSHOT-SIGNER-SECURITY"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-RUN-001"
@@ -4215,8 +5107,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4224,16 +5118,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4257,9 +5159,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "snapshot_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-REHEARSAL"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-RUN-001"
@@ -4289,8 +5195,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4298,16 +5206,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4330,9 +5246,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "snapshot_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-REHEARSAL",
+        "E-FULLSYNC"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-RUN-003"
@@ -4362,8 +5283,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4371,16 +5294,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4404,9 +5335,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "snapshot_operations",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-FALLBACK"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-RUN-003"
@@ -4436,8 +5371,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4445,16 +5382,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4477,6 +5422,12 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "profile tests assert reward activation 1000, warmup 2 epochs, epoch length 100 and maximum 25 nodes.",
+          "check_id": "reward_activation_and_warmup"
+        }
+      ],
       "blocker": null,
       "category": "reward_config",
       "command": [
@@ -4484,6 +5435,9 @@
         "-q",
         "tests/consensus/test_mainnet_profile.py",
         "tests/config/test_network_config.py"
+      ],
+      "command_evidence_refs": [
+        "E-CONFIG"
       ],
       "cwd": ".",
       "dependencies": [],
@@ -4512,8 +5466,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4521,20 +5477,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check reward_activation_and_warmup is true: profile tests assert reward activation 1000, warmup 2 epochs, epoch length 100 and maximum 25 nodes.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -4553,9 +5518,14 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "reward_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-REWARD-REGISTRATION",
+        "E-REWARD-LIFECYCLE"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-CFG-001"
@@ -4585,8 +5555,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4594,16 +5566,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4627,9 +5607,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "reward_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-PREFLIGHT",
+        "E-REWARD-REGISTRATION"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-RUN-001"
@@ -4659,8 +5644,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4668,16 +5655,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4701,9 +5696,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "reward_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-REWARD-REGISTRATION",
+        "E-REWARD-LIFECYCLE"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-RUN-002"
@@ -4733,8 +5733,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4742,16 +5744,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4775,9 +5785,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "reward_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-REWARD-LIFECYCLE"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-RUN-003"
@@ -4807,8 +5821,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4816,16 +5832,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4848,9 +5872,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "reward_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-REWARD-LIFECYCLE"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-RUN-004"
@@ -4880,8 +5908,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4889,16 +5919,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4921,9 +5959,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "reward_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-REWARD-LIFECYCLE",
+        "E-REWARD-RESTART"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-RUN-004"
@@ -4953,8 +5996,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -4962,16 +6007,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -4995,9 +6048,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "reward_runtime",
       "command": null,
+      "command_evidence_refs": [
+        "E-REWARD-REORG"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-RUN-004",
@@ -5028,8 +6085,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5037,16 +6096,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5069,9 +6136,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "final_convergence",
       "command": null,
+      "command_evidence_refs": [
+        "E-FINAL-A-E"
+      ],
       "cwd": ".",
       "dependencies": [
         "FAULT-RUN-011",
@@ -5104,8 +6175,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5113,16 +6186,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5145,12 +6226,21 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "Chrome build succeeds using the checked-in lockfile.",
+          "check_id": "chrome_locked_production_build"
+        }
+      ],
       "blocker": null,
       "category": "browser_wallet",
       "command": [
         "npm",
         "run",
         "build:chrome"
+      ],
+      "command_evidence_refs": [
+        "E-BROWSER"
       ],
       "cwd": "apps/browser-wallet",
       "dependencies": [],
@@ -5179,8 +6269,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5188,20 +6280,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check chrome_locked_production_build is true: Chrome build succeeds using the checked-in lockfile.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -5220,12 +6321,21 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "Firefox build succeeds using the checked-in lockfile.",
+          "check_id": "firefox_locked_production_build"
+        }
+      ],
       "blocker": null,
       "category": "browser_wallet",
       "command": [
         "npm",
         "run",
         "build:firefox"
+      ],
+      "command_evidence_refs": [
+        "E-BROWSER"
       ],
       "cwd": "apps/browser-wallet",
       "dependencies": [],
@@ -5254,8 +6364,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5263,20 +6375,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check firefox_locked_production_build is true: Firefox build succeeds using the checked-in lockfile.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -5295,6 +6416,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "cross_network_isolation and network_support test files pass.",
+          "check_id": "cross_network_identity_rejected"
+        }
+      ],
       "blocker": null,
       "category": "browser_wallet",
       "command": [
@@ -5303,6 +6430,9 @@
         "--",
         "tests/unit/cross_network_isolation.test.ts",
         "tests/unit/network_support.test.ts"
+      ],
+      "command_evidence_refs": [
+        "E-BROWSER"
       ],
       "cwd": "apps/browser-wallet",
       "dependencies": [],
@@ -5331,8 +6461,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5340,20 +6472,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check cross_network_identity_rejected is true: cross_network_isolation and network_support test files pass.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -5372,6 +6513,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "network_support test file passes the mainnet endpoint selection assertions.",
+          "check_id": "no_hardcoded_testnet_api"
+        }
+      ],
       "blocker": null,
       "category": "browser_wallet",
       "command": [
@@ -5379,6 +6526,9 @@
         "test",
         "--",
         "tests/unit/network_support.test.ts"
+      ],
+      "command_evidence_refs": [
+        "E-BROWSER"
       ],
       "cwd": "apps/browser-wallet",
       "dependencies": [],
@@ -5407,8 +6557,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5416,20 +6568,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check no_hardcoded_testnet_api is true: network_support test file passes the mainnet endpoint selection assertions.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -5448,9 +6609,14 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "depends on PQ-BW-001 and PQ-BW-002 runtime evidence",
       "category": "browser_wallet",
       "command": null,
+      "command_evidence_refs": [
+        "E-BROWSER",
+        "E-MATURITY-PQ"
+      ],
       "cwd": "apps/browser-wallet",
       "dependencies": [
         "PQ-BW-001",
@@ -5481,8 +6647,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_RUNTIME_DEPENDENCIES",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5490,16 +6658,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5523,6 +6699,12 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "provider_manifest tests pass for Chrome and Firefox manifests.",
+          "check_id": "browser_permissions_audited"
+        }
+      ],
       "blocker": null,
       "category": "browser_wallet",
       "command": [
@@ -5530,6 +6712,9 @@
         "test",
         "--",
         "tests/unit/provider_manifest.test.ts"
+      ],
+      "command_evidence_refs": [
+        "E-BROWSER"
       ],
       "cwd": "apps/browser-wallet",
       "dependencies": [],
@@ -5558,8 +6743,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5567,20 +6754,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check browser_permissions_audited is true: provider_manifest tests pass for Chrome and Firefox manifests.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -5599,9 +6795,14 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "browser_wallet",
       "command": null,
+      "command_evidence_refs": [
+        "E-BW-CLEAN-FIREFOX",
+        "E-BW-CLEAN-CHROMIUM"
+      ],
       "cwd": ".",
       "dependencies": [
         "BW-BUILD-001",
@@ -5632,8 +6833,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5641,16 +6844,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5674,9 +6885,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "browser_wallet",
       "command": null,
+      "command_evidence_refs": [
+        "E-BW-MIGRATION-NOT-APPLICABLE"
+      ],
       "cwd": ".",
       "dependencies": [
         "BW-BUILD-001",
@@ -5707,8 +6922,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5716,16 +6933,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5748,9 +6973,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "explorer_integration",
       "command": null,
+      "command_evidence_refs": [
+        "E-EXPLORER"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Chipcoin Central verifies API network and fails closed on mismatch or missing network.",
@@ -5778,8 +7007,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5787,16 +7018,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5819,9 +7058,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "explorer_integration",
       "command": null,
+      "command_evidence_refs": [
+        "E-EXPLORER"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Private mainnet Explorer shows MAINNET indicator and real block/coinbase/CHCQ data.",
@@ -5849,8 +7092,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5858,16 +7103,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5890,9 +7143,14 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "explorer_integration",
       "command": null,
+      "command_evidence_refs": [
+        "E-EXPLORER",
+        "E-MATURITY-PQ"
+      ],
       "cwd": ".",
       "dependencies": [
         "TX-EXP-001"
@@ -5922,8 +7180,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -5931,16 +7191,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -5964,9 +7232,15 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "explorer_integration",
       "command": null,
+      "command_evidence_refs": [
+        "E-EXPLORER",
+        "E-REWARD-LIFECYCLE",
+        "E-EXPLORER-REWARD"
+      ],
       "cwd": ".",
       "dependencies": [
         "REWARD-RUN-004"
@@ -5996,8 +7270,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6005,16 +7281,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6039,9 +7323,13 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [],
       "blocker": "requires clean frozen commit, final genesis, and immutable release artifacts",
       "category": "release_integrity",
       "command": null,
+      "command_evidence_refs": [
+        "E-RC-FINALIZATION"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "RC source has an immutable version and Git commit/tag.",
@@ -6069,8 +7357,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_SOURCE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6078,16 +7368,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6110,9 +7408,13 @@
       "revalidation_class": "RELEASE_FINALIZATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires clean frozen commit, final genesis, and immutable release artifacts",
       "category": "release_integrity",
       "command": null,
+      "command_evidence_refs": [
+        "E-RC-FINALIZATION"
+      ],
       "cwd": ".",
       "dependencies": [
         "SEC-REL-001"
@@ -6142,8 +7444,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_SOURCE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6151,16 +7455,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6183,9 +7495,14 @@
       "revalidation_class": "RELEASE_FINALIZATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires clean frozen commit, final genesis, and immutable release artifacts",
       "category": "release_integrity",
       "command": null,
+      "command_evidence_refs": [
+        "apps/browser-wallet/package-lock.json",
+        "E-BROWSER"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Dependency lockfiles are present and used by builds.",
@@ -6213,8 +7530,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_SOURCE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6222,16 +7541,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6255,9 +7582,13 @@
       "revalidation_class": "RELEASE_FINALIZATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires clean frozen commit, final genesis, and immutable release artifacts",
       "category": "release_integrity",
       "command": null,
+      "command_evidence_refs": [
+        "E-RC-FINALIZATION"
+      ],
       "cwd": ".",
       "dependencies": [
         "SEC-REL-001"
@@ -6287,8 +7618,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_SOURCE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6296,16 +7629,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6328,9 +7669,13 @@
       "revalidation_class": "RELEASE_FINALIZATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires clean frozen commit, final genesis, and immutable release artifacts",
       "category": "release_integrity",
       "command": null,
+      "command_evidence_refs": [
+        "E-RC-FINALIZATION"
+      ],
       "cwd": ".",
       "dependencies": [
         "SEC-REL-001",
@@ -6362,8 +7707,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_SOURCE_FREEZE",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6371,16 +7718,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6403,9 +7758,13 @@
       "revalidation_class": "RELEASE_FINALIZATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "secret_hygiene",
       "command": null,
+      "command_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "No secrets/wallet seeds are tracked in Git or copied into Docker images/layers.",
@@ -6433,8 +7792,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6442,16 +7803,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6474,9 +7843,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "secret_hygiene",
       "command": null,
+      "command_evidence_refs": [
+        "E-PREFLIGHT"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Runtime wallet mounts are read-only, checksummed, separate from RW runtime and absent from logs/backups/snapshots.",
@@ -6504,8 +7877,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6513,16 +7888,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6545,9 +7928,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "requires the isolated definitive-mainnet chain and reviewed production orchestrator",
       "category": "secret_hygiene",
       "command": null,
+      "command_evidence_refs": [
+        "E-SNAPSHOT-SIGNER-SECURITY"
+      ],
       "cwd": ".",
       "dependencies": [
         "SNAP-CFG-002"
@@ -6577,8 +7964,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "BLOCKED_FINAL_CHAIN",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6586,16 +7975,24 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6618,6 +8015,12 @@
       "revalidation_class": "ISOLATED_CHAIN_RUNTIME"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "network config and identity tests pass the chain/network isolation assertions.",
+          "check_id": "node_identity_separation"
+        }
+      ],
       "blocker": null,
       "category": "configuration_security",
       "command": [
@@ -6626,6 +8029,7 @@
         "tests/config/test_network_config.py",
         "tests/consensus/test_network_identity.py"
       ],
+      "command_evidence_refs": [],
       "cwd": ".",
       "dependencies": [],
       "description": "Mainnet/testnet DB, ports, chain identity, APIs and wallet state are separated and validated.",
@@ -6653,8 +8057,14 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [
+        "E-PREFLIGHT",
+        "E-BROWSER",
+        "E-EXPLORER"
+      ],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6662,20 +8072,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check node_identity_separation is true: network config and identity tests pass the chain/network isolation assertions.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -6696,12 +8115,19 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [
+        {
+          "assertion": "production dependency audit exits zero with no unresolved production-reachable blocker.",
+          "check_id": "production_dependencies_reviewed"
+        }
+      ],
       "blocker": null,
       "category": "dependency_security",
       "command": [
         ".venv/bin/python",
         "scripts/audit-public-mainnet-npm-production.py"
       ],
+      "command_evidence_refs": [],
       "cwd": ".",
       "dependencies": [],
       "description": "Production dependency vulnerabilities are reviewed for reachability and no unresolved production-reachable blocker remains.",
@@ -6729,8 +8155,12 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "AUTOMATED_PRE_FREEZE",
+      "external_evidence_refs": [
+        "E-EXPLORER"
+      ],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6738,20 +8168,29 @@
       "manual_attestation": {
         "required": false,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
         "command exits zero when an automated command exists",
+        "automated contract check production_dependencies_reviewed is true: production dependency audit exits zero with no unresolved production-reachable blocker.",
         "all canonical evidence references are present and hash-verified",
         "all gate-specific checks in the evidence are true",
         "network, chain, genesis, source commit and tree identity match this run"
@@ -6770,9 +8209,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "dependency_security",
       "command": null,
+      "command_evidence_refs": [
+        "E-EXPLORER"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Known residual vulnerabilities and deferred major upgrades are documented with reachability and risk.",
@@ -6800,8 +8243,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6809,16 +8254,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6841,9 +8294,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "runbooks",
       "command": null,
+      "command_evidence_refs": [
+        "E-RUNBOOK"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Mainnet first-node startup and joining-node procedures are documented.",
@@ -6871,8 +8328,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6880,16 +8339,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6912,9 +8379,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "runbooks",
       "command": null,
+      "command_evidence_refs": [
+        "E-RUNBOOK"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Backup, restore, full-sync and snapshot-bootstrap procedures are documented.",
@@ -6942,8 +8413,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -6951,16 +8424,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -6983,9 +8464,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "runbooks",
       "command": null,
+      "command_evidence_refs": [
+        "E-RUNBOOK"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Corrupted DB, stuck/out-of-sync node and accidental-fork recovery procedures are documented.",
@@ -7013,8 +8498,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -7022,16 +8509,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -7054,9 +8549,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "runbooks",
       "command": null,
+      "command_evidence_refs": [
+        "E-RUNBOOK"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Safe shutdown, emergency stop and evidence/log collection procedures are documented.",
@@ -7084,8 +8583,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -7093,16 +8594,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -7125,9 +8634,13 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     },
     {
+      "automated_contract": [],
       "blocker": "human review and signed attestation required; runner must not auto-PASS",
       "category": "runbooks",
       "command": null,
+      "command_evidence_refs": [
+        "E-RUNBOOK"
+      ],
       "cwd": ".",
       "dependencies": [],
       "description": "Wallet/reward key compromise and snapshot signing-key compromise procedures are documented.",
@@ -7155,8 +8668,10 @@
         "test_only_evidence_forbidden": true
       },
       "execution_mode": "MANUAL_ATTESTATION",
+      "external_evidence_refs": [],
       "fail_criteria": [
         "the tested property is demonstrably false or command exits nonzero",
+        "any gate-specific automated contract check is false or missing",
         "identity mismatch or TEST-ONLY evidence can never produce PASS",
         "missing/incomplete evidence produces BLOCKED, not PASS"
       ],
@@ -7164,16 +8679,24 @@
       "manual_attestation": {
         "required": true,
         "required_fields": [
+          "schema_version",
           "gate_id",
-          "reviewer",
+          "signer_key_id",
+          "signer_identity",
           "role",
           "signed_at",
+          "source_commit",
+          "source_tree_sha256",
+          "release_tag",
+          "genesis_hash",
+          "evidence",
+          "outcome",
           "statement",
-          "statement_sha256",
-          "evidence_sha256",
-          "outcome"
+          "signature"
         ],
-        "runner_auto_pass": false
+        "runner_auto_pass": false,
+        "signature_algorithm": "Ed25519",
+        "signature_payload": "canonical-json-of-attestation-without-signature"
       },
       "pass_criteria": [
         "all dependencies have verified PASS evidence",
@@ -7196,6 +8719,8 @@
       "revalidation_class": "SOURCE_REVALIDATION"
     }
   ],
+  "manual_attestation_signature": "Ed25519",
+  "manual_attestation_trust_store": "docs/releases/rc-gate-trust-store.json",
   "manual_attestations_never_auto_pass": true,
   "matrix_sha256_required_at_execution": true,
   "schema_version": 1

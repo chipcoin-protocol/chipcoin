@@ -15,6 +15,14 @@ from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.node.service import NodeService
 
 
+def _source_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    source_root = str(Path(__file__).resolve().parents[2] / "src")
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = source_root if not existing else os.pathsep.join((source_root, existing))
+    return env
+
+
 def _mine_block(block: Block) -> Block:
     for nonce in range(2_000_000):
         header = replace(block.header, nonce=nonce)
@@ -55,7 +63,7 @@ def test_snapshot_signer_private_key_canary_does_not_leak() -> None:
             str(key_path),
         ]
         command_evidence_path.write_text(json.dumps(command), encoding="utf-8")
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=os.environ.copy())
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_source_environment())
         try:
             deadline = time.monotonic() + 0.8
             while not Path(f"/proc/{process.pid}/cmdline").exists() and time.monotonic() < deadline:
@@ -130,6 +138,7 @@ def test_snapshot_signer_produces_deterministic_output_for_identical_input() -> 
                 check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=_source_environment(),
             )
             assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
 

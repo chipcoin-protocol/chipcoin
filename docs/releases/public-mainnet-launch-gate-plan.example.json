@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "scope": "MAINNET_RC",
+  "source_commit": "FILL_AFTER_RC3_SOURCE_FREEZE",
+  "source_tree_sha256": "FILL_AFTER_RC3_SOURCE_FREEZE",
+  "working_tree_clean": true,
+  "identity": {
+    "network": "mainnet",
+    "chain_id": "chipcoin-mainnet-1",
+    "genesis_hash": "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d"
+  },
+  "event_journal": "events.jsonl",
+  "gates": {}
+}
