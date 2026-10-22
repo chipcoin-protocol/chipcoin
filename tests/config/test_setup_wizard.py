@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from chipcoin.node.service import NodeService
 
 
@@ -145,21 +147,67 @@ def test_mainnet_local_wizard_endpoints_use_host_and_container_ports() -> None:
     assert env_values["MINING_NODE_URLS"] == "http://node:8080"
 
 
-def test_mainnet_wallet_import_writes_canonical_pq_wallet(monkeypatch, tmp_path: Path) -> None:
+def test_mainnet_wallet_import_writes_canonical_pq_wallet(monkeypatch, tmp_path: Path, capfd) -> None:
     wizard = load_wizard_module()
     wallet_path = tmp_path / "mainnet-wallet.json"
-    monkeypatch.setattr(wizard.getpass, "getpass", lambda prompt="": "42" * 32)
+    secret = "42" * 32
+    monkeypatch.setattr(wizard.getpass, "getpass", lambda prompt="": secret)
 
-    address, secret_hex, _public_key_hex = wizard._handle_wallet("import", wallet_path, network="mainnet")
+    address, public_key_hex = wizard._handle_wallet("import", wallet_path, network="mainnet")
     payload = __import__("json").loads(wallet_path.read_text(encoding="utf-8"))
 
     assert address.startswith("CHCQ")
-    assert secret_hex == "42" * 32
+    assert public_key_hex
     assert payload["scheme_id"] == 10
     assert payload["scheme_name"] == "mldsa44"
     assert payload["address_kind"] == "pq"
-    assert payload["private_seed_hex"] == "42" * 32
+    assert payload["private_seed_hex"] == secret
     assert "private_key_hex" not in payload
+    assert wallet_path.stat().st_mode & 0o777 == 0o600
+
+    env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "mainnet")
+    wizard._apply_setup_mode(env_values, "local", "miner", network="mainnet")
+    wizard._print_success(
+        "miner", "mainnet", "foreground", tmp_path / ".env.mainnet",
+        wallet_path, address, None, None, None, False, "local", env_values, [],
+    )
+    captured = capfd.readouterr()
+    assert secret not in captured.out
+    assert secret not in captured.err
+    assert "private key:" not in captured.out.lower()
+
+
+def test_invalid_wallet_key_error_does_not_echo_secret(monkeypatch, tmp_path: Path, capfd) -> None:
+    wizard = load_wizard_module()
+    secret = "RC6_PRIVATE_SENTINEL_NOT_FOR_OUTPUT"
+    monkeypatch.setattr(wizard.getpass, "getpass", lambda prompt="": secret)
+
+    try:
+        wizard._handle_wallet("import", tmp_path / "wallet.json", network="mainnet")
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("Invalid wallet material must be rejected.")
+
+    captured = capfd.readouterr()
+    assert secret not in captured.out
+    assert secret not in captured.err
+
+
+def test_wizard_rejects_credential_bearing_urls_without_echo(monkeypatch, capfd) -> None:
+    wizard = load_wizard_module()
+    credential_url = "https://operator-secret.example/?access_token=RC6_URL_SECRET_SENTINEL"
+    answers = iter([credential_url, "https://bootstrap.example"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert wizard._ask_http_url("Bootstrap URL", "https://default.example") == "https://bootstrap.example"
+    with pytest.raises(ValueError):
+        wizard._parse_http_urls(credential_url)
+    captured = capfd.readouterr()
+    assert "RC6_URL_SECRET_SENTINEL" not in captured.out
+    assert "RC6_URL_SECRET_SENTINEL" not in captured.err
+    assert "URLs containing credentials are not accepted." in captured.out
 
 
 def test_testnet_env_path_defaults_to_standard_env_file(monkeypatch) -> None:
@@ -178,6 +226,54 @@ def test_devnet_env_path_defaults_to_dedicated_legacy_env_file(monkeypatch) -> N
     env_path = wizard._ask_env_path("devnet")
 
     assert env_path == REPO_ROOT / ".env.devnet"
+
+
+def test_mainnet_env_path_defaults_to_distinct_mainnet_file(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+
+    assert wizard._ask_env_path("mainnet") == REPO_ROOT / ".env.mainnet"
+
+
+def test_unknown_network_has_no_environment_path_fallback(monkeypatch, capfd) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+
+    try:
+        wizard._ask_env_path("unknown")
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("Unknown networks must not fall back to a network env file.")
+
+    assert "Unsupported network" in capfd.readouterr().err
+
+
+def test_network_prompt_keeps_testnet_default_but_accepts_explicit_mainnet(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    choices = {"mainnet": "Mainnet", "devnet": "Devnet", "testnet": "Testnet"}
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    assert wizard._ask_choice("network", choices, "testnet") == "testnet"
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "mainnet")
+    assert wizard._ask_choice("network", choices, "testnet") == "mainnet"
+
+
+def test_mainnet_env_overwrite_requires_explicit_confirmation(tmp_path: Path, monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_path = tmp_path / ".env.mainnet"
+    env_path.write_text("preserve-me\n", encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+
+    try:
+        wizard._write_env(dict(wizard.DEFAULTS), env_path)
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("Existing configuration must not be overwritten implicitly.")
+
+    assert env_path.read_text(encoding="utf-8") == "preserve-me\n"
 
 
 def test_detect_cpu_core_count_falls_back_to_one(monkeypatch) -> None:
@@ -269,10 +365,8 @@ def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
         REPO_ROOT / ".env",
         None,
         None,
-        None,
         Path("/var/lib/chipcoin/wallets/testnet-reward-node-wallet.json"),
         "CHCCtestrewardaddress",
-        None,
         "02" + ("11" * 32),
         True,
         "quick",
@@ -495,12 +589,11 @@ def test_configure_reward_node_sets_reward_automation_env_and_writes_wallet(monk
         )
         monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-        wallet_path, wallet_address, wallet_private_key_hex, wallet_public_key_hex = wizard._configure_reward_node(env_values, setup_mode="quick")
+        wallet_path, wallet_address, wallet_public_key_hex = wizard._configure_reward_node(env_values, setup_mode="quick")
 
         assert wallet_path == reward_wallet_path
         assert reward_wallet_path.exists()
         assert wallet_address.startswith("CHCC")
-        assert len(wallet_private_key_hex) == 64
         assert wallet_public_key_hex
         assert env_values["REWARD_NODE_AUTO_NODE_ID"] == "reward-node-test"
         assert env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] == str(reward_wallet_path)

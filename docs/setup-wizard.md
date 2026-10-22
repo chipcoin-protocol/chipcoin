@@ -10,10 +10,11 @@ Run it from the repository root:
 python3 scripts/setup/wizard.py
 ```
 
-The wizard writes a local `.env` in the repository root by default. It does not
-change the protocol, and it does not modify public defaults in the repository.
-Devnet remains selectable, but is treated as an explicit legacy/development
-profile.
+The wizard writes a network-specific environment file by default: `.env` for
+testnet, `.env.devnet` for devnet, and `.env.mainnet` for mainnet. Network
+selection remains explicit; pressing Enter at the network prompt selects
+testnet, not mainnet. Devnet remains selectable as an explicit
+legacy/development profile.
 
 The wizard is now Docker-first:
 
@@ -22,6 +23,8 @@ The wizard is now Docker-first:
 - it prepares the node database before the first `docker compose up`
 - it does not start services automatically
 - it ends by printing the exact commands the operator should run next
+- it never prints private keys, seeds, or credentials; wallet files are written
+  with owner-only permissions
 - it can now prepare either a passive node or a reward-participating node
 - it offers explicit roles for full node, miner, and reward node
 

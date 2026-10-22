@@ -11,12 +11,14 @@ import os
 import re
 import socket
 import shutil
+import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import NamedTuple
 from urllib import error, request
+from urllib.parse import parse_qsl, urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
@@ -178,10 +180,8 @@ def main() -> int:
 
     miner_wallet_path: Path | None = None
     miner_wallet_address: str | None = None
-    miner_wallet_private_key_hex: str | None = None
     reward_wallet_path: Path | None = None
     reward_wallet_address: str | None = None
-    reward_wallet_private_key_hex: str | None = None
     reward_wallet_public_key_hex: str | None = None
     reward_node_enabled = False
     if role in {"miner", "both"}:
@@ -192,7 +192,7 @@ def main() -> int:
         )
         miner_wallet_path = Path(WALLET_PATH)
         _prepare_wallet_path(miner_wallet_path)
-        miner_wallet_address, miner_wallet_private_key_hex, _miner_wallet_public_key_hex = _handle_wallet(wallet_mode, miner_wallet_path, network=network)
+        miner_wallet_address, _miner_wallet_public_key_hex = _handle_wallet(wallet_mode, miner_wallet_path, network=network)
 
     env_values = dict(DEFAULTS)
     _apply_network_defaults(env_values, network)
@@ -213,7 +213,7 @@ def main() -> int:
                 "passive",
             ) == "reward"
         if reward_node_enabled:
-            reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex = _configure_reward_node(
+            reward_wallet_path, reward_wallet_address, reward_wallet_public_key_hex = _configure_reward_node(
                 env_values,
                 setup_mode=setup_mode,
                 network=network,
@@ -231,10 +231,8 @@ def main() -> int:
         env_path,
         miner_wallet_path,
         miner_wallet_address,
-        miner_wallet_private_key_hex,
         reward_wallet_path,
         reward_wallet_address,
-        reward_wallet_private_key_hex,
         reward_wallet_public_key_hex,
         reward_node_enabled,
         setup_mode,
@@ -271,7 +269,14 @@ def _ask_choice(prompt: str, options: dict[str, str], default: str) -> str:
 
 
 def _ask_env_path(network: str) -> Path:
-    default_path = REPO_ROOT / (".env" if network == "testnet" else ".env.devnet")
+    default_names = {
+        "testnet": ".env",
+        "devnet": ".env.devnet",
+        "mainnet": ".env.mainnet",
+    }
+    if network not in default_names:
+        _die("Unsupported network for environment file selection.")
+    default_path = REPO_ROOT / default_names[network]
     answer = input(f"Where should the environment file be written? [{default_path}]: ").strip()
     path = Path(answer) if answer else default_path
     if not path.is_absolute():
@@ -285,7 +290,7 @@ def _parse_peer_list(value: str) -> list[str]:
         if not candidate:
             continue
         host, sep, port = candidate.rpartition(":")
-        if not sep or not host or not port.isdigit():
+        if not sep or not host or "@" in host or not port.isdigit():
             raise ValueError("Expected host:port entries separated by commas or spaces.")
         if candidate not in peers:
             peers.append(candidate)
@@ -312,8 +317,11 @@ def _ask_http_url(prompt: str, default: str) -> str:
         answer = input(f"{prompt} [{default}]: ").strip()
         if not answer:
             return default
-        if answer.startswith(("http://", "https://")):
+        if answer.startswith(("http://", "https://")) and not _url_contains_credentials(answer):
             return answer
+        if answer.startswith(("http://", "https://")):
+            print("URLs containing credentials are not accepted.")
+            continue
         print("Invalid URL. Expected http://host or https://host.")
 
 
@@ -450,7 +458,7 @@ def _ask_optional_peer(prompt: str, default: str) -> str:
         if not answer:
             return default
         host, sep, port = answer.rpartition(":")
-        if sep and host and port.isdigit():
+        if sep and host and "@" not in host and port.isdigit():
             return answer
         print("Invalid peer format. Expected host:port.")
 
@@ -462,10 +470,25 @@ def _parse_http_urls(value: str) -> list[str]:
             continue
         if not candidate.startswith(("http://", "https://")):
             raise ValueError("expected http:// or https:// URLs separated by commas or spaces")
+        if _url_contains_credentials(candidate):
+            raise ValueError("URLs containing credentials are not accepted")
         normalized = candidate.rstrip("/")
         if normalized not in urls:
             urls.append(normalized)
     return urls
+
+
+def _url_contains_credentials(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return True
+    sensitive_query_names = {"access_token", "api_key", "apikey", "auth", "authorization", "password", "secret", "token"}
+    return bool(
+        parsed.username
+        or parsed.password
+        or any(name.lower() in sensitive_query_names for name, _ in parse_qsl(parsed.query, keep_blank_values=True))
+    )
 
 
 def _should_offer_runtime_sudo(path: Path) -> bool:
@@ -579,7 +602,7 @@ def _default_reward_registration_peer(env_values: dict[str, str]) -> str:
     return f"127.0.0.1:{env_values.get('NODE_P2P_BIND_PORT', '18444')}"
 
 
-def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str, network: str = "testnet") -> tuple[Path, str, str, str]:
+def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str, network: str = "testnet") -> tuple[Path, str, str]:
     reward_wallet_mode = _ask_choice(
         "How should the reward-node wallet be handled?",
         {"generate": "Generate new wallet", "import": "Import existing private key"},
@@ -587,7 +610,7 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str, netwo
     )
     reward_wallet_path = Path(REWARD_WALLET_PATH)
     _prepare_wallet_path(reward_wallet_path)
-    reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path, network=network)
+    reward_wallet_address, reward_wallet_public_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path, network=network)
     env_values["REWARD_NODE_AUTO_NODE_ID"] = _ask_reward_node_id(_default_reward_node_id())
     default_declared_host = (
         env_values.get("NODE_PUBLIC_HOST", "").strip()
@@ -605,7 +628,7 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str, netwo
     env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] = str(reward_wallet_path)
     env_values["REWARD_NODE_AUTO_RENEW_ENABLED"] = "true"
     env_values["REWARD_NODE_AUTO_ATTEST_ENABLED"] = "true"
-    return reward_wallet_path, reward_wallet_address, reward_wallet_private_key_hex, reward_wallet_public_key_hex
+    return reward_wallet_path, reward_wallet_address, reward_wallet_public_key_hex
 
 
 def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
@@ -859,7 +882,7 @@ def _prepare_wallet_path(wallet_path: Path) -> None:
             _die("Setup aborted because the wallet file would be overwritten.")
 
 
-def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testnet") -> tuple[str, str, str]:
+def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testnet") -> tuple[str, str]:
     require_pq = network == "mainnet"
     if wallet_mode == "generate":
         wallet_key = generate_wallet_key(scheme="mldsa44" if require_pq else "secp256k1")
@@ -873,8 +896,8 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testn
                 if require_pq
                 else wallet_key_from_private_key(parse_private_key_hex(private_key_hex))
             )
-        except Exception as exc:  # noqa: BLE001
-            _die(f"Invalid wallet key material: {exc}")
+        except Exception:  # noqa: BLE001
+            _die("Invalid wallet key material.")
 
     payload = {
         "scheme_id": wallet_key.scheme_id,
@@ -884,18 +907,28 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testn
         "address": wallet_key.address,
         "compressed": wallet_key.compressed,
     }
-    secret_hex = wallet_key.private_key.hex()
     if wallet_key.private_seed is not None:
         payload["private_seed_hex"] = wallet_key.private_seed.hex()
-        secret_hex = wallet_key.private_seed.hex()
     else:
-        payload["private_key_hex"] = secret_hex
-    wallet_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        payload["private_key_hex"] = wallet_key.private_key.hex()
+    encoded_wallet = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    fd: int | None = None
     try:
-        os.chmod(wallet_path, 0o600)
-    except OSError:
-        pass
-    return wallet_key.address, secret_hex, wallet_key.public_key.hex()
+        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(wallet_path, flags, 0o600)
+        os.fchmod(fd, 0o600)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("wallet destination is not a regular file")
+        os.ftruncate(fd, 0)
+        with os.fdopen(fd, "w", encoding="utf-8") as wallet_file:
+            fd = None
+            wallet_file.write(encoded_wallet)
+    except OSError as exc:
+        _die(f"Unable to securely write wallet file ({exc.strerror or 'I/O error'}).")
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return wallet_key.address, wallet_key.public_key.hex()
 
 
 def _prepare_sqlite_file(path: Path, label: str) -> None:
@@ -1218,10 +1251,8 @@ def _print_success(
     env_path: Path,
     miner_wallet_path: Path | None,
     miner_wallet_address: str | None,
-    miner_wallet_private_key_hex: str | None,
     reward_wallet_path: Path | None,
     reward_wallet_address: str | None,
-    reward_wallet_private_key_hex: str | None,
     reward_wallet_public_key_hex: str | None,
     reward_node_enabled: bool,
     setup_mode: str,
@@ -1242,8 +1273,6 @@ def _print_success(
     if miner_wallet_path is not None and miner_wallet_address is not None:
         print(f"Miner wallet file: {miner_wallet_path}")
         print(f"Miner wallet address: {miner_wallet_address}")
-        if miner_wallet_private_key_hex is not None:
-            print(f"Miner wallet private key: {miner_wallet_private_key_hex}")
     else:
         print("Miner wallet: not configured")
     if (
@@ -1255,8 +1284,6 @@ def _print_success(
         register_fee, renew_fee, suggested_total = _reward_fee_guidance(network)
         print(f"Reward-node wallet file: {reward_wallet_path}")
         print(f"Reward-node payout address: {reward_wallet_address}")
-        if reward_wallet_private_key_hex is not None:
-            print(f"Reward-node private key: {reward_wallet_private_key_hex}")
         print(f"Reward-node id: {env_values['REWARD_NODE_AUTO_NODE_ID']}")
         print(f"Reward-node declared host: {env_values['REWARD_NODE_AUTO_DECLARED_HOST']}")
         print(f"Reward-node declared port: {env_values['REWARD_NODE_AUTO_DECLARED_PORT']}")
