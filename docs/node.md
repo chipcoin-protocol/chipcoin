@@ -290,7 +290,10 @@ Snapshot contents:
 
 Snapshot formats:
 
-- `v2` is the default export format
+- `v3` is the default export format and is required for post-quantum reward-node registry records (`--snapshot-format v3`)
+- `v3` uses the existing compressed binary container and adds mandatory `owner_signature_scheme_id` and `node_signature_scheme_id` fields to every registry record
+- `v3` declares `min_reader_format_version` and `preferred_reader_format_version` as `3`; readers reject incomplete or incompatible v3 registry records
+- `v1` and `v2` remain readable for legacy registry entries, but PQ-sized keys or non-legacy scheme IDs are rejected rather than silently defaulted to ECDSA
 - `v2` uses:
   - explicit metadata JSON
   - compressed binary payload container
@@ -305,7 +308,7 @@ chipcoin --data /runtime/node.sqlite3 snapshot-export \
   --snapshot-format v1
 ```
 
-Sign either `v1` or `v2` snapshot files:
+Sign `v1`, `v2`, or `v3` snapshot files. Use `v3` for current exports:
 
 ```bash
 chmod 600 /secure/snapshot-signing.key

@@ -10,7 +10,7 @@ from .snapshots import read_snapshot_payload
 
 
 IDENTITY_FIELDS = (
-    "network", "chain_id", "genesis_hash", "p2p_magic_hex", "consensus_params_sha256",
+    "format_version", "network", "chain_id", "genesis_hash", "p2p_magic_hex", "consensus_params_sha256",
     "snapshot_height", "snapshot_block_hash", "snapshot_cumulative_work",
     "utxo_sha256", "node_registry_sha256",
 )
@@ -19,6 +19,8 @@ IDENTITY_FIELDS = (
 def validate_manifest_entry(entry: dict[str, object], *, network: str) -> None:
     if network != "mainnet":
         return
+    if type(entry.get("format_version")) is not int or entry["format_version"] not in {1, 2, 3}:
+        raise ValueError("snapshot manifest format_version is unsupported")
     config = get_network_config(network)
     if not config.genesis_finalized or not config.canonical_genesis_hash:
         raise ValueError("public mainnet genesis is not finalized")

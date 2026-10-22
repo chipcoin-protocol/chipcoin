@@ -46,7 +46,7 @@ def test_mainnet_manifest_requires_complete_canonical_identity(monkeypatch, tmp_
     snapshot.write_bytes(b"snapshot")
     entry = _entry(config, snapshot)
     snapshot_manifest.validate_manifest_entry(entry, network="mainnet")
-    for field in ("chain_id", "genesis_hash", "p2p_magic_hex", "consensus_params_sha256", "utxo_sha256", "snapshot_cumulative_work"):
+    for field in ("format_version", "chain_id", "genesis_hash", "p2p_magic_hex", "consensus_params_sha256", "utxo_sha256", "snapshot_cumulative_work"):
         invalid = dict(entry)
         invalid.pop(field)
         with pytest.raises(ValueError):
@@ -65,6 +65,10 @@ def test_manifest_must_match_signed_snapshot_metadata(monkeypatch, tmp_path: Pat
     snapshot_manifest.verify_manifest_snapshot(snapshot, entry, network="mainnet")
     metadata["utxo_sha256"] = "00" * 32
     with pytest.raises(ValueError, match="utxo_sha256"):
+        snapshot_manifest.verify_manifest_snapshot(snapshot, entry, network="mainnet")
+    metadata["utxo_sha256"] = entry["utxo_sha256"]
+    metadata["format_version"] = 3
+    with pytest.raises(ValueError, match="format_version"):
         snapshot_manifest.verify_manifest_snapshot(snapshot, entry, network="mainnet")
 
 

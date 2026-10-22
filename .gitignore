@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 !.env.devnet.example
+!.env.mainnet.example
 .envrc
 .codex
 .venv/

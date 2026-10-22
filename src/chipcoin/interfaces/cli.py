@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import secrets
+import signal
 import stat
 import sys
 import time
@@ -577,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(
                 service.export_snapshot_file(
                     Path(args.snapshot_file),
-                    format_version=1 if args.snapshot_format == "v1" else 2,
+                    format_version=int(args.snapshot_format[1:]),
                 )
             )
             return 0
@@ -1164,7 +1165,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     snapshot_export_parser = subparsers.add_parser("snapshot-export")
     snapshot_export_parser.add_argument("--snapshot-file", required=True)
-    snapshot_export_parser.add_argument("--snapshot-format", choices=("v1", "v2"), default="v2")
+    snapshot_export_parser.add_argument("--snapshot-format", choices=("v1", "v2", "v3"), default="v3")
 
     snapshot_import_parser = subparsers.add_parser("snapshot-import")
     snapshot_import_parser.add_argument("--snapshot-file", required=True)
@@ -1448,7 +1449,7 @@ def _operator_snapshot_manifest_section(
         try:
             payload = _operator_http_json(manifest_url, method="GET", timeout_seconds=timeout_seconds)
             entries = _operator_parse_snapshot_manifest(payload, manifest_url=manifest_url)
-            compatible = [entry for entry in entries if entry["network"] == network and int(entry["format_version"]) in {1, 2}]
+            compatible = [entry for entry in entries if entry["network"] == network and int(entry["format_version"]) in {1, 2, 3}]
             if compatible:
                 compatible.sort(key=lambda entry: (int(entry["snapshot_height"]), int(entry["created_at"]), int(entry["format_version"])), reverse=True)
                 selected = compatible[0]
@@ -1769,15 +1770,49 @@ async def _run_runtime(service: NodeService, args) -> None:
     configured_peer_source = getattr(args, "peer_source", "manual")
     if hasattr(runtime, "_outbound_target_sources"):
         runtime._outbound_target_sources.update({(peer.host, peer.port): configured_peer_source for peer in peers})
-    await runtime.start()
-    if args.run_seconds is not None:
-        await asyncio.sleep(args.run_seconds)
-        await runtime.stop()
-        return
+    loop = asyncio.get_running_loop()
+    shutdown_requested = asyncio.Event()
+    installed_signals = []
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(signum, shutdown_requested.set)
+        except (NotImplementedError, RuntimeError):
+            if signum == signal.SIGTERM and os.name == "posix":
+                raise
+        else:
+            installed_signals.append(signum)
+    runner_task = None
+    signal_task = None
     try:
-        await runtime.run_forever()
-    except KeyboardInterrupt:
-        await runtime.stop()
+        await runtime.start()
+        runner_task = asyncio.create_task(runtime.run_forever())
+        # Ensure run_forever has entered its stop-event wait before a signal
+        # already received during startup can trigger runtime.stop().
+        await asyncio.sleep(0)
+        signal_task = asyncio.create_task(shutdown_requested.wait())
+        wait_for = {runner_task, signal_task}
+        if args.run_seconds is None:
+            done, _ = await asyncio.wait(wait_for, return_when=asyncio.FIRST_COMPLETED)
+        else:
+            done, _ = await asyncio.wait(
+                wait_for,
+                timeout=args.run_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        if runner_task in done:
+            await runner_task
+    finally:
+        try:
+            if runner_task is None or not runner_task.done():
+                await runtime.stop()
+            if runner_task is not None and not runner_task.done():
+                await runner_task
+        finally:
+            if signal_task is not None and not signal_task.done():
+                signal_task.cancel()
+                await asyncio.gather(signal_task, return_exceptions=True)
+            for signum in installed_signals:
+                loop.remove_signal_handler(signum)
 
 
 def _emit_runtime_warnings(service: NodeService, args, peers: list[OutboundPeer]) -> None:

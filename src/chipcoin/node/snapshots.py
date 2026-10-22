@@ -20,13 +20,16 @@ from ..config import consensus_params_fingerprint, get_network_config
 from ..consensus.pow import calculate_next_work_required, header_work, verify_proof_of_work
 from ..consensus.serialization import deserialize_block, deserialize_block_header, serialize_block, serialize_block_header
 from ..consensus.utxo import UtxoEntry
+from ..crypto.keys import parse_public_key_hex
+from ..crypto.pq import SIG_SCHEME_LEGACY_ECDSA, get_signature_scheme
 from ..storage.native_rewards import StoredEpochSettlement, StoredRewardAttestationBundle
 
 
 SNAPSHOT_KIND = "chipcoin-chainstate-snapshot"
-SNAPSHOT_FORMAT_VERSION = 2
+SNAPSHOT_FORMAT_VERSION = 3
 SNAPSHOT_FORMAT_VERSION_V1 = 1
 SNAPSHOT_FORMAT_VERSION_V2 = 2
+SNAPSHOT_FORMAT_VERSION_V3 = 3
 SNAPSHOT_SIGNATURE_ALGORITHM = "ed25519"
 SNAPSHOT_V2_MAGIC = b"CHCSNP2\n"
 SNAPSHOT_V2_HEADER = struct.Struct(">8sQQ")
@@ -212,18 +215,19 @@ def write_snapshot_file(path: Path, payload: dict[str, object]) -> None:
     if format_version == SNAPSHOT_FORMAT_VERSION_V1:
         path.write_bytes(canonical_json_dumps(normalized) + b"\n")
         return
-    if format_version != SNAPSHOT_FORMAT_VERSION_V2:
+    if format_version not in {SNAPSHOT_FORMAT_VERSION_V2, SNAPSHOT_FORMAT_VERSION_V3}:
         raise ValueError(f"unsupported snapshot format version for writing: {format_version}")
     body_bytes = canonical_json_dumps(_snapshot_body(normalized))
     compressed_body = gzip.compress(body_bytes, compresslevel=6, mtime=0)
     metadata["payload_encoding"] = SNAPSHOT_V2_PAYLOAD_ENCODING
     metadata["payload_sha256"] = hashlib.sha256(body_bytes).hexdigest()
     metadata["compressed_payload_sha256"] = hashlib.sha256(compressed_body).hexdigest()
+    default_reader_version = format_version if format_version < SNAPSHOT_FORMAT_VERSION_V3 else SNAPSHOT_FORMAT_VERSION_V3
     metadata.setdefault(
         "compatibility",
         {
-            "min_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1,
-            "preferred_reader_format_version": SNAPSHOT_FORMAT_VERSION_V2,
+            "min_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1 if format_version < SNAPSHOT_FORMAT_VERSION_V3 else SNAPSHOT_FORMAT_VERSION_V3,
+            "preferred_reader_format_version": default_reader_version,
         },
     )
     metadata["checksum_sha256"] = snapshot_checksum({**normalized, "metadata": metadata})
@@ -301,8 +305,16 @@ def decode_snapshot_payload(
     if metadata.get("kind") != SNAPSHOT_KIND:
         raise ValueError("unsupported snapshot kind")
     format_version = int(metadata.get("format_version", -1))
-    if format_version not in {SNAPSHOT_FORMAT_VERSION_V1, SNAPSHOT_FORMAT_VERSION_V2}:
+    if format_version not in {SNAPSHOT_FORMAT_VERSION_V1, SNAPSHOT_FORMAT_VERSION_V2, SNAPSHOT_FORMAT_VERSION_V3}:
         raise ValueError("unsupported snapshot format version")
+    if format_version == SNAPSHOT_FORMAT_VERSION_V3:
+        compatibility = metadata.get("compatibility")
+        if not isinstance(compatibility, dict):
+            raise ValueError("snapshot v3 compatibility metadata is required")
+        if compatibility.get("min_reader_format_version") != SNAPSHOT_FORMAT_VERSION_V3:
+            raise ValueError("snapshot v3 requires a v3-capable reader")
+        if compatibility.get("preferred_reader_format_version") != SNAPSHOT_FORMAT_VERSION_V3:
+            raise ValueError("snapshot v3 preferred reader version must be v3")
     if metadata.get("network") != network:
         raise ValueError("snapshot network does not match configured node network")
     network_config = get_network_config(network)
@@ -413,19 +425,50 @@ def decode_snapshot_payload(
     for raw_record in raw_registry:
         if not isinstance(raw_record, dict):
             raise ValueError("snapshot node registry record must be an object")
+        owner_pubkey = bytes.fromhex(str(raw_record["owner_pubkey_hex"]))
+        raw_node_pubkey = raw_record.get("node_pubkey_hex")
+        node_pubkey = None if raw_node_pubkey in (None, "") else bytes.fromhex(str(raw_node_pubkey))
+        owner_scheme_present = "owner_signature_scheme_id" in raw_record
+        node_scheme_present = "node_signature_scheme_id" in raw_record
+        if owner_scheme_present != node_scheme_present:
+            if format_version >= SNAPSHOT_FORMAT_VERSION_V3:
+                raise ValueError("snapshot v3 node registry signature scheme fields are required")
+            raise ValueError("snapshot node registry signature scheme fields must be present together")
+        if format_version >= SNAPSHOT_FORMAT_VERSION_V3:
+            if not owner_scheme_present:
+                raise ValueError("snapshot v3 node registry signature scheme fields are required")
+            owner_scheme_id = _validated_registry_scheme_id(raw_record["owner_signature_scheme_id"])
+            node_scheme_id = _validated_registry_scheme_id(raw_record["node_signature_scheme_id"])
+            _validate_registry_key_scheme(owner_pubkey, owner_scheme_id)
+            if node_pubkey is None and node_scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+                raise ValueError("snapshot v3 non-legacy node scheme requires a node public key")
+            if node_pubkey is not None:
+                _validate_registry_key_scheme(node_pubkey, node_scheme_id)
+        elif owner_scheme_present:
+            owner_scheme_id = _validated_registry_scheme_id(raw_record["owner_signature_scheme_id"])
+            node_scheme_id = _validated_registry_scheme_id(raw_record["node_signature_scheme_id"])
+            if owner_scheme_id != SIG_SCHEME_LEGACY_ECDSA or node_scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+                raise ValueError("snapshot v1/v2 cannot declare non-legacy node registry signature schemes")
+            _require_legacy_registry_keys(owner_pubkey, node_pubkey)
+        else:
+            # v1/v2 define these absent fields as legacy-only. Reject PQ-sized keys
+            # instead of silently restoring a post-quantum record as scheme 0.
+            _require_legacy_registry_keys(owner_pubkey, node_pubkey)
+            owner_scheme_id = SIG_SCHEME_LEGACY_ECDSA
+            node_scheme_id = SIG_SCHEME_LEGACY_ECDSA
         node_registry_records.append(
             NodeRecord(
                 node_id=str(raw_record["node_id"]),
                 payout_address=str(raw_record["payout_address"]),
-                owner_pubkey=bytes.fromhex(str(raw_record["owner_pubkey_hex"])),
+                owner_pubkey=owner_pubkey,
                 registered_height=int(raw_record["registered_height"]),
                 last_renewed_height=int(raw_record["last_renewed_height"]),
-                node_pubkey=None
-                if raw_record.get("node_pubkey_hex") in (None, "")
-                else bytes.fromhex(str(raw_record["node_pubkey_hex"])),
+                node_pubkey=node_pubkey,
                 declared_host=None if raw_record.get("declared_host") in (None, "") else str(raw_record["declared_host"]),
                 declared_port=None if raw_record.get("declared_port") in (None, "") else int(raw_record["declared_port"]),
                 reward_registration=bool(raw_record.get("reward_registration", False)),
+                owner_signature_scheme_id=owner_scheme_id,
+                node_signature_scheme_id=node_scheme_id,
             )
         )
 
@@ -519,6 +562,12 @@ def build_snapshot_payload(
         raise ValueError("cannot export a snapshot without headers")
     if len(blocks) != len(headers):
         raise ValueError("snapshot blocks must match embedded header count")
+    if format_version not in {SNAPSHOT_FORMAT_VERSION_V1, SNAPSHOT_FORMAT_VERSION_V2, SNAPSHOT_FORMAT_VERSION_V3}:
+        raise ValueError("unsupported snapshot format version")
+    if format_version < SNAPSHOT_FORMAT_VERSION_V3:
+        for record in node_registry_records:
+            if record.owner_signature_scheme_id != SIG_SCHEME_LEGACY_ECDSA or record.node_signature_scheme_id != SIG_SCHEME_LEGACY_ECDSA:
+                raise ValueError("snapshot v1/v2 cannot represent non-legacy node registry signature schemes")
     tip_record = headers[-1]
     network_config = get_network_config(network)
     genesis_hash = headers[0].header.block_hash()
@@ -559,8 +608,8 @@ def build_snapshot_payload(
             "payload_sha256": None,
             "compressed_payload_sha256": None,
             "compatibility": {
-                "min_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1,
-                "preferred_reader_format_version": SNAPSHOT_FORMAT_VERSION_V2,
+                "min_reader_format_version": SNAPSHOT_FORMAT_VERSION_V3,
+                "preferred_reader_format_version": SNAPSHOT_FORMAT_VERSION_V3,
             },
         },
         "headers": [
@@ -602,6 +651,14 @@ def build_snapshot_payload(
                 "declared_host": record.declared_host,
                 "declared_port": record.declared_port,
                 "reward_registration": record.reward_registration,
+                **(
+                    {
+                        "owner_signature_scheme_id": record.owner_signature_scheme_id,
+                        "node_signature_scheme_id": record.node_signature_scheme_id,
+                    }
+                    if format_version >= SNAPSHOT_FORMAT_VERSION_V3
+                    else {}
+                ),
             }
             for record in node_registry_records
         ],
@@ -669,10 +726,50 @@ def build_snapshot_payload(
             "min_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1,
             "preferred_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1,
         }
+    elif format_version == SNAPSHOT_FORMAT_VERSION_V2:
+        payload["metadata"]["compatibility"] = {
+            "min_reader_format_version": SNAPSHOT_FORMAT_VERSION_V1,
+            "preferred_reader_format_version": SNAPSHOT_FORMAT_VERSION_V2,
+        }
     payload["metadata"]["utxo_sha256"] = _snapshot_state_hash(payload["utxos"])
     payload["metadata"]["node_registry_sha256"] = _snapshot_state_hash(payload["node_registry"])
     payload["metadata"]["checksum_sha256"] = snapshot_checksum(payload)
     return payload
+
+
+def _validated_registry_scheme_id(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError("snapshot node registry signature scheme id must be an integer")
+    scheme = get_signature_scheme(value)
+    if not scheme.activated or not scheme.supports_verify:
+        raise ValueError("snapshot node registry signature scheme is not active")
+    return value
+
+
+def _validate_registry_key_scheme(public_key: bytes, scheme_id: int) -> None:
+    scheme = get_signature_scheme(scheme_id)
+    if scheme_id == SIG_SCHEME_LEGACY_ECDSA:
+        _require_legacy_registry_keys(public_key, None)
+        return
+    if scheme.public_key_size is not None and len(public_key) != scheme.public_key_size:
+        raise ValueError("snapshot node registry public key length does not match signature scheme")
+
+
+def _require_legacy_registry_keys(owner_pubkey: bytes, node_pubkey: bytes | None) -> None:
+    """Reject old snapshot formats that cannot represent PQ registry schemes."""
+
+    from ..crypto.pq.mldsa import ML_DSA_44_PUBLIC_KEY_SIZE
+
+    if len(owner_pubkey) == ML_DSA_44_PUBLIC_KEY_SIZE or (
+        node_pubkey is not None and len(node_pubkey) == ML_DSA_44_PUBLIC_KEY_SIZE
+    ):
+        raise ValueError("legacy snapshot format cannot represent post-quantum node registry schemes")
+    try:
+        parse_public_key_hex(owner_pubkey.hex())
+        if node_pubkey is not None:
+            parse_public_key_hex(node_pubkey.hex())
+    except ValueError as exc:
+        raise ValueError("legacy snapshot registry keys are not valid ECDSA public keys") from exc
 
 
 def _validate_snapshot_headers(records: list[SnapshotHeaderRecord], *, params: ConsensusParams) -> None:

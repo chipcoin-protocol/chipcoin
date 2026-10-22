@@ -478,7 +478,7 @@ class NodeService:
 
         return None
 
-    def export_snapshot_payload(self, *, format_version: int = 2) -> dict[str, object]:
+    def export_snapshot_payload(self, *, format_version: int = 3) -> dict[str, object]:
         """Return a deterministic snapshot payload for fast bootstrap."""
 
         if self.connection is not None:
@@ -536,7 +536,7 @@ class NodeService:
             format_version=format_version,
         )
 
-    def export_snapshot_file(self, path: Path, *, format_version: int = 2) -> dict[str, object]:
+    def export_snapshot_file(self, path: Path, *, format_version: int = 3) -> dict[str, object]:
         """Write a fast-sync snapshot to disk and return its metadata."""
 
         payload = self.export_snapshot_payload(format_version=format_version)

@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import fields, replace
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,6 +12,7 @@ from chipcoin.consensus.models import Block, OutPoint
 from chipcoin.consensus.nodes import NodeRecord
 from chipcoin.consensus.params import MAINNET_PARAMS as PRODUCTION_MAINNET_PARAMS
 from chipcoin.consensus.pow import verify_proof_of_work
+from chipcoin.crypto.pq import SIG_SCHEME_LEGACY_ECDSA, SIG_SCHEME_ML_DSA_44
 from chipcoin.node.mempool import MempoolPolicy
 from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, snapshot_checksum, write_snapshot_file
 from chipcoin.node.service import NodeService
@@ -95,7 +96,7 @@ def test_snapshot_export_import_roundtrip_preserves_anchor_and_utxo_state() -> N
         assert target.snapshot_anchor().block_hash == source.chain_tip().block_hash
         assert target.chainstate.list_utxos() == source.chainstate.list_utxos()
         assert target.node_registry.list_records() == source.node_registry.list_records()
-        assert metadata["format_version"] == 2
+        assert metadata["format_version"] == 3
 
 
 def test_snapshot_export_reads_one_sqlite_transaction() -> None:
@@ -193,11 +194,11 @@ def test_testnet_rejects_devnet_snapshot_import() -> None:
             target.import_snapshot_file(snapshot_path)
 
 
-def test_snapshot_v2_signed_import_roundtrip() -> None:
+def test_snapshot_v3_signed_import_roundtrip() -> None:
     with TemporaryDirectory() as tempdir:
         source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
         _mine_chain(source, 3, "CHCminer-source")
-        snapshot_path = Path(tempdir) / "snapshot-v2.bin"
+        snapshot_path = Path(tempdir) / "snapshot-v3.bin"
         source.export_snapshot_file(snapshot_path)
         payload = read_snapshot_payload(snapshot_path)
         private_key, public_key = _ed25519_keypair()
@@ -206,7 +207,7 @@ def test_snapshot_v2_signed_import_roundtrip() -> None:
         target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
         imported = target.import_snapshot_file(snapshot_path, trust_mode="enforce", trusted_keys=(public_key,))
 
-        assert imported["format_version"] == 2
+        assert imported["format_version"] == 3
         assert imported["trusted_signature_count"] == 1
         assert target.chain_tip() is not None
         assert target.chain_tip().block_hash == source.chain_tip().block_hash
@@ -220,13 +221,15 @@ def test_snapshot_roundtrip_preserves_native_reward_registry_and_payload_tables(
             NodeRecord(
                 node_id="reward-node-a",
                 payout_address="CHCreward-node-a",
-                owner_pubkey=bytes.fromhex("11" * 33),
+                owner_pubkey=bytes.fromhex("11" * 1312),
                 registered_height=2,
                 last_renewed_height=3,
-                node_pubkey=bytes.fromhex("22" * 33),
+                node_pubkey=bytes.fromhex("22" * 1312),
                 declared_host="127.0.0.1",
                 declared_port=19001,
                 reward_registration=True,
+                owner_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
+                node_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
             )
         )
         source.reward_attestations.replace_all(
@@ -289,13 +292,106 @@ def test_snapshot_roundtrip_preserves_native_reward_registry_and_payload_tables(
         )
         snapshot_path = Path(tempdir) / "snapshot-native.bin"
         source.export_snapshot_file(snapshot_path)
+        snapshot_payload = read_snapshot_payload(snapshot_path)
+        registry_payload_fields = {
+            "node_id": "node_id",
+            "payout_address": "payout_address",
+            "owner_pubkey_hex": "owner_pubkey",
+            "registered_height": "registered_height",
+            "last_renewed_height": "last_renewed_height",
+            "node_pubkey_hex": "node_pubkey",
+            "declared_host": "declared_host",
+            "declared_port": "declared_port",
+            "reward_registration": "reward_registration",
+            "owner_signature_scheme_id": "owner_signature_scheme_id",
+            "node_signature_scheme_id": "node_signature_scheme_id",
+        }
+        assert set(registry_payload_fields.values()) == {field.name for field in fields(NodeRecord)}
+        assert set(snapshot_payload["node_registry"][0]) == set(registry_payload_fields)
 
         target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
         target.import_snapshot_file(snapshot_path)
 
+        restored_payload = target.export_snapshot_payload()
+        state_sections = (
+            "headers",
+            "blocks",
+            "utxos",
+            "node_registry",
+            "reward_attestation_bundles",
+            "epoch_settlements",
+        )
+        for section in state_sections:
+            assert restored_payload[section] == snapshot_payload[section], section
+
+        assert {
+            "txid",
+            "block_height",
+            "epoch_index",
+            "bundle_window_index",
+            "bundle_submitter_node_id",
+            "attestation_count",
+            "attestations",
+        } == set(snapshot_payload["reward_attestation_bundles"][0])
+        assert {
+            "epoch_index",
+            "check_window_index",
+            "candidate_node_id",
+            "verifier_node_id",
+            "result_code",
+            "observed_sync_gap",
+            "endpoint_commitment",
+            "concentration_key",
+            "signature_hex",
+        } == set(snapshot_payload["reward_attestation_bundles"][0]["attestations"][0])
+        assert {
+            "txid",
+            "block_height",
+            "epoch_index",
+            "epoch_start_height",
+            "epoch_end_height",
+            "epoch_seed_hex",
+            "policy_version",
+            "submission_mode",
+            "candidate_summary_root",
+            "verified_nodes_root",
+            "rewarded_nodes_root",
+            "rewarded_node_count",
+            "distributed_node_reward_chipbits",
+            "undistributed_node_reward_chipbits",
+            "reward_entries",
+        } == set(snapshot_payload["epoch_settlements"][0])
+        assert {
+            "node_id",
+            "payout_address",
+            "reward_chipbits",
+            "selection_rank",
+            "concentration_key",
+            "final_confirmation_passed",
+        } == set(snapshot_payload["epoch_settlements"][0]["reward_entries"][0])
+
         assert target.node_registry.list_records() == source.node_registry.list_records()
         assert target.reward_attestations.list_bundles() == source.reward_attestations.list_bundles()
         assert target.reward_settlements.list_settlements() == source.reward_settlements.list_settlements()
+        assert target.chainstate.list_utxos() == source.chainstate.list_utxos()
+        assert target.status()["supply"] == source.status()["supply"]
+        assert target.chain_tip() is not None and source.chain_tip() is not None
+        assert target.chain_tip().height == source.chain_tip().height
+        assert target.chain_tip().block_hash == source.chain_tip().block_hash
+        assert target.status()["cumulative_work"] == source.status()["cumulative_work"]
+        source_balances: dict[str, int] = {}
+        target_balances: dict[str, int] = {}
+        for _, entry in source.chainstate.list_utxos():
+            recipient = entry.output.recipient
+            source_balances[recipient] = source_balances.get(recipient, 0) + int(entry.output.value)
+        for _, entry in target.chainstate.list_utxos():
+            recipient = entry.output.recipient
+            target_balances[recipient] = target_balances.get(recipient, 0) + int(entry.output.value)
+        assert target_balances == source_balances
+        restored = target.node_registry.get_by_node_id("reward-node-a")
+        assert restored is not None
+        assert restored.owner_signature_scheme_id == SIG_SCHEME_ML_DSA_44
+        assert restored.node_signature_scheme_id == SIG_SCHEME_ML_DSA_44
 
 
 def test_sync_manager_downloads_only_delta_after_snapshot_import() -> None:
@@ -615,6 +711,138 @@ def test_snapshot_v1_backward_compatibility_import_is_retained() -> None:
         assert imported["format_version"] == 1
         assert target.chain_tip() is not None
         assert target.chain_tip().block_hash == source.chain_tip().block_hash
+
+
+def test_snapshot_v2_legacy_registry_import_is_explicitly_legacy() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 2, "CHCminer-source")
+        source.node_registry.upsert(
+            NodeRecord(
+                node_id="legacy-node",
+                payout_address="CHClegacy",
+                owner_pubkey=wallet_key(0).public_key,
+                registered_height=1,
+                last_renewed_height=1,
+                node_pubkey=wallet_key(1).public_key,
+                reward_registration=True,
+            )
+        )
+        snapshot_path = Path(tempdir) / "snapshot-v2.bin"
+        source.export_snapshot_file(snapshot_path, format_version=2)
+        payload = read_snapshot_payload(snapshot_path)
+        assert "owner_signature_scheme_id" not in payload["node_registry"][0]
+
+        target = _make_service(Path(tempdir) / "target.sqlite3", start_time=1_700_001_000)
+        target.import_snapshot_file(snapshot_path)
+        record = target.node_registry.get_by_node_id("legacy-node")
+        assert record is not None
+        assert record.owner_signature_scheme_id == SIG_SCHEME_LEGACY_ECDSA
+        assert record.node_signature_scheme_id == SIG_SCHEME_LEGACY_ECDSA
+
+
+def test_snapshot_v1_v2_refuse_to_export_pq_registry() -> None:
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 1, "CHCminer-source")
+        source.node_registry.upsert(
+            NodeRecord(
+                node_id="pq-node",
+                payout_address="CHCpq",
+                owner_pubkey=bytes.fromhex("11" * 1312),
+                registered_height=1,
+                last_renewed_height=1,
+                node_pubkey=bytes.fromhex("22" * 1312),
+                reward_registration=True,
+                owner_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
+                node_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
+            )
+        )
+        for version in (1, 2):
+            with pytest.raises(ValueError, match="cannot represent non-legacy"):
+                source.export_snapshot_payload(format_version=version)
+
+
+@pytest.mark.parametrize("format_version", (1, 2))
+def test_legacy_snapshot_rejects_pq_sized_registry_keys_without_scheme_ids(format_version: int) -> None:
+    from chipcoin.node.snapshots import _snapshot_state_hash, decode_snapshot_payload
+
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 1, "CHCminer-source")
+        source.node_registry.upsert(
+            NodeRecord(
+                node_id="pq-shaped-node",
+                payout_address="CHCpq-shaped",
+                owner_pubkey=bytes.fromhex("11" * 33),
+                registered_height=1,
+                last_renewed_height=1,
+                node_pubkey=bytes.fromhex("22" * 33),
+                reward_registration=True,
+            )
+        )
+        payload = source.export_snapshot_payload(format_version=format_version)
+        payload["node_registry"][0]["owner_pubkey_hex"] = (b"o" * 1312).hex()
+        payload["node_registry"][0]["node_pubkey_hex"] = (b"n" * 1312).hex()
+        payload["metadata"]["node_registry_sha256"] = _snapshot_state_hash(payload["node_registry"])
+        payload["metadata"]["checksum_sha256"] = snapshot_checksum(payload)
+
+        with pytest.raises(ValueError, match="cannot represent post-quantum"):
+            decode_snapshot_payload(payload, network="devnet", params=MAINNET_PARAMS)
+
+
+def test_snapshot_v3_requires_both_registry_scheme_fields() -> None:
+    from chipcoin.node.snapshots import _snapshot_state_hash, decode_snapshot_payload
+
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 1, "CHCminer-source")
+        source.node_registry.upsert(
+            NodeRecord(
+                node_id="pq-node",
+                payout_address="CHCpq",
+                owner_pubkey=bytes.fromhex("11" * 1312),
+                registered_height=1,
+                last_renewed_height=1,
+                node_pubkey=bytes.fromhex("22" * 1312),
+                reward_registration=True,
+                owner_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
+                node_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
+            )
+        )
+        payload = source.export_snapshot_payload()
+        del payload["node_registry"][0]["owner_signature_scheme_id"]
+        payload["metadata"]["node_registry_sha256"] = _snapshot_state_hash(payload["node_registry"])
+        payload["metadata"]["checksum_sha256"] = snapshot_checksum(payload)
+        with pytest.raises(ValueError, match="signature scheme fields are required"):
+            decode_snapshot_payload(payload, network="devnet", params=MAINNET_PARAMS)
+
+
+def test_snapshot_v3_rejects_tampered_or_inactive_registry_scheme() -> None:
+    from chipcoin.node.snapshots import _snapshot_state_hash, decode_snapshot_payload
+
+    with TemporaryDirectory() as tempdir:
+        source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+        _mine_chain(source, 1, "CHCminer-source")
+        source.node_registry.upsert(
+            NodeRecord(
+                node_id="pq-node",
+                payout_address="CHCpq",
+                owner_pubkey=bytes.fromhex("11" * 1312),
+                registered_height=1,
+                last_renewed_height=1,
+                node_pubkey=bytes.fromhex("22" * 1312),
+                reward_registration=True,
+                owner_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
+                node_signature_scheme_id=SIG_SCHEME_ML_DSA_44,
+            )
+        )
+        payload = source.export_snapshot_payload()
+        payload["node_registry"][0]["owner_signature_scheme_id"] = SIG_SCHEME_LEGACY_ECDSA
+        payload["metadata"]["node_registry_sha256"] = _snapshot_state_hash(payload["node_registry"])
+        payload["metadata"]["checksum_sha256"] = snapshot_checksum(payload)
+        with pytest.raises(ValueError, match="cannot represent post-quantum"):
+            decode_snapshot_payload(payload, network="devnet", params=MAINNET_PARAMS)
 
 
 def test_status_shows_snapshot_trust_metadata_after_bootstrap() -> None:

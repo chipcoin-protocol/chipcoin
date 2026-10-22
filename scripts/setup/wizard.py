@@ -1192,7 +1192,7 @@ def _select_latest_compatible_snapshot(manifest_urls: list[str], *, network: str
         compatible = [
             entry
             for entry in entries
-            if entry.network == network and entry.format_version in {1, 2}
+            if entry.network == network and entry.format_version in {1, 2, 3}
         ]
         if compatible:
             compatible.sort(key=lambda entry: (entry.snapshot_height, entry.created_at, entry.format_version), reverse=True)

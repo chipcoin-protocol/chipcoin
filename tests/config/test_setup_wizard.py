@@ -551,9 +551,18 @@ def test_parse_snapshot_manifest_and_select_latest_compatible_snapshot() -> None
                 "checksum_sha256": "22" * 32,
             },
             {
+                "network": "devnet",
+                "snapshot_url": "https://snapshots.example/devnet-130.snapshot",
+                "format_version": 3,
+                "snapshot_height": 130,
+                "snapshot_block_hash": "dd" * 32,
+                "created_at": 2500,
+                "checksum_sha256": "44" * 32,
+            },
+            {
                 "network": "mainnet",
                 "snapshot_url": "https://snapshots.example/mainnet-500.snapshot",
-                "format_version": 2,
+                "format_version": 3,
                 "snapshot_height": 500,
                 "snapshot_block_hash": "cc" * 32,
                 "created_at": 3000,
@@ -563,12 +572,12 @@ def test_parse_snapshot_manifest_and_select_latest_compatible_snapshot() -> None
     }
 
     entries = wizard._parse_snapshot_manifest(manifest, manifest_url="https://manifest.example")
-    assert len(entries) == 3
+    assert len(entries) == 4
 
     wizard._fetch_json_from_url = lambda url: manifest
     selected = wizard._select_latest_compatible_snapshot(["https://manifest.example"], network="devnet")
-    assert selected.snapshot_height == 120
-    assert selected.snapshot_url == "https://snapshots.example/devnet-120.snapshot"
+    assert selected.snapshot_height == 130
+    assert selected.snapshot_url == "https://snapshots.example/devnet-130.snapshot"
 
 
 def test_select_latest_compatible_snapshot_tries_manifest_urls_in_order() -> None:
