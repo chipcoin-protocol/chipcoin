@@ -898,7 +898,7 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
 
 def _print_public_reachability_note(*, network: str = "devnet") -> None:
     default_port = get_network_config(network).default_p2p_port
-    default_http_port = {"mainnet": "38084", "testnet": "28081"}.get(network, "8081")
+    default_http_port = {"mainnet": "8080", "testnet": "28081"}.get(network, "8081")
     print()
     print("Public reachability note:")
     print("  - outbound-only nodes can still connect and sync")
