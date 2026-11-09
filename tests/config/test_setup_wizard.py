@@ -26,6 +26,20 @@ def test_passive_mainnet_wizard_imports_without_installed_python_packages() -> N
     assert result.returncode == 0, result.stderr
 
 
+def test_mainnet_snapshot_prompt_has_official_url_and_enforced_trust(tmp_path, monkeypatch) -> None:
+    wizard = load_wizard_module()
+    env_values = dict(wizard.DEFAULTS)
+    wizard._apply_network_defaults(env_values, "mainnet")
+    monkeypatch.setattr(wizard, "MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE", str(tmp_path / "trusted-signers.txt"))
+    env_values["NODE_SNAPSHOT_TRUSTED_KEYS_FILE"] = wizard.MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE
+    answers = iter(["snapshot", "", "", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    wizard._configure_node_bootstrap(env_values, setup_mode="quick")
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == wizard.PUBLIC_MAINNET_SNAPSHOT_MANIFEST_URL
+    assert env_values["NODE_SNAPSHOT_TRUST_MODE"] == "enforce"
+    assert (tmp_path / "trusted-signers.txt").read_text().strip() == wizard.MAINNET_SNAPSHOT_SIGNER_KEY_HEX
+
+
 def load_wizard_module():
     spec = importlib.util.spec_from_file_location("chipcoin_setup_wizard", WIZARD_PATH)
     assert spec is not None and spec.loader is not None
@@ -125,7 +139,7 @@ def test_mainnet_defaults_use_isolated_full_sync_profile() -> None:
     assert env_values["NODE_DATA_PATH"] == "/var/lib/chipcoin-mainnet-official/data/node.sqlite3"
     assert env_values["CHIPCOIN_RUNTIME_HOST_DIR"] == "/var/lib/chipcoin-mainnet-official"
     assert env_values["NODE_BOOTSTRAP_MODE"] == "full"
-    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
+    assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == wizard.PUBLIC_MAINNET_SNAPSHOT_MANIFEST_URL
     assert env_values["NODE_P2P_BIND_PORT"] == "8333"
     assert env_values["NODE_P2P_PUBLISH_HOST"] == "127.0.0.1"
     assert env_values["NODE_HTTP_BIND_PORT"] == "8080"

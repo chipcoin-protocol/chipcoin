@@ -57,7 +57,7 @@ Prefer the manual setup flow from `README.md` when:
 
 ### Quick Start
 
-The default network is Mainnet. Its wallet-safe API is `https://mainnet-api.chipcoinprotocol.com`, seed is `https://mainnet-bootstrap.chipcoinprotocol.com`, P2P port is `8333`, and local HTTP is `127.0.0.1:8080`. Mainnet starts with full sync from genesis and private P2P exposure. The following apply only when Testnet is explicitly selected:
+The default network is Mainnet. Its wallet-safe API is `https://mainnet-api.chipcoinprotocol.com`, seed is `https://mainnet-bootstrap.chipcoinprotocol.com`, P2P port is `8333`, and local HTTP is `127.0.0.1:8080`. Mainnet starts with full sync from genesis and private P2P exposure. If snapshot bootstrap is selected, the wizard suggests `https://chipcoinprotocol.com/downloads/snapshots/mainnet/latest.manifest.json` and prepares the approved signer public key under the isolated Mainnet runtime. Signature enforcement is required. The following apply only when Testnet is explicitly selected:
 
 - wallet-safe endpoint: `https://testnet-api.chipcoinprotocol.com`
 - P2P port: `28444`

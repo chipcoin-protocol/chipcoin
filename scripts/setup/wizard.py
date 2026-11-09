@@ -52,6 +52,9 @@ PUBLIC_TESTNET_BOOTSTRAP_URL = "https://bootstrap.chipcoinprotocol.com"
 PUBLIC_TESTNET_EXPLORER_URL = "https://explorer.chipcoinprotocol.com/api/testnet"
 PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json"
 PUBLIC_MAINNET_BOOTSTRAP_URL = "https://mainnet-bootstrap.chipcoinprotocol.com"
+PUBLIC_MAINNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/mainnet/latest.manifest.json"
+MAINNET_SNAPSHOT_SIGNER_KEY_HEX = "d3cb77ba741ec9f71ac2aca4f49878d428ff588c46200dbeede225baa451b031"
+MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE = str(MAINNET_RUNTIME_ROOT / "snapshots" / "trusted-signers.txt")
 TESTNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:28081"
 PUBLIC_MAINNET_WALLET_API_ENDPOINT = "https://mainnet-api.chipcoinprotocol.com"
 MAINNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:8080"
@@ -659,8 +662,9 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["NODE_DATA_PATH"] = MAINNET_NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = MAINNET_NODE_SNAPSHOT_PATH
         env_values["NODE_BOOTSTRAP_MODE"] = "full"
-        env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = ""
+        env_values["NODE_SNAPSHOT_MANIFEST_URLS"] = PUBLIC_MAINNET_SNAPSHOT_MANIFEST_URL
         env_values["NODE_SNAPSHOT_TRUST_MODE"] = "enforce"
+        env_values["NODE_SNAPSHOT_TRUSTED_KEYS_FILE"] = MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE
         env_values["NODE_P2P_BIND_PORT"] = "8333"
         env_values["NODE_P2P_PUBLISH_HOST"] = "127.0.0.1"
         env_values["NODE_PUBLIC_P2P_PORT"] = "8333"
@@ -860,7 +864,7 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
     """Prompt for node bootstrap settings."""
 
     has_snapshot_manifest = bool(env_values.get("NODE_SNAPSHOT_MANIFEST_URLS", "").strip())
-    default_mode = "full" if setup_mode == "local" or not has_snapshot_manifest else "auto"
+    default_mode = "full" if env_values.get("CHIPCOIN_NETWORK") == "mainnet" or setup_mode == "local" or not has_snapshot_manifest else "auto"
     bootstrap_mode = _ask_choice(
         "How should the node bootstrap?",
         {
@@ -889,13 +893,24 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
             "warn": "Warn on weak/untrusted snapshots but continue",
             "enforce": "Require a valid trusted snapshot signature",
         },
-        "warn",
+        "enforce" if env_values.get("CHIPCOIN_NETWORK") == "mainnet" else "warn",
     )
     trusted_keys_file = input(
         f"Enter trusted snapshot signer keys file [{env_values['NODE_SNAPSHOT_TRUSTED_KEYS_FILE']}]: "
     ).strip()
     if trusted_keys_file:
         env_values["NODE_SNAPSHOT_TRUSTED_KEYS_FILE"] = trusted_keys_file
+    if env_values.get("CHIPCOIN_NETWORK") == "mainnet":
+        if env_values["NODE_SNAPSHOT_TRUST_MODE"] != "enforce":
+            _die("Mainnet snapshot bootstrap requires trusted signature enforcement.")
+        key_path = Path(env_values["NODE_SNAPSHOT_TRUSTED_KEYS_FILE"])
+        if key_path == Path(MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE):
+            _ensure_runtime_parent(key_path, "Snapshot trust")
+            if not key_path.exists():
+                with key_path.open("x", encoding="utf-8") as handle:
+                    handle.write(MAINNET_SNAPSHOT_SIGNER_KEY_HEX + "\n")
+            elif key_path.read_text(encoding="utf-8").strip() != MAINNET_SNAPSHOT_SIGNER_KEY_HEX:
+                _die(f"Mainnet snapshot trust key differs from the approved signer: {key_path}")
 
 
 def _print_public_reachability_note(*, network: str = "devnet") -> None:
