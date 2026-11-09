@@ -34,6 +34,7 @@ export async function clearWalletDataCache(network: SupportedNetworkId = DEFAULT
 
 export async function clearAllWalletDataCaches(): Promise<void> {
   await Promise.all([
+    clearWalletDataCache("mainnet"),
     clearWalletDataCache("devnet"),
     clearWalletDataCache("testnet"),
     storageRemove(STORAGE_KEYS.walletDataCache),

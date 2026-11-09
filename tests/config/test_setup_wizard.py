@@ -109,18 +109,27 @@ def test_mainnet_defaults_use_isolated_full_sync_profile() -> None:
 
     assert env_values["CHIPCOIN_NETWORK"] == "mainnet"
     assert env_values["COMPOSE_PROJECT_NAME"] == "chipcoin-mainnet"
-    assert env_values["NODE_DATA_PATH"] == "/var/lib/chipcoin/data/node.sqlite3"
+    assert env_values["NODE_DATA_PATH"] == "/var/lib/chipcoin-mainnet-official/data/node.sqlite3"
+    assert env_values["CHIPCOIN_RUNTIME_HOST_DIR"] == "/var/lib/chipcoin-mainnet-official"
     assert env_values["NODE_BOOTSTRAP_MODE"] == "full"
     assert env_values["NODE_SNAPSHOT_MANIFEST_URLS"] == ""
     assert env_values["NODE_P2P_BIND_PORT"] == "8333"
     assert env_values["NODE_P2P_PUBLISH_HOST"] == "127.0.0.1"
     assert env_values["NODE_HTTP_BIND_PORT"] == "8080"
-    assert env_values["NODE_HTTP_PUBLISH_PORT"] == "38084"
+    assert env_values["NODE_HTTP_PUBLISH_PORT"] == "8080"
     assert env_values["MINING_NODE_URLS"] == "http://node:8080"
     assert env_values["NODE_BOOTSTRAP_URL"] == "https://mainnet-bootstrap.chipcoinprotocol.com"
     assert env_values["DEFAULT_EXPLORER_URL"] == "https://explorer.chipcoinprotocol.com/api/mainnet"
     assert env_values["DEFAULT_BOOTSTRAP_PEER"] == ""
     assert env_values["DEFAULT_NODE_ENDPOINT"] == "https://mainnet-api.chipcoinprotocol.com"
+
+
+def test_mainnet_wizard_rejects_divergent_core(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    wizard._require_verified_mainnet_core()
+    monkeypatch.setattr(wizard, "GENESIS_MESSAGE", "different genesis")
+    with pytest.raises(SystemExit):
+        wizard._require_verified_mainnet_core()
 
 
 def test_mainnet_compose_exposure_is_private_by_default() -> None:
@@ -133,7 +142,7 @@ def test_mainnet_compose_exposure_is_private_by_default() -> None:
     assert "NODE_P2P_PUBLISH_HOST=127.0.0.1" in mainnet_env
     assert "NODE_P2P_BIND_PORT=8333" in mainnet_env
     assert "NODE_HTTP_BIND_PORT=8080" in mainnet_env
-    assert "NODE_HTTP_PUBLISH_PORT=38084" in mainnet_env
+    assert "NODE_HTTP_PUBLISH_PORT=8080" in mainnet_env
 
 
 def test_mainnet_local_wizard_endpoints_use_host_and_container_ports() -> None:
@@ -143,7 +152,7 @@ def test_mainnet_local_wizard_endpoints_use_host_and_container_ports() -> None:
     wizard._apply_network_defaults(env_values, "mainnet")
     wizard._apply_setup_mode(env_values, "local", "both", network="mainnet")
 
-    assert env_values["DEFAULT_NODE_ENDPOINT"] == "http://127.0.0.1:38084"
+    assert env_values["DEFAULT_NODE_ENDPOINT"] == "http://127.0.0.1:8080"
     assert env_values["MINING_NODE_URLS"] == "http://node:8080"
 
 
@@ -596,8 +605,10 @@ def test_configure_reward_node_sets_reward_automation_env_and_writes_wallet(monk
         assert wallet_address.startswith("CHCC")
         assert wallet_public_key_hex
         assert env_values["REWARD_NODE_AUTO_NODE_ID"] == "reward-node-test"
-        assert env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] == str(reward_wallet_path)
-        assert env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] == str(reward_wallet_path)
+        assert env_values["REWARD_NODE_OWNER_WALLET_SOURCE"] == str(reward_wallet_path)
+        assert env_values["REWARD_NODE_ATTEST_WALLET_SOURCE"] == str(reward_wallet_path)
+        assert env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] == "/runtime/reward-owner-wallet.json"
+        assert env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] == "/runtime/reward-attest-wallet.json"
         assert env_values["REWARD_NODE_AUTO_DECLARED_HOST"] == "reward-node.example.com"
         assert env_values["REWARD_NODE_AUTO_DECLARED_PORT"] == "18444"
 

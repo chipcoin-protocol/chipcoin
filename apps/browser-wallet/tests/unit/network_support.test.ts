@@ -121,12 +121,12 @@ describe("browser wallet network support", () => {
     installExtensionStorage();
   });
 
-  it("uses testnet defaults and persists the selected network", async () => {
+  it("uses Mainnet for a new install and persists an explicit network", async () => {
     const { loadSettings, saveSettings } = await import("../../src/storage/preferences_store");
 
     await expect(loadSettings()).resolves.toMatchObject({
-      expectedNetwork: "testnet",
-      nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
+      expectedNetwork: "mainnet",
+      nodeApiBaseUrl: "https://mainnet-api.chipcoinprotocol.com",
     });
 
     await saveSettings({
@@ -139,6 +139,14 @@ describe("browser wallet network support", () => {
       expectedNetwork: "devnet",
       nodeApiBaseUrl: "https://api.chipcoinprotocol.com",
     });
+  });
+
+  it("keeps legacy settings without a network on Testnet", async () => {
+    const { STORAGE_KEYS } = await import("../../src/shared/constants");
+    const { storageSet } = await import("../../src/shared/browser");
+    const { loadSettings } = await import("../../src/storage/preferences_store");
+    await storageSet(STORAGE_KEYS.settings, { nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com" });
+    await expect(loadSettings()).resolves.toMatchObject({ expectedNetwork: "testnet" });
   });
 
   it("accepts a node endpoint only when the selected network matches", async () => {

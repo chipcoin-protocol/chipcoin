@@ -15,11 +15,9 @@ function avoidInnerHtmlAssignments(code: string): string {
 export default defineConfig(({ mode }) => {
   const repoEnv = loadEnv(mode, resolve(__dirname, "../.."), "");
   const defaultNodeEndpoint = repoEnv.BROWSER_WALLET_DEFAULT_NODE_ENDPOINT
-    || repoEnv.DEFAULT_NODE_ENDPOINT
-    || "https://api.chipcoinprotocol.com";
+    || "https://mainnet-api.chipcoinprotocol.com";
   const defaultExplorerUrl = repoEnv.BROWSER_WALLET_DEFAULT_EXPLORER_URL
-    || repoEnv.DEFAULT_EXPLORER_URL
-    || "https://explorer.chipcoinprotocol.com";
+    || "https://explorer.chipcoinprotocol.com/api/mainnet";
 
   return {
   plugins: [

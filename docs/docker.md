@@ -97,10 +97,10 @@ guardrail. Validate the value in testnet before tightening it.
 - The miner no longer keeps a local chain database.
 - `MINING_WORKER_COUNT` can be raised above `1` to use multiple local CPU cores
   inside one miner container.
-- The default Docker profile is public testnet.
+- The same Compose file serves Mainnet, Testnet, and Devnet. Choose an explicit environment file; the wizard selects Mainnet for a new installation.
 - The generic Compose default publishes both P2P and HTTP on loopback. Public testnet explicitly sets `NODE_P2P_PUBLISH_HOST=0.0.0.0` in its example profile; keep HTTP on `127.0.0.1:28081`.
 - Public firewall rules should expose only the selected P2P port. Mainnet starts private on `127.0.0.1:8333`; an operator must explicitly set the P2P publish host to `0.0.0.0` before running a public peer.
 - Testnet miner defaults should stay conservative (`MINING_MIN_INTERVAL_SECONDS=10.0`, `MINING_NONCE_BATCH_SIZE=50000`) for multi-node public runs.
 - Devnet is still available via `.env.devnet.example` and uses P2P `18444/tcp` plus localhost HTTP `8081`.
-- Mainnet candidate: container HTTP `8080/tcp`, host `127.0.0.1:38084`; see `.env.mainnet.example` and `docs/mainnet-network-ports.md`.
+- Mainnet: container HTTP `8080/tcp`, host `127.0.0.1:8080` by default; see `.env.mainnet.example`. Keep separate runtime data and wallet files.
 - Local override files are for ports, extra bind mounts, and machine-specific behavior only. Keep secrets and runtime state out of the repository.

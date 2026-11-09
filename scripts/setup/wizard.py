@@ -26,7 +26,8 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from chipcoin.interfaces.cli import _load_snapshot_trusted_keys  # noqa: E402
-from chipcoin.config import get_network_config  # noqa: E402
+from chipcoin.config import MAINNET_CONFIG, get_network_config  # noqa: E402
+from chipcoin.consensus.genesis import GENESIS_MESSAGE, canonical_genesis_block  # noqa: E402
 from chipcoin.consensus.economics import CHCBITS_PER_CHC, register_reward_node_fee_chipbits, renew_reward_node_fee_chipbits  # noqa: E402
 from chipcoin.crypto.keys import parse_private_key_hex  # noqa: E402
 from chipcoin.node.service import NodeService  # noqa: E402
@@ -36,12 +37,13 @@ from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_mldsa44_
 ENV_PATH = REPO_ROOT / ".env"
 ENV_EXAMPLE_PATH = REPO_ROOT / "config" / "env" / ".env.example"
 RUNTIME_ROOT = Path("/var/lib/chipcoin")
+MAINNET_RUNTIME_ROOT = Path("/var/lib/chipcoin-mainnet-official")
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.snapshot")
 TESTNET_NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-testnet.sqlite3")
 TESTNET_NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-testnet.snapshot")
-MAINNET_NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node.sqlite3")
-MAINNET_NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-mainnet.snapshot")
+MAINNET_NODE_DATA_PATH = str(MAINNET_RUNTIME_ROOT / "data" / "node.sqlite3")
+MAINNET_NODE_SNAPSHOT_PATH = str(MAINNET_RUNTIME_ROOT / "data" / "node-mainnet.snapshot")
 WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "chipcoin-wallet.json")
 REWARD_WALLET_PATH = str(RUNTIME_ROOT / "wallets" / "reward-node-wallet.json")
 PUBLIC_DEVNET_NODE_ENDPOINT = "https://api.chipcoinprotocol.com"
@@ -57,7 +59,7 @@ PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/s
 PUBLIC_MAINNET_BOOTSTRAP_URL = "https://mainnet-bootstrap.chipcoinprotocol.com"
 TESTNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:28081"
 PUBLIC_MAINNET_WALLET_API_ENDPOINT = "https://mainnet-api.chipcoinprotocol.com"
-MAINNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:38084"
+MAINNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:8080"
 PUBLIC_IP_DETECT_URLS = (
     "https://api.ipify.org",
     "https://ifconfig.me/ip",
@@ -66,51 +68,55 @@ SNAPSHOT_STALE_WARNING_SECONDS = 6 * 60 * 60
 SNAPSHOT_LARGE_DELTA_WARNING_SECONDS = 24 * 60 * 60
 COMPOSE_FILE_PATH = REPO_ROOT / "docker-compose.yml"
 DEFAULTS = {
-    "CHIPCOIN_NETWORK": "testnet",
-    "COMPOSE_PROJECT_NAME": "chipcoin-testnet",
-    "CHIPCOIN_RUNTIME_DIR": str(RUNTIME_ROOT),
-    "DEFAULT_NODE_ENDPOINT": PUBLIC_TESTNET_WALLET_API_ENDPOINT,
-    "DEFAULT_BOOTSTRAP_PEER": PUBLIC_TESTNET_BOOTSTRAP_PEER,
-    "DEFAULT_EXPLORER_URL": PUBLIC_TESTNET_EXPLORER_URL,
-    "NODE_DATA_PATH": TESTNET_NODE_DATA_PATH,
-    "NODE_BOOTSTRAP_MODE": "auto",
-    "NODE_SNAPSHOT_MANIFEST_URLS": PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL,
-    "NODE_SNAPSHOT_FILE": TESTNET_NODE_SNAPSHOT_PATH,
-    "NODE_SNAPSHOT_TRUST_MODE": "warn",
+    "CHIPCOIN_NETWORK": "mainnet",
+    "COMPOSE_PROJECT_NAME": "chipcoin-mainnet",
+    "CHIPCOIN_RUNTIME_DIR": str(MAINNET_RUNTIME_ROOT),
+    "CHIPCOIN_RUNTIME_HOST_DIR": str(MAINNET_RUNTIME_ROOT),
+    "DEFAULT_NODE_ENDPOINT": PUBLIC_MAINNET_WALLET_API_ENDPOINT,
+    "DEFAULT_BOOTSTRAP_PEER": "",
+    "DEFAULT_EXPLORER_URL": "https://explorer.chipcoinprotocol.com/api/mainnet",
+    "NODE_DATA_PATH": MAINNET_NODE_DATA_PATH,
+    "NODE_BOOTSTRAP_MODE": "full",
+    "NODE_SNAPSHOT_MANIFEST_URLS": "",
+    "NODE_SNAPSHOT_FILE": MAINNET_NODE_SNAPSHOT_PATH,
+    "NODE_SNAPSHOT_TRUST_MODE": "enforce",
     "NODE_SNAPSHOT_TRUSTED_KEYS_FILE": "",
     "NODE_SNAPSHOT_SELECTED_URL": "",
     "NODE_SNAPSHOT_SELECTED_HEIGHT": "",
     "NODE_SNAPSHOT_SELECTED_HASH": "",
     "NODE_LOG_LEVEL": "INFO",
-    "NODE_P2P_BIND_PORT": "28444",
+    "NODE_P2P_BIND_PORT": "8333",
     "NODE_P2P_PUBLISH_HOST": "127.0.0.1",
-    "NODE_HTTP_BIND_PORT": "28081",
-    "NODE_HTTP_PUBLISH_PORT": "28081",
+    "NODE_HTTP_BIND_PORT": "8080",
+    "NODE_HTTP_PUBLISH_PORT": "8080",
     "CHIPCOIN_HTTP_ALLOWED_ORIGINS": "",
     "MINER_LOG_LEVEL": "INFO",
-    "MINER_WALLET_FILE": WALLET_PATH,
+    "MINER_WALLET_FILE": str(MAINNET_RUNTIME_ROOT / "keys" / "miner-wallet.json"),
     "REWARD_NODE_AUTO_NODE_ID": "",
     "REWARD_NODE_AUTO_OWNER_WALLET_FILE": "",
     "REWARD_NODE_AUTO_ATTEST_WALLET_FILE": "",
+    "REWARD_NODE_OWNER_WALLET_SOURCE": "",
+    "REWARD_NODE_ATTEST_WALLET_SOURCE": "",
     "REWARD_NODE_AUTO_DECLARED_HOST": "",
     "REWARD_NODE_AUTO_DECLARED_PORT": "",
     "REWARD_NODE_AUTO_RENEW_ENABLED": "true",
     "REWARD_NODE_AUTO_ATTEST_ENABLED": "true",
     "REWARD_NODE_AUTO_POLL_INTERVAL_SECONDS": "5.0",
     "MINING_MIN_INTERVAL_SECONDS": "10.0",
-    "MINING_NODE_URLS": "http://node:28081",
+    "MINING_NODE_URLS": "http://node:8080",
+    "MINING_MAX_ACCEPTED_BLOCKS": "",
     "MINING_MINER_ID": "",
     "MINING_POLLING_INTERVAL_SECONDS": "2.0",
     "MINING_REQUEST_TIMEOUT_SECONDS": "10.0",
     "MINING_NONCE_BATCH_SIZE": "50000",
     "MINING_WORKER_COUNT": "1",
     "MINING_TEMPLATE_REFRESH_SKEW_SECONDS": "1",
-    "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_TESTNET_WALLET_API_ENDPOINT,
+    "BROWSER_WALLET_DEFAULT_NODE_ENDPOINT": PUBLIC_MAINNET_WALLET_API_ENDPOINT,
     "NODE_DIRECT_PEERS": "",
     "NODE_DIRECT_PEER": "",
-    "NODE_BOOTSTRAP_URL": PUBLIC_TESTNET_BOOTSTRAP_URL,
+    "NODE_BOOTSTRAP_URL": PUBLIC_MAINNET_BOOTSTRAP_URL,
     "NODE_PUBLIC_HOST": "",
-    "NODE_PUBLIC_P2P_PORT": "28444",
+    "NODE_PUBLIC_P2P_PORT": "8333",
     "DIRECT_PEERS": "",
     "DIRECT_PEER": "",
     "BOOTSTRAP_URL": "",
@@ -135,6 +141,16 @@ class SnapshotManifestEntry(NamedTuple):
     signer_pubkeys: tuple[str, ...] = ()
 
 
+def _require_verified_mainnet_core() -> None:
+    """Fail closed if this source tree is not the verified Mainnet Core."""
+    if (MAINNET_CONFIG.chain_id != "chipcoin-mainnet-1"
+        or MAINNET_CONFIG.params.genesis_bits != 0x1E0537E7
+        or MAINNET_CONFIG.canonical_genesis_hash != "00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f"
+        or canonical_genesis_block().block_hash() != MAINNET_CONFIG.canonical_genesis_hash
+        or GENESIS_MESSAGE != "Die Welt ist alles, was der Fall ist."):
+        _die("Mainnet Core identity mismatch: expected frozen Core 0.1.2, Wittgenstein genesis and bits 0x1e0537e7.")
+
+
 def _snapshot_metadata_path(node_data_path: Path) -> Path:
     """Return the audit metadata file stored next to the node DB."""
 
@@ -147,7 +163,7 @@ def main() -> int:
     setup_mode = _ask_choice(
         "Select setup mode",
         {
-            "quick": "Quick start (use public testnet defaults)",
+            "quick": "Quick start (use Mainnet defaults)",
             "custom": "Custom configuration",
             "local": "Local/self-hosted",
         },
@@ -171,8 +187,10 @@ def main() -> int:
             "devnet": "Devnet",
             "testnet": "Public testnet candidate",
         },
-        "testnet",
+        "mainnet",
     )
+    if network == "mainnet":
+        _require_verified_mainnet_core()
     env_path = _ask_env_path(network)
     runtime_mode = _ask_choice("How should services run?", {"foreground": "Foreground", "background": "Background"}, "foreground")
     _print_public_reachability_note(network=network)
@@ -190,7 +208,7 @@ def main() -> int:
             {"generate": "Generate new wallet", "import": "Import existing private key"},
             "generate",
         )
-        miner_wallet_path = Path(WALLET_PATH)
+        miner_wallet_path = _wallet_path(network, "miner-wallet.json")
         _prepare_wallet_path(miner_wallet_path)
         miner_wallet_address, _miner_wallet_public_key_hex = _handle_wallet(wallet_mode, miner_wallet_path, network=network)
 
@@ -509,7 +527,9 @@ def _ensure_runtime_parent(path: Path, label: str) -> None:
 
 
 def _prepare_runtime_with_sudo(target_parent: Path, label: str, original_error: PermissionError) -> None:
-    runtime_root = RUNTIME_ROOT
+    runtime_root = MAINNET_RUNTIME_ROOT if target_parent.is_relative_to(MAINNET_RUNTIME_ROOT) else RUNTIME_ROOT
+    if runtime_root.exists():
+        _die(f"Existing runtime directory is not writable: {runtime_root}. Refusing to change ownership of existing chain or wallet data.")
     print()
     print(
         f"{label} needs a writable runtime directory under {runtime_root}, "
@@ -519,31 +539,23 @@ def _prepare_runtime_with_sudo(target_parent: Path, label: str, original_error: 
     if answer in {"", "y", "yes"}:
         user = getpass.getuser()
         group = _primary_group_name()
-        mkdir_args = [
-            "sudo",
-            "mkdir",
-            "-p",
-            str(runtime_root / "data"),
-            str(runtime_root / "wallets"),
-            str(runtime_root / "logs"),
-        ]
-        chown_args = ["sudo", "chown", "-R", f"{user}:{group}", str(runtime_root)]
+        mkdir_args = ["sudo", "install", "-d", "-m", "700", "-o", user, "-g", group,
+                      str(runtime_root), str(runtime_root / "data"), str(runtime_root / "keys"),
+                      str(runtime_root / "wallets"), str(runtime_root / "logs")]
         try:
             subprocess.run(mkdir_args, check=True)
-            subprocess.run(chown_args, check=True)
             target_parent.mkdir(parents=True, exist_ok=True)
             return
         except (OSError, subprocess.CalledProcessError) as exc:
             _die(
                 f"Failed to prepare runtime directory with sudo. "
-                f"Tried: {' '.join(mkdir_args)} && {' '.join(chown_args)}. "
+                f"Tried: {' '.join(mkdir_args)}. "
                 f"Original error: {original_error}. Sudo step error: {exc}"
             )
     _die(
         f"Cannot continue without a writable runtime directory for {label.lower()}. "
-        f"Prepare it manually with "
-        f"'sudo mkdir -p {runtime_root}/data {runtime_root}/wallets {runtime_root}/logs "
-        f"&& sudo chown -R $USER:$USER {runtime_root}'. Original error: {original_error}"
+        f"Prepare a new isolated directory under {runtime_root} without changing ownership of existing data. "
+        f"Original error: {original_error}"
     )
 
 
@@ -608,7 +620,7 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str, netwo
         {"generate": "Generate new wallet", "import": "Import existing private key"},
         "generate",
     )
-    reward_wallet_path = Path(REWARD_WALLET_PATH)
+    reward_wallet_path = _wallet_path(network, "reward-owner-wallet.json")
     _prepare_wallet_path(reward_wallet_path)
     reward_wallet_address, reward_wallet_public_key_hex = _handle_wallet(reward_wallet_mode, reward_wallet_path, network=network)
     env_values["REWARD_NODE_AUTO_NODE_ID"] = _ask_reward_node_id(_default_reward_node_id())
@@ -624,8 +636,10 @@ def _configure_reward_node(env_values: dict[str, str], *, setup_mode: str, netwo
         "Enter the reward-node declared port",
         env_values.get("NODE_PUBLIC_P2P_PORT", "") or env_values.get("NODE_P2P_BIND_PORT", "18444"),
     )
-    env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] = str(reward_wallet_path)
-    env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] = str(reward_wallet_path)
+    env_values["REWARD_NODE_OWNER_WALLET_SOURCE"] = str(reward_wallet_path)
+    env_values["REWARD_NODE_ATTEST_WALLET_SOURCE"] = str(reward_wallet_path)
+    env_values["REWARD_NODE_AUTO_OWNER_WALLET_FILE"] = "/runtime/reward-owner-wallet.json"
+    env_values["REWARD_NODE_AUTO_ATTEST_WALLET_FILE"] = "/runtime/reward-attest-wallet.json"
     env_values["REWARD_NODE_AUTO_RENEW_ENABLED"] = "true"
     env_values["REWARD_NODE_AUTO_ATTEST_ENABLED"] = "true"
     return reward_wallet_path, reward_wallet_address, reward_wallet_public_key_hex
@@ -635,8 +649,11 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
     """Apply network-specific local paths and safe endpoint defaults."""
 
     env_values["CHIPCOIN_NETWORK"] = network
+    env_values["MINER_WALLET_FILE"] = str(_wallet_path(network, "miner-wallet.json"))
     if network == "mainnet":
         env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-mainnet"
+        env_values["CHIPCOIN_RUNTIME_DIR"] = str(MAINNET_RUNTIME_ROOT)
+        env_values["CHIPCOIN_RUNTIME_HOST_DIR"] = str(MAINNET_RUNTIME_ROOT)
         env_values["NODE_DATA_PATH"] = MAINNET_NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = MAINNET_NODE_SNAPSHOT_PATH
         env_values["NODE_BOOTSTRAP_MODE"] = "full"
@@ -646,7 +663,7 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["NODE_P2P_PUBLISH_HOST"] = "127.0.0.1"
         env_values["NODE_PUBLIC_P2P_PORT"] = "8333"
         env_values["NODE_HTTP_BIND_PORT"] = "8080"
-        env_values["NODE_HTTP_PUBLISH_PORT"] = "38084"
+        env_values["NODE_HTTP_PUBLISH_PORT"] = "8080"
         env_values["MINING_NODE_URLS"] = "http://node:8080"
         env_values["DEFAULT_BOOTSTRAP_PEER"] = ""
         env_values["NODE_BOOTSTRAP_URL"] = PUBLIC_MAINNET_BOOTSTRAP_URL
@@ -658,8 +675,12 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         return
     if network == "devnet":
         env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-devnet"
+        env_values["CHIPCOIN_RUNTIME_DIR"] = str(RUNTIME_ROOT)
+        env_values["CHIPCOIN_RUNTIME_HOST_DIR"] = str(RUNTIME_ROOT)
         env_values["NODE_DATA_PATH"] = NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = NODE_SNAPSHOT_PATH
+        env_values["NODE_BOOTSTRAP_MODE"] = "auto"
+        env_values["NODE_SNAPSHOT_TRUST_MODE"] = "warn"
         env_values["NODE_P2P_BIND_PORT"] = "18444"
         env_values["NODE_P2P_PUBLISH_HOST"] = "0.0.0.0"
         env_values["NODE_PUBLIC_P2P_PORT"] = "18444"
@@ -676,8 +697,12 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         return
     if network == "testnet":
         env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-testnet"
+        env_values["CHIPCOIN_RUNTIME_DIR"] = str(RUNTIME_ROOT)
+        env_values["CHIPCOIN_RUNTIME_HOST_DIR"] = str(RUNTIME_ROOT)
         env_values["NODE_DATA_PATH"] = TESTNET_NODE_DATA_PATH
         env_values["NODE_SNAPSHOT_FILE"] = TESTNET_NODE_SNAPSHOT_PATH
+        env_values["NODE_BOOTSTRAP_MODE"] = "auto"
+        env_values["NODE_SNAPSHOT_TRUST_MODE"] = "warn"
         env_values["NODE_P2P_BIND_PORT"] = "28444"
         env_values["NODE_P2P_PUBLISH_HOST"] = "0.0.0.0"
         env_values["NODE_PUBLIC_P2P_PORT"] = "28444"
@@ -705,6 +730,16 @@ def _wallet_endpoint_for_network(network: str) -> str:
     if network == "mainnet":
         return PUBLIC_MAINNET_WALLET_API_ENDPOINT
     return PUBLIC_DEVNET_NODE_ENDPOINT if network == "devnet" else PUBLIC_TESTNET_WALLET_API_ENDPOINT
+
+
+def _wallet_path(network: str, name: str) -> Path:
+    if network == "mainnet":
+        return MAINNET_RUNTIME_ROOT / "keys" / name
+    if network == "testnet":
+        return Path(WALLET_PATH if name == "miner-wallet.json" else REWARD_WALLET_PATH)
+    if network == "devnet":
+        return RUNTIME_ROOT / "wallets" / "devnet" / name
+    _die(f"Unsupported wallet network: {network}")
 
 
 def _same_compose_node_endpoint(env_values: dict[str, str]) -> str:
@@ -1021,10 +1056,10 @@ def _preflight_validate(env_values: dict[str, str], *, role: str) -> None:
                 _die(f"Snapshot trusted keys file does not exist: {trusted_keys_file}")
         reward_node_id = env_values.get("REWARD_NODE_AUTO_NODE_ID", "").strip()
         if reward_node_id:
-            owner_wallet_path = env_values.get("REWARD_NODE_AUTO_OWNER_WALLET_FILE", "").strip()
-            attest_wallet_path = env_values.get("REWARD_NODE_AUTO_ATTEST_WALLET_FILE", "").strip() or owner_wallet_path
+            owner_wallet_path = env_values.get("REWARD_NODE_OWNER_WALLET_SOURCE", "").strip()
+            attest_wallet_path = env_values.get("REWARD_NODE_ATTEST_WALLET_SOURCE", "").strip() or owner_wallet_path
             if not owner_wallet_path:
-                _die("Reward-node mode requires REWARD_NODE_AUTO_OWNER_WALLET_FILE.")
+                _die("Reward-node mode requires REWARD_NODE_OWNER_WALLET_SOURCE.")
             if not Path(owner_wallet_path).exists():
                 _die(f"Reward-node owner wallet file does not exist: {owner_wallet_path}")
             if not attest_wallet_path:
@@ -1374,7 +1409,6 @@ def _print_success(
     print()
     print("Next commands:")
     print(f"  {compose_up_background}")
-    print("  bash scripts/runtime/reset-chain.sh")
     if service_role in {"node", "both"}:
         print(f"  {compose_base} logs -f node")
     if service_role in {"miner", "both"}:

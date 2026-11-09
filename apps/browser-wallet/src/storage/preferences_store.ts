@@ -17,10 +17,13 @@ const DEFAULT_SETTINGS: WalletSettings = {
 
 export async function loadSettings(): Promise<WalletSettings> {
   const saved = await storageGet<Partial<WalletSettings>>(STORAGE_KEYS.settings);
+  const oldWallet = saved?.expectedNetwork === undefined
+    ? await storageGet(STORAGE_KEYS.wallet)
+    : null;
   const savedNetwork = String(saved?.expectedNetwork ?? "");
   const expectedNetwork = isSupportedNetwork(savedNetwork)
     ? savedNetwork
-    : DEFAULT_SETTINGS.expectedNetwork;
+    : (saved || oldWallet) ? "testnet" : DEFAULT_SETTINGS.expectedNetwork;
   return {
     ...DEFAULT_SETTINGS,
     ...saved,

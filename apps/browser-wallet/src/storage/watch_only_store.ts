@@ -21,6 +21,7 @@ export async function saveWatchOnlyAddressRecords(
 
 export async function clearAllWatchOnlyAddressRecords(): Promise<void> {
   await Promise.all([
+    storageRemove(watchOnlyStorageKey("mainnet")),
     storageRemove(watchOnlyStorageKey("devnet")),
     storageRemove(watchOnlyStorageKey("testnet")),
     storageRemove(STORAGE_KEYS.watchOnlyAddresses),

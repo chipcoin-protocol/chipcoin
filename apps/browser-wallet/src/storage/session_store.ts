@@ -30,6 +30,7 @@ export async function clearSubmittedTransactions(network: SupportedNetworkId = D
 
 export async function clearAllSubmittedTransactions(): Promise<void> {
   await Promise.all([
+    clearSubmittedTransactions("mainnet"),
     clearSubmittedTransactions("devnet"),
     clearSubmittedTransactions("testnet"),
     storageRemove(STORAGE_KEYS.submittedTransactions),

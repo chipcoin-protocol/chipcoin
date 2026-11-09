@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The setup wizard is a guided way to create a local `.env`, prepare runtime paths, and initialize the public Chipcoin testnet stack without editing every setting by hand.
+The setup wizard creates a network-specific environment file and prepares an isolated runtime. New installations select Mainnet by default.
 
 Run it from the repository root:
 
@@ -13,8 +13,7 @@ python3 scripts/setup/wizard.py
 The wizard writes a network-specific environment file by default: `.env` for
 testnet, `.env.devnet` for devnet, and `.env.mainnet` for mainnet. Network
 selection remains explicit; pressing Enter at the network prompt selects
-testnet, not mainnet. Devnet remains selectable as an explicit
-legacy/development profile.
+Mainnet. Testnet and Devnet remain selectable.
 
 The wizard is now Docker-first:
 
@@ -28,7 +27,7 @@ The wizard is now Docker-first:
 - it can now prepare either a passive node or a reward-participating node
 - it offers explicit roles for full node, miner, and reward node
 
-By default, the generated runtime paths point to `/var/lib/chipcoin`. On a fresh Linux host, the wizard can prepare that runtime directory with `sudo` during setup when needed.
+Mainnet uses `/var/lib/chipcoin-mainnet-official`; Testnet and Devnet use separate database and wallet paths under `/var/lib/chipcoin`. On a fresh Linux host the wizard can create the new runtime directory with `sudo`. It refuses to change ownership of an existing runtime tree.
 
 ## When To Use It
 
@@ -48,7 +47,7 @@ Prefer the manual setup flow from `README.md` when:
 
 ### Quick Start
 
-This mode uses public testnet defaults:
+The default network is Mainnet. Its wallet-safe API is `https://mainnet-api.chipcoinprotocol.com`, seed is `https://mainnet-bootstrap.chipcoinprotocol.com`, P2P port is `8333`, and local HTTP is `127.0.0.1:8080`. Mainnet starts with full sync from genesis and private P2P exposure. The following apply only when Testnet is explicitly selected:
 
 - wallet-safe endpoint: `https://testnet-api.chipcoinprotocol.com`
 - P2P port: `28444`
@@ -63,7 +62,7 @@ This mode uses public testnet defaults:
 The wizard marks testnet/devnet P2P publication explicitly. Mainnet is private
 by default: P2P stays on loopback until an operator deliberately changes
 `NODE_P2P_PUBLISH_HOST` to `0.0.0.0` and applies the reviewed firewall policy.
-Mainnet node HTTP maps container `8080` to host `127.0.0.1:38084`; the miner
+Mainnet node HTTP maps container `8080` to host `127.0.0.1:8080`; the miner
 uses the in-network URL `http://node:8080`.
 
 This is the shortest path if you want to connect quickly to the public testnet
@@ -123,8 +122,8 @@ For public devnet setups, the default manifest is:
 
 - `https://chipcoinprotocol.com/downloads/snapshots/devnet/latest.manifest.json`
 
-For testnet, the wizard leaves snapshot manifest URLs empty and defaults to
-full sync unless the operator explicitly provides a compatible testnet manifest.
+For Mainnet, the wizard defaults to full sync. For Testnet, it offers the
+network-specific snapshot manifest; signed snapshot import requires the configured trust policy.
 The current public testnet manifest target is:
 
 - `https://chipcoinprotocol.com/downloads/snapshots/testnet/latest.manifest.json`

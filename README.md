@@ -1,6 +1,6 @@
 # Chipcoin v2
 
-Chipcoin v2 is a Python-first, Bitcoin-inspired blockchain project focused on a small but operational public testnet stack.
+Chipcoin v2 is a Python-first, Bitcoin-inspired blockchain project with Mainnet, Testnet, and Devnet profiles.
 
 This public repository is centered on three components:
 
@@ -8,7 +8,11 @@ This public repository is centered on three components:
 - `miner`
 - `browser-wallet`
 
-The current public release target is `testnet`, not mainnet. Devnet remains available as an explicit legacy/development profile.
+New wizard and browser wallet installations select `mainnet` by default. Testnet and Devnet remain available through explicit selection. The same Core source and generic Compose file serve every network; use a separate environment file and runtime directory for each.
+
+Mainnet identity: Core `0.1.2` at commit `aa11445837d0c101e827e5f3619ea3f054ab6c21`, chain ID `chipcoin-mainnet-1`, genesis `00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f`, bits `0x1e0537e7`. The genesis incorporates “Die Welt ist alles, was der Fall ist.”
+
+For a new installation run `python3 scripts/setup/wizard.py`. It writes `.env.mainnet` for Mainnet, `.env` for Testnet, or `.env.devnet` for Devnet and prints the matching Compose command. P2P is private by default. Never reuse database or wallet files across networks.
 
 Public testnet defaults included in `.env.example`:
 
@@ -43,7 +47,7 @@ What works today:
 
 What is intentionally limited today:
 
-- `testnet` is the supported public candidate network for this release
+- Mainnet peers and APIs must report the expected chain ID, genesis, and network magic
 - `devnet` is retained for legacy/local development use
 - the node runtime does not use a wallet file yet
 - browser wallet recovery phrases are Chipcoin-specific and not BIP39-compatible yet
@@ -72,7 +76,7 @@ Chipcoin v2 currently exposes a deterministic, integer-only economic model for s
 Core issuance:
 
 - maximum supply: `11,000,000 CHC`
-- target block time: `300 seconds`
+- Mainnet target block time: `600 seconds` (other networks have separate parameters)
 - initial miner subsidy: `50 CHC` per block
 - initial node reward pool: `50 CHC` per epoch
 - epoch length: `100` blocks
@@ -232,7 +236,7 @@ At minimum, set real values for:
 
 `NODE_DATA_PATH` must be a writable SQLite file path. Do not point it at a directory.
 
-For the shortest first run, keep the public testnet defaults from `.env.example` or replace them with your own values.
+For a new Mainnet installation, run the setup wizard or start from `.env.mainnet.example`; `.env.example` is the legacy Testnet template.
 
 If you want a fully local first run, set:
 
@@ -735,7 +739,7 @@ That produces:
 - `apps/browser-wallet/dist-chrome`
 - `apps/browser-wallet/dist-firefox`
 
-On first run, the browser wallet defaults to `testnet` and uses the public wallet-safe API endpoint unless the user changes networks or endpoints in Settings.
+On first run, the browser wallet defaults to Mainnet and `https://mainnet-api.chipcoinprotocol.com`. Explicit existing network selections are preserved.
 
 In `.env.example`, the testnet wallet endpoint is `https://testnet-api.chipcoinprotocol.com`. Devnet remains available as an explicit legacy network with `https://api.chipcoinprotocol.com`.
 
@@ -743,9 +747,9 @@ Detailed instructions:
 
 - `docs/browser-wallet.md`
 
-## First-User Path
+## Manual Testnet Path
 
-The shortest supported path from clone to a working local stack is:
+The following legacy manual path is for Testnet. For a new Mainnet installation use `python3 scripts/setup/wizard.py` or `.env.mainnet.example` and keep its runtime separate:
 
 1. Clone the repository and create `.env` from `.env.example`.
 2. Create and own the runtime directories referenced by `.env`.
@@ -774,7 +778,7 @@ The shortest supported path from clone to a working local stack is:
 - The node logs `node_wallet_runtime=not_used_in_phase_1` because node-side wallet participation is not active yet.
 - Miner rewards go to the configured miner wallet file only.
 - Seed phrase recovery is not implemented in the browser wallet.
-- The repository does not yet define a public mainnet release process.
+- Publishing P2P, miner activation, and reward-node registration remain explicit operator actions.
 
 ## Before First Public Push
 

@@ -1,6 +1,7 @@
 # Chipcoin Browser Wallet
 
 Target network:
+- `mainnet` (default on new installation)
 - `devnet`
 - `testnet`
 
@@ -14,10 +15,10 @@ CHCQ status:
 | --- | --- |
 | Live on testnet | CHCQ wallet generation/import, encrypted ML-DSA seed storage, v2 signing and spending, Send to CHCQ recipients, scheme labels, and watch-only tracking |
 | Activated | Testnet consensus activation was reached at height `20000` |
-| Not available | Mainnet operation and PQ provider-login signatures |
+| Available on Mainnet | ML-DSA-44 wallet import, local signing and wallet-safe API connection with chain ID, network magic, and genesis checks |
 
 The browser wallet signs ML-DSA-44 transactions locally and submits transaction
-format v2 to the configured testnet node. Watch-only CHCQ records still store
+format v2 to the selected network's wallet-safe API. Watch-only CHCQ records still store
 only public addresses and optional local labels; import the matching 32-byte
 seed to spend from one of those addresses.
 

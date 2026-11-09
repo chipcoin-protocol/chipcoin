@@ -21,7 +21,7 @@ declare const __CHIPCOIN_DEFAULT_NODE_ENDPOINT__: string;
 declare const __CHIPCOIN_DEFAULT_EXPLORER_URL__: string;
 export const DEFAULT_NODE_ENDPOINT = __CHIPCOIN_DEFAULT_NODE_ENDPOINT__;
 export const DEFAULT_EXPLORER_URL = __CHIPCOIN_DEFAULT_EXPLORER_URL__;
-export const DEFAULT_NETWORK: SupportedNetworkId = "testnet";
+export const DEFAULT_NETWORK: SupportedNetworkId = "mainnet";
 export const TESTNET_PQ_ACTIVATION_HEIGHT = 20_000;
 export const ENABLE_EXPERIMENTAL_BROWSER_MLDSA = true;
 export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
@@ -30,7 +30,7 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     label: "Mainnet",
     defaultEndpointLabel: "Public Mainnet API",
     defaultNodeApiBaseUrl: "https://mainnet-api.chipcoinprotocol.com",
-    localNodeApiBaseUrl: "http://127.0.0.1:28081",
+    localNodeApiBaseUrl: "http://127.0.0.1:8080",
     description: "Production network. ML-DSA-44 wallets and CHCQ addresses are required from genesis.",
     statusLabel: "production mainnet",
     httpSafetyNote: "Use the wallet-safe public mainnet API or a trusted local node. Verify the connected network before signing.",
@@ -42,7 +42,7 @@ export const SUPPORTED_NETWORKS: readonly SupportedNetworkConfig[] = [
     id: "devnet",
     label: "Devnet",
     defaultEndpointLabel: "Public Devnet API",
-    defaultNodeApiBaseUrl: DEFAULT_NODE_ENDPOINT,
+    defaultNodeApiBaseUrl: "https://api.chipcoinprotocol.com",
     description: "Legacy public devnet/fallback environment.",
     statusLabel: "legacy devnet",
     httpSafetyNote: "Public devnet endpoint is provided for convenience and may change.",
