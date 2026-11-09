@@ -14,6 +14,15 @@ Mainnet identity: Core `0.1.2` at commit `aa11445837d0c101e827e5f3619ea3f054ab6c
 
 For a new installation run `python3 scripts/setup/wizard.py`. It writes `.env.mainnet` for Mainnet, `.env` for Testnet, or `.env.devnet` for Devnet and prints the matching Compose command. P2P is private by default. Never reuse database or wallet files across networks.
 
+A passive full node needs Python 3 and Docker Compose on the host; it does not
+need a Python virtual environment, `pip install`, or GCC. The native ML-DSA-44
+module is compiled inside the Docker image during `docker compose ... up --build`.
+If you install the Python CLI directly on the host, or ask the wizard to create
+a miner/reward wallet or import a snapshot on the host, install a C compiler,
+Python development headers, and the Python package first. On Ubuntu:
+`sudo apt-get install build-essential python3-dev python3-venv`, then
+`python3 -m venv .venv && .venv/bin/python -m pip install -e .`.
+
 Public testnet defaults included in `.env.example`:
 
 - wallet-safe API: `https://testnet-api.chipcoinprotocol.com`
@@ -453,9 +462,9 @@ The wizard can now prepare:
 - a miner
 - a reward-participating node with prewired `REWARD_NODE_AUTO_*` env values
 
-Testnet is now the default wizard path. It writes `.env` by default so plain
-`docker compose ps` and `docker compose up -d node` operate on the testnet
-project. Choose `devnet` only when you intentionally want the legacy profile.
+Mainnet is the default wizard path and writes `.env.mainnet`. Select Testnet or
+Devnet explicitly. Use the environment file printed by the wizard in each
+Compose command, for example `docker compose --env-file .env.mainnet up -d --build node`.
 
 For reward-node operators on the public testnet, the wizard assumes the bootstrap funding source is the faucet path or another funded testnet wallet. Registration still requires CHC because reward-node participation is an on-chain paid action.
 

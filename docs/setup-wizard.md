@@ -10,6 +10,16 @@ Run it from the repository root:
 python3 scripts/setup/wizard.py
 ```
 
+For the default passive node, a fresh clone needs only host Python 3 and Docker
+Compose. Do not run `pip install -e .` or install GCC on the host for this path.
+The Docker builder compiles the native ML-DSA-44 module when the image is built;
+the running container includes it. Host-side CLI installation, wizard wallet
+creation/import, and wizard snapshot import do use Python crypto packages and
+the native extension. On Ubuntu those paths require
+`sudo apt-get install build-essential python3-dev python3-venv`, followed by
+`python3 -m venv .venv` and `.venv/bin/python -m pip install -e .`; run the
+wizard with `.venv/bin/python scripts/setup/wizard.py` for those paths.
+
 The wizard writes a network-specific environment file by default: `.env` for
 testnet, `.env.devnet` for devnet, and `.env.mainnet` for mainnet. Network
 selection remains explicit; pressing Enter at the network prompt selects

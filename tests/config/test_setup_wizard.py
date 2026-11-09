@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -11,6 +13,17 @@ from chipcoin.node.service import NodeService
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WIZARD_PATH = REPO_ROOT / "scripts" / "setup" / "wizard.py"
+
+
+def test_passive_mainnet_wizard_imports_without_installed_python_packages() -> None:
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", "import runpy; w = runpy.run_path('scripts/setup/wizard.py'); w['_require_verified_mainnet_core']()"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def load_wizard_module():

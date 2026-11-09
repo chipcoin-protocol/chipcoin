@@ -2,11 +2,30 @@
 
 This checklist is for verifying the public repository from a fresh clone.
 
-## Python Runtime
+## Docker Node (default Mainnet)
 
 ```bash
 git clone <repo-url>
 cd chipcoin
+python3 scripts/setup/wizard.py
+docker compose --env-file .env.mainnet config --quiet
+docker compose --env-file .env.mainnet up -d --build node
+docker compose --env-file .env.mainnet ps
+```
+
+This path needs Python 3 and Docker Compose on the host. The Docker builder
+compiles the native ML-DSA-44 module; host GCC and a virtual environment are
+unnecessary for a passive node. The wizard prepares a distinct Mainnet database
+and keeps P2P private by default. Select Testnet or Devnet explicitly in the
+wizard and use its printed environment file for that network.
+
+## Optional Native Python CLI
+
+For native CLI use, wallet creation/import in the wizard, or wizard snapshot
+import, install host build dependencies first. On Ubuntu:
+
+```bash
+sudo apt-get install build-essential python3-dev python3-venv
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .[dev]
@@ -17,7 +36,7 @@ Checks:
 - `chipcoin --help`
 - `chipcoin mine --help`
 
-## Runtime Config
+## Legacy Manual Testnet Runtime Config
 
 ```bash
 cp .env.example .env
@@ -34,7 +53,7 @@ Checks:
 - runtime paths in `.env` point to writable local paths before `docker compose up`
 - wallet file is outside version control
 
-## Node And Miner
+## Legacy Manual Testnet Node And Miner
 
 ```bash
 docker compose up --build node miner

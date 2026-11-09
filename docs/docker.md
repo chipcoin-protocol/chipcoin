@@ -7,6 +7,12 @@ This repository uses Docker Compose as the public runtime path for:
 
 The browser wallet is built separately and connects to the node HTTP API.
 
+From a fresh clone, `python3 scripts/setup/wizard.py` prepares a passive node
+without host `pip`, a virtual environment, or GCC. `docker compose ... up --build`
+compiles the native ML-DSA-44 extension inside the Docker builder. Host-side
+CLI installation, wallet generation/import, and snapshot import require a C
+compiler and Python development headers; see `docs/setup-wizard.md`.
+
 ## Public Compose Files
 
 - `docker-compose.yml`

@@ -25,13 +25,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from chipcoin.interfaces.cli import _load_snapshot_trusted_keys  # noqa: E402
 from chipcoin.config import MAINNET_CONFIG, get_network_config  # noqa: E402
 from chipcoin.consensus.genesis import GENESIS_MESSAGE, canonical_genesis_block  # noqa: E402
-from chipcoin.consensus.economics import CHCBITS_PER_CHC, register_reward_node_fee_chipbits, renew_reward_node_fee_chipbits  # noqa: E402
-from chipcoin.crypto.keys import parse_private_key_hex  # noqa: E402
-from chipcoin.node.service import NodeService  # noqa: E402
-from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_mldsa44_seed, wallet_key_from_private_key  # noqa: E402
 
 
 ENV_PATH = REPO_ROOT / ".env"
@@ -587,12 +582,19 @@ def _ask_reward_node_id(default: str) -> str:
 
 
 def _format_chipbits_as_chc(value: int) -> str:
+    from chipcoin.consensus.economics import CHCBITS_PER_CHC
+
     major, minor = divmod(int(value), CHCBITS_PER_CHC)
     text = f"{major}.{minor:08d}".rstrip("0").rstrip(".")
     return text if text else "0"
 
 
 def _reward_fee_guidance(network: str) -> tuple[str, str, str]:
+    try:
+        from chipcoin.consensus.economics import register_reward_node_fee_chipbits, renew_reward_node_fee_chipbits
+    except ImportError:
+        _die("Reward-node setup needs the host Python package. On Ubuntu install build-essential python3-dev python3-venv, then create a venv and run: .venv/bin/python -m pip install -e .")
+
     params = get_network_config(network).params
     register_fee = register_reward_node_fee_chipbits(registered_reward_node_count=0, params=params)
     renew_fee = renew_reward_node_fee_chipbits(registered_reward_node_count=0, params=params)
@@ -918,6 +920,12 @@ def _prepare_wallet_path(wallet_path: Path) -> None:
 
 
 def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testnet") -> tuple[str, str]:
+    try:
+        from chipcoin.crypto.keys import parse_private_key_hex
+        from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_mldsa44_seed, wallet_key_from_private_key
+    except ImportError:
+        _die("Wallet setup needs the host Python package. On Ubuntu install build-essential python3-dev python3-venv, then create a venv and run: .venv/bin/python -m pip install -e .")
+
     require_pq = network == "mainnet"
     if wallet_mode == "generate":
         wallet_key = generate_wallet_key(scheme="mldsa44" if require_pq else "secp256k1")
@@ -1088,6 +1096,12 @@ def _prepare_node_bootstrap(env_values: dict[str, str], *, network: str) -> list
     if bootstrap_mode == "full":
         notes.append("Node bootstrap mode: full sync from genesis.")
         return notes
+
+    try:
+        from chipcoin.interfaces.cli import _load_snapshot_trusted_keys
+        from chipcoin.node.service import NodeService
+    except ImportError:
+        _die("Snapshot import needs the host Python package. On Ubuntu install build-essential python3-dev python3-venv, then create a venv and run: .venv/bin/python -m pip install -e .")
 
     manifest_urls_raw = env_values.get("NODE_SNAPSHOT_MANIFEST_URLS", "")
     try:
