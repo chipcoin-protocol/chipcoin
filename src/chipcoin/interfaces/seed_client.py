@@ -8,6 +8,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
+from ..config import get_network_config, require_finalized_public_mainnet
+from ..consensus.genesis import GenesisNotFinalizedError
+
 
 @dataclass(frozen=True)
 class SeedPeer:
@@ -84,6 +87,15 @@ class SeedClient:
             "node_id": node_id,
             "version": version,
         }
+        if network == "mainnet":
+            try:
+                require_finalized_public_mainnet(network)
+            except GenesisNotFinalizedError as exc:
+                raise SeedClientError("mainnet identity is incomplete or incompatible with embedded genesis") from exc
+            config = get_network_config(network)
+            if not config.chain_id or not config.canonical_genesis_hash:
+                raise SeedClientError("mainnet chain ID or genesis is missing")
+            body.update(chain_id=config.chain_id, genesis_hash=config.canonical_genesis_hash)
         if last_seen is not None:
             body["last_seen"] = last_seen
         payload = self._request_json("POST", "/v1/announce", body=body)

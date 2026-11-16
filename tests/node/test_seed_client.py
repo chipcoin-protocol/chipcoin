@@ -1,6 +1,10 @@
 import json
+from dataclasses import replace
 from urllib.error import HTTPError
 
+import pytest
+
+import chipcoin.config as config_module
 import chipcoin.interfaces.seed_client as seed_client_module
 from chipcoin.interfaces.seed_client import SeedClient, SeedClientError
 
@@ -31,6 +35,8 @@ def test_seed_client_lists_peers_and_announces() -> None:
             return FakeResponse(
                 {
                     "network": "mainnet",
+                    "chain_id": config_module.MAINNET_CONFIG.chain_id,
+                    "genesis_hash": config_module.MAINNET_CONFIG.canonical_genesis_hash,
                     "peers": [
                         {
                             "host": "127.0.0.1",
@@ -79,6 +85,58 @@ def test_seed_client_lists_peers_and_announces() -> None:
     assert requests[0][0] == "GET"
     assert requests[1][0] == "GET"
     assert requests[2][0] == "POST"
+    assert json.loads(requests[2][2]) == {
+        "host": "127.0.0.1",
+        "port": 8333,
+        "network": "mainnet",
+        "node_id": "node-1",
+        "version": "0.1.0",
+        "last_seen": 101,
+        "chain_id": config_module.MAINNET_CONFIG.chain_id,
+        "genesis_hash": config_module.MAINNET_CONFIG.canonical_genesis_hash,
+    }
+
+
+@pytest.mark.parametrize("network", ["testnet", "devnet"])
+def test_seed_client_keeps_non_mainnet_announce_payload(network, monkeypatch) -> None:
+    class FakeResponse:
+        def read(self, size: int = -1) -> bytes:
+            return json.dumps({"accepted": True, "peer": {
+                "host": "node.example", "port": 8333, "network": network,
+                "node_id": "node-1", "version": "0.1.2", "last_seen": 100,
+            }}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data)
+        assert "chain_id" not in body and "genesis_hash" not in body
+        assert body["network"] == network
+        return FakeResponse()
+
+    monkeypatch.setattr(seed_client_module, "urlopen", fake_urlopen)
+    peer = SeedClient("https://seed.example").announce(
+        host="node.example", port=8333, network=network, node_id="node-1", version="0.1.2",
+    )
+    assert peer.network == network
+
+
+@pytest.mark.parametrize("identity", [
+    {"canonical_genesis_hash": None},
+    {"canonical_genesis_hash": "ff" * 32},
+    {"chain_id": "wrong-chain"},
+])
+def test_seed_client_refuses_missing_or_wrong_mainnet_identity(identity, monkeypatch) -> None:
+    monkeypatch.setitem(config_module.NETWORK_CONFIGS, "mainnet", replace(config_module.MAINNET_CONFIG, **identity))
+    monkeypatch.setattr(seed_client_module, "urlopen", lambda *_args, **_kwargs: pytest.fail("announce was sent"))
+    with pytest.raises(SeedClientError, match="mainnet identity is incomplete or incompatible"):
+        SeedClient("https://seed.example").announce(
+            host="node.example", port=8333, network="mainnet", node_id="node-1", version="0.1.2",
+        )
 
 
 def test_seed_client_wraps_http_error_body() -> None:
