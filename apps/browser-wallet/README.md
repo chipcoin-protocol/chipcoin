@@ -81,8 +81,8 @@ Release tooling security boundary:
 
 Connect to a node:
 - Open `Settings`
-- The first-run fallback default comes from `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT` in the repo `.env`
-- In `.env.example`, testnet defaults to the public wallet-safe API at `https://testnet-api.chipcoinprotocol.com`
+- New installations select Mainnet and `https://mainnet-api.chipcoinprotocol.com`
+- `.env.example` is the explicit Testnet runtime template and names `https://testnet-api.chipcoinprotocol.com`
 - Devnet remains available as an explicit alternative and uses `https://api.chipcoinprotocol.com`
 - Operators can override testnet to a local node API such as `http://127.0.0.1:28081`
 - Do not use the readonly explorer API as a wallet endpoint

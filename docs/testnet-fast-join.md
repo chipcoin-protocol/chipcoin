@@ -4,6 +4,9 @@ This runbook starts a fresh Chipcoin testnet node from the public signed
 snapshot, then uses the public bootstrap service to connect and delta-sync to
 the live testnet tip.
 
+This is an explicit Testnet path. New wizard installations select Mainnet by
+default; choose Testnet at the network prompt before using these commands.
+
 Use this path when you want faster onboarding than full sync from genesis.
 Full sync remains supported.
 

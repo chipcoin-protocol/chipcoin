@@ -6,6 +6,13 @@ The Chipcoin node maintains chain state, validates blocks and transactions, expo
 
 The node can run without any wallet material.
 
+For a new installation, use `python3 scripts/setup/wizard.py` and its printed
+Compose command. Mainnet is the wizard default and uses `.env.mainnet`, P2P
+`8333/tcp`, and local HTTP `127.0.0.1:8080`. The generic examples further
+down this page include earlier Devnet and Testnet maintenance workflows; use
+their network and ports only when that network was explicitly selected. Never
+reuse chainstate or wallets across network profiles.
+
 If you enable reward-node automation, the runtime also consumes local wallet JSON files for:
 
 - reward-node renewal signing
@@ -154,39 +161,36 @@ Snapshot bootstrap trust model:
 
 ## Start
 
+Mainnet (new-install default after running the wizard):
+
 ```bash
-docker compose up --build node
+docker compose --env-file .env.mainnet up -d --build node
 ```
 
-Fast bootstrap via CLI:
+The wizard prints the correct environment file when Testnet or Devnet is
+selected. For an explicit Testnet node use `--env-file .env`; for Devnet use
+`--env-file .env.devnet`.
+
+Historical Devnet fast-bootstrap CLI example:
 
 ```bash
 chipcoin --data /runtime/node.sqlite3 snapshot-import --snapshot-file /runtime/devnet.snapshot.json
 chipcoin --data /runtime/node.sqlite3 run --snapshot-file /runtime/devnet.snapshot.json --peer chipcoinprotocol.com:18444
 ```
 
-Detached:
-
-```bash
-docker compose up -d --build node
-```
-
 ## Stop
 
 ```bash
-docker compose stop node
+docker compose --env-file .env.mainnet stop node
 ```
 
-or:
-
-```bash
-docker compose down
-```
+Replace the environment file when operating a different network. Avoid
+removing a running network's containers as a routine stop action.
 
 ## Logs
 
 ```bash
-docker compose logs -f node
+docker compose --env-file .env.mainnet logs -f node
 ```
 
 ## Restart And Update
@@ -194,14 +198,14 @@ docker compose logs -f node
 Restart only the node:
 
 ```bash
-docker compose restart node
+docker compose --env-file .env.mainnet restart node
 ```
 
 Rebuild after code or image changes:
 
 ```bash
-git pull origin main
-docker compose up --build -d node
+git pull --ff-only origin main
+docker compose --env-file .env.mainnet up --build -d --no-deps node
 ```
 
 Expected after restart:
@@ -651,7 +655,7 @@ chipcoin operator-check --network devnet --data /path/to/node.sqlite3
 
 The top-level status is one of:
 
-- `ok`: the node is ready for public testnet operation
+- `ok`: this check found no readiness failure in the selected network
 - `warn`: the node is usable but needs operator attention
 - `fail`: the node is not ready
 

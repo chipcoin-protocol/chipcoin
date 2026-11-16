@@ -1,7 +1,8 @@
-# Public Testnet Candidate
+# Testnet Operator Runbook
 
-This page is the operator runbook for joining the current Chipcoin public
-testnet candidate from the GitHub repository.
+This page is for operators who explicitly choose Chipcoin Testnet from the
+GitHub repository. New installations select Mainnet by default; see
+`docs/clean-install-checklist.md` for that path.
 
 Devnet remains separate and available as a fallback environment.
 
@@ -31,9 +32,9 @@ Public HTTP service split:
 - `https://testnet-api.chipcoinprotocol.com` is the public wallet-safe API for testnet.
 - raw node HTTP stays bound to localhost/private interfaces.
 
-The wallet-safe API pattern is network-extensible. Future mainnet should use a
-separate hostname and the same allowlist model rather than exposing raw node
-HTTP.
+Mainnet uses a separate wallet-safe API hostname,
+`https://mainnet-api.chipcoinprotocol.com`; neither network publishes raw node
+HTTP as its public wallet endpoint.
 
 ## Generate `.env` With The Wizard
 
@@ -43,7 +44,7 @@ From the repository root:
 python3 scripts/setup/wizard.py
 ```
 
-Choose:
+Choose Testnet explicitly at the network prompt (Enter selects Mainnet), then:
 
 - setup mode: `quick` for standard public-testnet candidate defaults, or `custom` when you need explicit peers
 - role: `Full node`, `Miner`, or `Reward node`
@@ -188,7 +189,7 @@ CHIPCOIN_NETWORK=testnet \
 CHIPCOIN_DATA=/var/lib/chipcoin/data/node-testnet.sqlite3 \
 SNAPSHOT_OUTPUT_DIR=/tmp/chipcoin-testnet-snapshot \
 SNAPSHOT_SOURCE_NODE=chipcom \
-SNAPSHOT_SIGNING_KEY_FILE=/home/komarek/.config/chipcoin/snapshot_signing.key \
+SNAPSHOT_SIGNING_KEY_FILE=/secure/testnet-snapshot-signing.key \
 scripts/ops/build-testnet-snapshot.sh
 ```
 

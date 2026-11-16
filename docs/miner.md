@@ -29,39 +29,40 @@ Relevant `.env` keys:
 
 The miner requires a wallet JSON file.
 
-Example creation:
+For a new Mainnet installation, use the wizard to generate or import the miner
+wallet into the isolated Mainnet runtime. Back it up before mining. The wizard
+does not start the miner. If using the native CLI instead, install its native
+build dependencies first (see `docs/setup-wizard.md`) and create the wallet at
+the path in `.env.mainnet`:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e .[dev]
-sudo mkdir -p /var/lib/chipcoin/wallets
-sudo chown -R "$USER:$USER" /var/lib/chipcoin
-chipcoin wallet-generate --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
+.venv/bin/chipcoin --network mainnet wallet-generate \
+  --wallet-file /var/lib/chipcoin-mainnet-official/keys/miner-wallet.json
 ```
 
 Show the payout address:
 
 ```bash
-chipcoin wallet-address --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
+.venv/bin/chipcoin --network mainnet wallet-address \
+  --wallet-file /var/lib/chipcoin-mainnet-official/keys/miner-wallet.json
 ```
 
 ## Start
 
 ```bash
-docker compose up --build miner
+docker compose --env-file .env.mainnet up --build miner
 ```
 
 Detached:
 
 ```bash
-docker compose up -d --build miner
+docker compose --env-file .env.mainnet up -d --build miner
 ```
 
 ## Logs
 
 ```bash
-docker compose logs -f miner
+docker compose --env-file .env.mainnet logs -f miner
 ```
 
 ## Notes
@@ -72,10 +73,12 @@ docker compose logs -f miner
 - The miner no longer keeps a local chain database or performs historical sync.
 - `MINING_WORKER_COUNT` controls local mining process parallelism. The default
   is `1`; set it to the number of CPU cores you want one miner container to use.
-- In the default Docker Compose stack, the miner points at the private in-stack node API: `http://node:28081`.
-- Do not mine through `https://testnet-api.chipcoinprotocol.com`; it is wallet-safe and not a miner endpoint.
+- On Mainnet the miner uses the private in-stack node API `http://node:8080`.
+  Explicit Testnet installs use `http://node:28081`.
+- Do not mine through the public wallet-safe APIs; they are not miner endpoints.
 - For a miner-only host, set `MINING_NODE_URLS` to a local/private full node API you operate or explicitly trust.
-- The recommended runtime directory is outside the repo, for example `/var/lib/chipcoin` on a stable Linux host.
+- Keep the runtime directory outside the repo; the default Mainnet path is
+  `/var/lib/chipcoin-mainnet-official` on Linux.
 - Remote miners trust their selected node endpoints for template quality and freshness.
 
-See [Mining Architecture](/home/komarek/Documents/CODEX/Chipcoin-v2/docs/mining-architecture.md).
+See [Mining Architecture](mining-architecture.md).

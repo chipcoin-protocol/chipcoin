@@ -61,7 +61,7 @@ What is intentionally limited today:
 - the node runtime does not use a wallet file yet
 - browser wallet recovery phrases are Chipcoin-specific and not BIP39-compatible yet
 - no multisig, no multiple accounts, no hardware wallet support
-  (Explore and bootstrap instructions have moved to the private `chipcoin-central` repo.)
+  (Explorer and bootstrap service implementation lives in the separate `chipcoin-central` repo.)
 
 ## Repository Scope
 
@@ -74,7 +74,7 @@ Relevant public areas:
 - `docs/node.md`: node setup and API notes
 - `docs/miner.md`: miner setup and wallet requirements
 - `docs/browser-wallet.md`: extension build and install flow
-- `docs/security-hardening.md`: security hardening tracker and pre-mainnet risk register
+- `docs/security-hardening.md`: historical security hardening tracker
 
 Operator-only or internal material may still exist in the tree, but it is not part of the primary public onboarding path.
 
@@ -130,11 +130,11 @@ Design intent:
 
 Detailed monetary policy and constraints:
 
-- [docs/monetary-policy.md](/home/komarek/Documents/CODEX/Chipcoin-v2/docs/monetary-policy.md)
+- [Monetary policy](docs/monetary-policy.md)
 
-## Proven On Public Devnet
+## Historical Devnet Validation
 
-The current public devnet has already validated the full reward-node loop online across consecutive epochs.
+An earlier public Devnet campaign validated the full reward-node loop online across consecutive epochs.
 
 What has been observed on the public network:
 
@@ -151,7 +151,7 @@ In the validated multi-host run:
 - each closed epoch distributed the full `50 CHC` node reward pool (`5,000,000,000` chipbits)
 - each rewarded node received its deterministic integer split, with only remainder-chipbit rotation between nodes
 
-Operationally this means the public docs should now treat automatic reward operation as an implemented devnet capability, not a paper design target.
+These results document the earlier Devnet validation; they are not instructions for joining Mainnet.
 
 ## System Requirements
 
@@ -179,7 +179,7 @@ Recommended guidance:
 Important limits:
 
 - macOS and Windows are not part of the documented clean-install validation path yet
-- Firefox support is documented through the temporary add-on workflow, not a signed distribution flow
+- Firefox release builds require Mozilla signing; temporary loading is for development
 - public devnet endpoints are convenience defaults, not availability guarantees
 
 Details:
@@ -188,7 +188,7 @@ Details:
 
 ## Quick Start
 
-## Runtime Roles
+### Runtime Roles
 
 Standard runtime roles in the current public stack:
 
@@ -229,12 +229,21 @@ Local state vs network state:
 ### Clone And Prepare Runtime Config
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/chipcoin-protocol/chipcoin.git
 cd chipcoin
-cp .env.example .env
+python3 scripts/setup/wizard.py
+docker compose --env-file .env.mainnet config --quiet
+docker compose --env-file .env.mainnet up -d --build node
+docker compose --env-file .env.mainnet ps
 ```
 
-Edit `.env` for your machine before running Docker. The placeholder paths in `.env.example` will not work until you replace them with real paths on your machine.
+The wizard selects Mainnet on Enter, prepares a separate runtime and prints the
+exact Compose command. It starts no service. The command above starts only the
+node; mining remains a separate action. Keep the node HTTP API on loopback.
+
+For manual configuration, copy `.env.mainnet.example` to `.env.mainnet` and
+review paths and permissions before starting Docker. `.env.example` is the
+explicit Testnet template, not the new-install default.
 
 At minimum, set real values for:
 
@@ -245,9 +254,12 @@ At minimum, set real values for:
 
 `NODE_DATA_PATH` must be a writable SQLite file path. Do not point it at a directory.
 
-For a new Mainnet installation, run the setup wizard or start from `.env.mainnet.example`; `.env.example` is the legacy Testnet template.
+### Explicit Testnet Examples
 
-If you want a fully local first run, set:
+The following manual examples use `.env.example` and Testnet ports. They are
+not Mainnet setup instructions. For Mainnet, use the wizard quick start above.
+
+For a fully local Testnet installation, set:
 
 - `DIRECT_PEERS=`
 - `DIRECT_PEER=`
@@ -261,7 +273,8 @@ If you want a fully local first run, set:
 - `MINING_NODE_URLS=http://node:28081`
 - `BROWSER_WALLET_DEFAULT_NODE_ENDPOINT=http://127.0.0.1:28081`
 
-This starts an isolated local node with a miner that immediately pulls templates from the local node HTTP API.
+Start the node first. Start the miner separately only after creating and backing
+up its wallet; it pulls templates from the local node HTTP API.
 
 ### Full Sync vs Snapshot Bootstrap
 
@@ -277,7 +290,7 @@ Chipcoin now supports two node bootstrap paths:
   - much faster startup
   - not equivalent to genesis validation
 
-Snapshot workflow:
+Testnet snapshot workflow:
 
 ```bash
 chipcoin --network testnet --data /runtime/node.sqlite3 snapshot-export --snapshot-file /runtime/testnet.snapshot
@@ -320,17 +333,16 @@ chipcoin --data /runtime/node.sqlite3 snapshot-import \
   --snapshot-trusted-key <ED25519_PUBLIC_KEY_HEX>
 ```
 
-Snapshot import defaults to `--snapshot-trust-mode warn`, so unsigned or
-untrusted snapshots emit warnings instead of being silently trusted. Use
-`--snapshot-trust-mode enforce` with pinned signer keys when you want strict
-verification, especially for public/mainnet bootstrap paths. Use `off` only for
-explicit local testing.
+For Mainnet, always use `--snapshot-trust-mode enforce` with the approved
+signer key. Testnet and Devnet have separate trust settings; never import a
+snapshot from one network into another.
 
 If you want your node to improve peer discovery and network resilience, keep `NODE_P2P_BIND_PORT=28444` and make that TCP port publicly reachable from the internet when your router and firewall policy allow it. Keep HTTP on `127.0.0.1:28081`.
 
-## First Deploy Path
+## Explicit Testnet Deploy Path
 
-Shortest documented operator path:
+This older manual path is for Testnet only. The new-install Mainnet path is in
+"Clone And Prepare Runtime Config" above.
 
 1. clone the repository
 2. copy `.env.example` to `.env`
@@ -409,7 +421,7 @@ Service-specific discovery precedence:
 - enable `BOOTSTRAP_ANNOUNCE_ENABLED=true` only on nodes that are publicly reachable at `NODE_PUBLIC_HOST:NODE_PUBLIC_P2P_PORT`
 - keep `BOOTSTRAP_REFRESH_INTERVAL_SECONDS` comfortably below the bootstrap seed TTL
 
-Recommended operator modes:
+Recommended Testnet operator modes (Mainnet uses different ports and seed):
 
 - `node` + `miner` on the same host/compose
   - leave `NODE_BOOTSTRAP_URL=https://bootstrap.chipcoinprotocol.com`
@@ -446,7 +458,7 @@ With these defaults, the node:
 
 Full block validation still happens before chain acceptance. Headers-first sync is a download strategy, not a consensus shortcut.
 
-When the local SQLite database is pristine and the runtime has at least one startup peer, the container automatically applies a more conservative initial-sync profile unless you disable `INITIAL_SYNC_CONSERVATIVE_DEFAULTS`. This lowers the initial per-peer block inflight cap and raises the block request timeout to make first syncs less brittle on small devnets.
+When the local SQLite database is pristine and the runtime has at least one startup peer, the container automatically applies a more conservative initial-sync profile unless you disable `INITIAL_SYNC_CONSERVATIVE_DEFAULTS`. This lowers the initial per-peer block inflight cap and raises the block request timeout during first sync.
 
 ## Setup Wizard
 
@@ -468,18 +480,14 @@ Compose command, for example `docker compose --env-file .env.mainnet up -d --bui
 
 For reward-node operators on the public testnet, the wizard assumes the bootstrap funding source is the faucet path or another funded testnet wallet. Registration still requires CHC because reward-node participation is an on-chain paid action.
 
-For a clean chain reset that preserves wallets and rereads paths from `.env`, use:
+Never reset an active Mainnet database as part of routine setup or updates.
 
-```bash
-bash scripts/runtime/reset-chain.sh
-```
-
-Available modes:
+Available modes (described for the selected network):
 
 - `Quick start`
-  Uses the public testnet defaults for bootstrap, snapshot, wallet-safe API, and explorer status.
+  Uses the selected network's endpoints; Mainnet is selected by default.
 - `Custom configuration`
-  Prompts for node endpoint, bootstrap peer, and explorer URL, then writes them into `.env`.
+  Prompts for node endpoint, bootstrap peer, and explorer URL, then writes the selected network's environment file.
 - `Local/self-hosted`
   Uses the selected network's localhost HTTP port, leaves bootstrap empty, and does not depend on public endpoints.
 
@@ -497,28 +505,30 @@ Use the manual setup flow when:
 Details:
 
 - `docs/setup-wizard.md`
+- `docs/clean-install-checklist.md`
 - `docs/testnet.md`
 - `docs/testnet-fast-join.md`
 
 ### Public Node Reachability
 
-Nodes that do not expose `TCP 28444` can still connect outbound and participate in testnet.
+Nodes can connect outbound without publishing P2P. The selected network's
+public P2P port is `8333/tcp` for Mainnet and `28444/tcp` for Testnet.
 
 However, outbound-only nodes do not materially improve peer discovery or overall network resilience because other peers cannot reliably dial them back.
 
 For best network health, operators should:
 
-- keep the public testnet P2P listener on `TCP 28444`
-- expose and forward `TCP 28444` when possible
+- expose and forward the selected network's P2P port when possible
 - ensure the announced endpoint is publicly reachable from outside the local network
 
-The HTTP/API port (`28081`) and explorer port (`4173`) are optional operator interfaces. They are not required for basic P2P participation.
+The node HTTP/API port (`8080` on Mainnet, `28081` on Testnet) is an operator
+interface, not a public P2P port.
 In the default Docker Compose stack, the HTTP/API port is published on `127.0.0.1` only; expose it publicly through a reverse proxy such as Apache/Nginx if needed.
 
 Devnet remains available as an unusual legacy profile on `TCP 18444` and
 localhost HTTP `8081`.
 
-### Create A Miner Wallet
+### Manual Testnet Miner Wallet
 
 ```bash
 python3 -m venv .venv
@@ -530,17 +540,11 @@ chipcoin wallet-generate --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet
 chipcoin wallet-address --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
 ```
 
-Experimental post-quantum testnet wallets use explicit opt-in only:
+For Mainnet miner wallets, use the wizard and the isolated path described in
+`docs/miner.md`. CHCQ/ML-DSA-44 signing is active on Mainnet; do not describe
+any wallet as "quantum-proof" or reuse a Testnet wallet on Mainnet.
 
-```bash
-chipcoin wallet-generate --scheme mldsa44 --wallet-file /var/lib/chipcoin/wallets/chipcoin-pq-wallet.json
-```
-
-CHCQ support is experimental, not audited yet, and designed for future
-quantum-resistance. Do not describe it as quantum-proof mainnet. A pinned
-ML-DSA-44 consensus backend and frozen vectors are required before activation.
-
-### Start The Stack
+### Start The Explicit Testnet Stack
 
 Node only:
 
@@ -566,7 +570,7 @@ Detached mode:
 docker compose up -d --build node miner
 ```
 
-## Restart And Update
+## Testnet Restart And Update
 
 Normal restart:
 
@@ -598,7 +602,7 @@ docker compose logs --tail=100 miner
 curl http://127.0.0.1:28081/v1/status
 ```
 
-### Inspect Runtime
+### Inspect The Testnet Runtime
 
 ```bash
 docker compose ps
@@ -609,7 +613,7 @@ chipcoin --data /path/to/node.sqlite3 peer-summary
 chipcoin --data /path/to/node.sqlite3 list-peers
 ```
 
-Node HTTP API default:
+Testnet node HTTP API:
 
 - `http://127.0.0.1:28081`
 

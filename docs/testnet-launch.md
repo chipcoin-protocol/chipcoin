@@ -1,7 +1,8 @@
 # Testnet Launch Notes
 
-The current testnet has moved from internal validation to a public testnet
-candidate. Use the operator runbook for copy/paste setup commands:
+This is a historical Testnet launch note. New installations now select Mainnet
+through the setup wizard; choose Testnet explicitly to use this network. Use
+the Testnet operator runbook for current copy/paste setup commands:
 
 - `docs/testnet.md`
 

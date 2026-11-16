@@ -5,7 +5,7 @@ This checklist is for verifying the public repository from a fresh clone.
 ## Docker Node (default Mainnet)
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/chipcoin-protocol/chipcoin.git
 cd chipcoin
 python3 scripts/setup/wizard.py
 docker compose --env-file .env.mainnet config --quiet
@@ -36,38 +36,20 @@ Checks:
 - `chipcoin --help`
 - `chipcoin mine --help`
 
-## Legacy Manual Testnet Runtime Config
+## Explicit Testnet Installation
 
 ```bash
-cp .env.example .env
-sudo mkdir -p /var/lib/chipcoin/data
-sudo mkdir -p /var/lib/chipcoin/wallets
-sudo mkdir -p /var/lib/chipcoin/logs
-sudo chown -R "$USER:$USER" /var/lib/chipcoin
-chipcoin wallet-generate --wallet-file /var/lib/chipcoin/wallets/chipcoin-wallet.json
+python3 scripts/setup/wizard.py
+docker compose --env-file .env config --quiet
+docker compose --env-file .env up -d --build node
 ```
 
-Checks:
+Select Testnet explicitly in the wizard. The wizard prepares `.env` and an
+isolated Testnet runtime. The node starts without activating the miner.
 
-- `.env` exists locally only
-- runtime paths in `.env` point to writable local paths before `docker compose up`
-- wallet file is outside version control
-
-## Legacy Manual Testnet Node And Miner
-
-```bash
-docker compose up --build node miner
-```
-
-Checks:
-
-- `docker compose ps`
-- `docker compose logs -f node`
-- `docker compose logs -f miner`
-- `curl http://127.0.0.1:8081/v1/status`
-- `curl http://127.0.0.1:8081/mining/status`
-- the node and miner containers are using runtime files outside the repository
-- the miner starts without creating a local chain database
+Verify with `docker compose --env-file .env ps` and
+`curl http://127.0.0.1:28081/v1/status`. Start a miner separately only after
+its wallet has been created and backed up.
 
 ## Browser Wallet
 

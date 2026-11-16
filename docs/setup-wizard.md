@@ -75,9 +75,8 @@ by default: P2P stays on loopback until an operator deliberately changes
 Mainnet node HTTP maps container `8080` to host `127.0.0.1:8080`; the miner
 uses the in-network URL `http://node:8080`.
 
-This is the shortest path if you want to connect quickly to the public testnet
-candidate. Public testnet endpoints are provided for convenience and may change
-or become unavailable.
+The Mainnet quick start connects to the official Mainnet bootstrap service.
+Select Testnet explicitly for the public Testnet endpoints above.
 
 ### Custom Configuration
 
@@ -106,7 +105,7 @@ After you choose your node setup, keep this practical distinction in mind:
 - outbound-only nodes can still connect to the network and sync
 - publicly reachable nodes are strongly preferred for network health
 - when possible, open and forward the selected network P2P port so other peers can reach your node
-- devnet uses `TCP 18444`; testnet uses `TCP 28444`
+- mainnet uses `TCP 8333`; testnet uses `TCP 28444`; devnet uses `TCP 18444`
 - do not expose the HTTP API port directly; keep it bound to `127.0.0.1` and use a reverse proxy only when intentional
 
 The wizard does not require public exposure, but public reachability is the main way an operator contributes an additional resilient peer to the mesh.

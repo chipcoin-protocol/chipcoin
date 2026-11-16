@@ -1,5 +1,10 @@
 # Mainnet Operator Runbook
 
+Historical release-candidate runbook: the launch gate and placeholder manifest
+below describe pre-launch preparation. For a new Mainnet node today, start with
+`README.md`, `docs/setup-wizard.md`, and `docs/mainnet-network-ports.md`.
+Do not use the candidate paths below as a live deployment configuration.
+
 Status: `DOCUMENTED`, pending runtime validation where identified.
 
 This runbook covers the operational procedures required by `RUNBOOK-001`

@@ -25,12 +25,12 @@ compiler and Python development headers; see `docs/setup-wizard.md`.
 
 The recommended runtime layout keeps mutable state outside the repository.
 
-Example:
+Mainnet example (the wizard's default):
 
-- `/var/lib/chipcoin/data/node-testnet.sqlite3`
-- `/var/lib/chipcoin/wallets/testnet-miner-wallet.json`
-- `/var/lib/chipcoin/logs/node/`
-- `/var/lib/chipcoin/logs/miner/`
+- `/var/lib/chipcoin-mainnet-official/data/node.sqlite3`
+- `/var/lib/chipcoin-mainnet-official/keys/miner-wallet.json`
+
+Testnet and Devnet use separate paths. Do not reuse a database or wallet across networks.
 
 Relevant `.env` keys:
 
@@ -47,54 +47,49 @@ Relevant `.env` keys:
 
 ## Start
 
-Node and miner:
+New installation (Mainnet node only):
 
 ```bash
-docker compose up --build node miner
+python3 scripts/setup/wizard.py
+docker compose --env-file .env.mainnet up -d --build node
 ```
 
-Detached:
+The wizard prints the correct environment file for a different network.
+It does not start services. To use the manual Mainnet template, copy
+`.env.mainnet.example` to `.env.mainnet` and prepare its runtime paths first.
+
+After generating and backing up a miner wallet, start the miner explicitly:
 
 ```bash
-docker compose up -d --build node miner
+docker compose --env-file .env.mainnet up -d --build miner
 ```
 
-Node only:
+For status and logs:
 
 ```bash
-docker compose up --build node
+docker compose --env-file .env.mainnet ps
+docker compose --env-file .env.mainnet logs -f node
 ```
 
-Miner only:
+To stop a selected service:
 
 ```bash
-docker compose up --build miner
+docker compose --env-file .env.mainnet stop node
 ```
 
-## Stop
+Use `--env-file .env` for explicitly selected Testnet and
+`--env-file .env.devnet` for Devnet. Avoid `docker compose down` when another
+network shares the project directory; always select the intended environment.
+
+Memory and restart monitoring (Mainnet example):
 
 ```bash
-docker compose down
+docker compose --env-file .env.mainnet ps -q node | xargs -r docker stats --no-stream
+docker compose --env-file .env.mainnet logs node | grep 'runtime memory metrics'
 ```
 
-## Inspect
-
-```bash
-docker compose ps
-docker compose logs -f node
-docker compose logs -f miner
-```
-
-Memory and restart monitoring:
-
-```bash
-docker stats chipcoin-testnet-node-1
-docker inspect chipcoin-testnet-node-1 --format '{{.RestartCount}}'
-docker compose logs node | grep 'runtime memory metrics'
-```
-
-The node compose service uses `CHIPCOIN_MEMORY_LIMIT:-2g` as a configurable
-guardrail. Validate the value in testnet before tightening it.
+The node Compose service uses `CHIPCOIN_MEMORY_LIMIT:-2g` as a configurable
+guardrail. Measure your own host before changing it.
 
 ## Notes
 

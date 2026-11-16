@@ -1,47 +1,34 @@
-# Mainnet Network Port Profile
+# Mainnet Network Ports
 
-This is the candidate configuration only. It does not enable services, publish
-ports, or authorize deployment.
+Mainnet is live. The public repository's generic Compose profile starts a new
+node with private P2P and loopback-only HTTP. Publishing a peer requires an
+explicit operator choice and a reachable public address; it does not require
+exposing the raw HTTP API.
 
-| Component | Port | Transport | Binding / exposure |
-| --- | ---: | --- | --- |
-| Mainnet node P2P | 8333 | TCP | `127.0.0.1` by default; public peers explicitly set `NODE_P2P_PUBLISH_HOST=0.0.0.0` |
-| Mainnet node API | container 8080; host 38084 | TCP/HTTP | host is fixed to `127.0.0.1`; never publish directly |
-| Mainnet Bootstrap Seed | container 28081; host 28082 | TCP/HTTP | host is fixed to `127.0.0.1`; HTTPS proxy only |
-| Explorer | 443 | TCP/HTTPS | public web edge; `/api/mainnet` is GET/OPTIONS-only and allowlisted |
-| Wallet-safe node API | 443 | TCP/HTTPS | `mainnet-api.chipcoinprotocol.com`; allowlisted reads and transaction submission only |
-| Bootstrap Seed | 443 | TCP/HTTPS | `mainnet-bootstrap.chipcoinprotocol.com`; separate mainnet instance |
+| Component | Endpoint / port | Exposure |
+| --- | --- | --- |
+| Mainnet node P2P | `8333/tcp` | `127.0.0.1` by default; publish on a public interface only for an intentionally public peer |
+| Mainnet node HTTP API | `127.0.0.1:8080` | Local operator access only; use an allowlisted HTTPS proxy for public wallet reads and transaction submission |
+| Mainnet bootstrap seed | `https://mainnet-bootstrap.chipcoinprotocol.com` | HTTPS discovery service; does not participate in consensus |
+| Mainnet wallet-safe API | `https://mainnet-api.chipcoinprotocol.com` | Allowlisted HTTPS wallet API; not the raw node API |
+| Explorer | `https://explorer.chipcoinprotocol.com` | Public web UI and read-only API |
 
-The mainnet Bootstrap hostname is a proposed, not yet deployed DNS name. The
-mainnet node's optional seed URL is `https://mainnet-bootstrap.chipcoinprotocol.com`.
-The service is disabled until genesis, DNS, TLS, static peer and public launch
-reviews are complete. Seed peers are untrusted hints; P2P identity is established
-only by the normal network handshake.
+The bootstrap seed and Explorer have their own deployment configurations;
+their private backend ports are not part of the generic Core Compose profile.
+Use the selected host's deployment file when checking those bindings.
 
 ## Network separation
 
-| Profile | P2P | Node HTTP host | Bootstrap host |
+| Profile | P2P | Node HTTP host | Bootstrap |
 | --- | --- | --- | --- |
-| Devnet | 18444/TCP | `127.0.0.1:8081` | existing devnet/testnet seed service; network field filtered |
-| Testnet | 28444/TCP | `127.0.0.1:28081` | `127.0.0.1:28080` behind HTTPS |
-| Historical rehearsal | 8333/TCP on its isolated Docker network | `127.0.0.1:38081` and allocated siblings | isolated; do not reuse as public mainnet |
-| Mainnet candidate | 8333/TCP, loopback until explicit public opt-in | `127.0.0.1:38084` | `127.0.0.1:28082` behind a separate HTTPS vhost |
+| Mainnet | `8333/tcp` | `127.0.0.1:8080` | `https://mainnet-bootstrap.chipcoinprotocol.com` |
+| Testnet | `28444/tcp` | `127.0.0.1:28081` | `https://bootstrap.chipcoinprotocol.com` |
+| Devnet | `18444/tcp` | `127.0.0.1:8081` | Separate development profile |
 
-No UDP listener is configured by the node's P2P service. Verify actual IPv4 and
-IPv6 listeners and firewall state on the target host during deployment; this
-source configuration alone cannot prove host-level exposure. Do not expose
-`8080`, `38084`, `28081`, `28082`, `28080`, `8081`, or `8082` directly.
-
-## Firewall plan (not applied)
-
-- Public mainnet peer: allow inbound TCP 8333 only when the operator explicitly
-  opts the node into public P2P; allow established traffic and outbound DNS,
-  HTTPS and peer connections as required. Do not open UDP 8333.
-- Private mainnet node: no unsolicited inbound P2P; keep API host binding on
-  loopback. The outbound-only node may still connect and sync.
-- Chipcom web edge: publicly allow TCP 443, plus TCP 80 only for HTTPS redirect
-  and certificate maintenance. Do not publish 28080, 28082, 38084 or container
-  ports. IPv6 exposure must be explicitly reviewed rather than inferred from
-  IPv4 rules.
-- Preserve existing testnet policy and ports; this candidate change does not
-  apply firewall rules or alter active services.
+Do not reuse a database, wallet, peer cache, or runtime directory across
+networks. To publish a Mainnet peer, set `NODE_P2P_PUBLISH_HOST` deliberately,
+open or forward `8333/tcp`, and verify reachability from outside the host.
+Keep node HTTP on loopback. `BOOTSTRAP_ANNOUNCE_ENABLED` defaults to `false`;
+enable it only for a reachable endpoint and configure `NODE_PUBLIC_HOST` and
+`NODE_PUBLIC_P2P_PORT` to match. An announcement is a discovery hint, not proof
+of node identity; peers must complete the P2P handshake.

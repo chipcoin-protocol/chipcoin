@@ -9,8 +9,8 @@ Documented and validated clone-to-run path:
 - Linux host on x86_64
 - Docker Engine with the `docker compose` plugin
 - Python 3.11+
-- Node.js 20+
-- npm compatible with Node.js 20+
+
+Node.js 20+ and npm are needed only to build the browser wallet.
 
 ## Browser Wallet
 
@@ -19,11 +19,11 @@ Documented browser targets:
 - desktop Chrome
 - desktop Firefox
 
-Current Firefox workflow:
+Firefox workflows:
 
-- temporary add-on loading through `about:debugging`
-
-Signed Firefox distribution is not part of the current public release.
+- temporary add-on loading through `about:debugging` for development
+- Mozilla-signed `.xpi` for normal Firefox Release/Beta installation; see
+  `apps/browser-wallet/README.md` for build and signing requirements
 
 ## Hardware Guidance
 
@@ -46,7 +46,8 @@ These numbers are practical operator guidance for the current devnet stack, not 
 - macOS is not part of the documented clean-install validation path yet
 - Windows is not part of the documented clean-install validation path yet
 - ARM platforms are not part of the documented clean-install validation path yet
-- public devnet endpoints are convenience defaults and may change or become unavailable
+- Mainnet is the default for new wizard installations; Testnet and Devnet are
+  selected explicitly
 
 ## Runtime Notes
 
@@ -58,13 +59,18 @@ These numbers are practical operator guidance for the current devnet stack, not 
 
 For basic outbound participation, a node only needs normal outbound internet access.
 
-For public peer reachability and better network resilience, the important port is:
+For public peer reachability, use the selected network's P2P port:
 
-- `TCP 18444` for the devnet P2P listener
+- Mainnet: `TCP 8333`
+- Testnet: `TCP 28444`
+- Devnet: `TCP 18444`
 
 Optional ports:
 
-- `TCP 8081` for the HTTP API; keep it localhost-only unless it is protected by a reverse proxy
-- `TCP 4173` for an explorer, if you run one
+- Mainnet node HTTP: `127.0.0.1:8080`
+- Testnet node HTTP: `127.0.0.1:28081`
+- Devnet node HTTP: `127.0.0.1:8081`
 
-Opening `TCP 18444` is strongly recommended for operators who want to contribute a publicly reachable peer, but it is not mandatory for every user. Home setups may require both firewall allowance and router port forwarding, and some NAT environments may still prevent reliable inbound reachability.
+Keep raw node HTTP private. Opening the selected P2P port helps an operator
+contribute a publicly reachable peer, but is not mandatory for outbound-only
+participation. Home setups may also need router port forwarding.

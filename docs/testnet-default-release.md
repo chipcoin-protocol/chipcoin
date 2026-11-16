@@ -1,18 +1,21 @@
-# Testnet Is Now The Default Runtime Profile
+# Historical Release Note: Testnet Default
 
-Chipcoin's public runtime default is now `testnet`. Devnet remains available
-only as an explicit legacy/development profile.
+This page records an earlier release when new installs selected Testnet. It is
+historical, not the current setup procedure. New installations now select
+Mainnet through `python3 scripts/setup/wizard.py` and write `.env.mainnet`.
+Testnet and Devnet remain available through explicit selection.
 
 ## Operational Change
 
-New installs should use:
+The former Testnet-only installation used:
 
 ```bash
 cp .env.example .env
 docker compose up -d --build node
 ```
 
-The default Compose project is `chipcoin-testnet`.
+This command still selects Testnet because `.env.example` is the Testnet
+template. It is not the default path for a new Mainnet installation.
 
 ## Default Ports And Endpoints
 
