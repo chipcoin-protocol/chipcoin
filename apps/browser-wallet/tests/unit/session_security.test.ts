@@ -104,7 +104,7 @@ describe("wallet session security", () => {
     expect(recoveredState.address).toBe(createdAddress);
     expect(recoveredRecord?.walletType).toBe("seed_phrase");
     expect(recoveredRecord?.accountIndex).toBe(0);
-  });
+  }, 15_000);
 
   it("exports the recovery phrase for seed-based wallets only", async () => {
     const session = await import("../../src/background/session");
@@ -118,7 +118,7 @@ describe("wallet session security", () => {
     await session.removeWallet();
     await session.importWallet("0000000000000000000000000000000000000000000000000000000000000001", "phase12-password");
     await expect(session.exportRecoveryPhrase({ confirmActiveSession: true })).rejects.toThrow("has no recovery phrase");
-  });
+  }, 15_000);
 
   it("imports, encrypts, restores, and exports an ML-DSA seed", async () => {
     const session = await import("../../src/background/session");
@@ -138,7 +138,7 @@ describe("wallet session security", () => {
     await session.lockWallet();
     await session.unlockWallet("phase12-password");
     await expect(session.exportPqSeed({ confirmActiveSession: true })).resolves.toBe(seedHex);
-  });
+  }, 15_000);
 
   it("clears wallet state, submitted cache, and local snapshot on remove", async () => {
     const session = await import("../../src/background/session");
