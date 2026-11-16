@@ -189,6 +189,25 @@ def test_recent_verification_does_not_block_outbound_after_inbound_disconnect():
         assert not runtime._has_recent_duplicate_endpoint_verification(endpoint)
 
 
+def test_canonical_inbound_endpoint_does_not_suppress_mainnet_verification():
+    with TemporaryDirectory() as directory:
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=8333)
+        endpoint = OutboundPeer("188.217.94.86", 8333)
+        inbound = FakeSession("tobia-id", inbound=True)
+        runtime._sessions[inbound] = SessionHandle(
+            protocol=inbound, outbound=False, endpoint=endpoint, reusable_endpoint=True,
+        )
+        runtime._sessions_by_node_id["tobia-id"] = inbound
+        service.add_peer(endpoint.host, endpoint.port, source="manual")
+        assert runtime._has_active_endpoint(endpoint) is False
+        assert runtime._has_recent_duplicate_endpoint_verification(endpoint) is False
+        service.verify_outbound_endpoint(
+            host=endpoint.host, port=endpoint.port, node_id="tobia-id", height=99,
+        )
+        assert runtime._has_recent_duplicate_endpoint_verification(endpoint) is True
+
+
 def test_configured_duplicate_target_survives_startup_cleanup():
     with TemporaryDirectory() as directory:
         service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet")

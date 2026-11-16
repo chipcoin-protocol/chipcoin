@@ -2464,7 +2464,11 @@ class NodeRuntime:
                 continue
             endpoint = self._session_endpoint(protocol, handle)
             if endpoint is not None and endpoint.host == peer.host and endpoint.port == peer.port:
-                return True
+                # A canonicalized inbound address describes the remote listener,
+                # but does not prove that we can dial it. Mainnet must still
+                # perform its outbound endpoint verification.
+                if handle.outbound or self.service.network != "mainnet":
+                    return True
             if handle.outbound and endpoint is not None and self._peers_equivalent(endpoint, peer):
                 return True
             remote = protocol.state.remote_version
