@@ -97,6 +97,7 @@ class SessionHandle:
     addr_relay_window_started_at: float = 0.0
     addr_relay_entries_sent: int = 0
     opened_at: float = 0.0
+    endpoint_verification_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -1081,6 +1082,8 @@ class NodeRuntime:
                     break
                 if self._has_active_endpoint(peer):
                     continue
+                if self._has_recent_duplicate_endpoint_verification(peer):
+                    continue
                 if self._is_peer_currently_banned(peer.host, peer.port):
                     self.logger.debug("outbound connect skipped for banned peer=%s:%s", peer.host, peer.port)
                     continue
@@ -1287,6 +1290,26 @@ class NodeRuntime:
 
             existing = self._sessions_by_node_id.get(remote.node_id)
             if existing is not None and existing is not session:
+                handle = self._sessions.get(session)
+                if (
+                    self.service.network == "mainnet"
+                    and handle is not None and handle.outbound and handle.endpoint is not None
+                    and existing.state.handshake_complete and not existing.state.closed
+                    and existing.inbound
+                    and self._valid_outbound_verification_identity(session)
+                ):
+                    endpoint = handle.endpoint
+                    self.service.verify_outbound_endpoint(
+                        host=endpoint.host, port=endpoint.port,
+                        node_id=remote.node_id, height=remote.start_height,
+                    )
+                    handle.endpoint_verification_only = True
+                    self.logger.info(
+                        "outbound endpoint verified peer=%s:%s node_id=%s",
+                        endpoint.host, endpoint.port, remote.node_id,
+                    )
+                    await session.close(reason="Verified duplicate endpoint; retaining inbound session.")
+                    return
                 self.logger.debug("duplicate peer connection rejected node_id=%s", remote.node_id)
                 error = DuplicateConnectionError("Duplicate peer connection.")
                 await session.close(reason=str(error), error=error)
@@ -2325,6 +2348,9 @@ class NodeRuntime:
                 peer_id,
                 request.block_hash,
             )
+        if handle is not None and handle.endpoint_verification_only:
+            self._update_sync_status()
+            return
         remote = session.state.remote_version
         endpoint = self._session_endpoint(session, handle)
         if endpoint is not None:
@@ -2449,6 +2475,37 @@ class NodeRuntime:
                 and remote is not None
                 and remote.node_id == known_node_id
                 and protocol.state.handshake_complete
+            ):
+                return True
+        return False
+
+    def _valid_outbound_verification_identity(self, session: PeerProtocol) -> bool:
+        """Require the same identity checks as a normal Mainnet handshake."""
+
+        remote = session.state.remote_version
+        config = get_network_config(self.service.network)
+        return (
+            session.state.handshake_complete is True
+            and remote is not None
+            and bool(remote.node_id)
+            and remote.network == config.name
+            and remote.chain_id == config.chain_id
+            and remote.genesis_hash == config.canonical_genesis_hash
+            and session.identity.network_magic == config.magic
+        )
+
+    def _has_recent_duplicate_endpoint_verification(self, peer: OutboundPeer) -> bool:
+        """Avoid repeated verification dials while a matching inbound session lives."""
+
+        if self.service.network != "mainnet":
+            return False
+        for record in self.service.recent_endpoint_verifications():
+            if record["host"] != peer.host or record["port"] != peer.port:
+                continue
+            session = self._sessions_by_node_id.get(str(record["node_id"]))
+            if (
+                session is not None and session.inbound
+                and session.state.handshake_complete and not session.state.closed
             ):
                 return True
         return False
@@ -3141,7 +3198,10 @@ class NodeRuntime:
         )
 
     def _purge_persisted_startup_duplicate_aliases(self) -> None:
-        """Drop persisted startup aliases previously classified as duplicate/self connections."""
+        """Keep Mainnet duplicate endpoints for verification; preserve legacy cleanup elsewhere."""
+
+        if self.service.network == "mainnet":
+            return
 
         peers = [
             peer
@@ -3382,6 +3442,7 @@ class NodeRuntime:
     def _register_peer_failure(self, peer: OutboundPeer, *, error: Exception | str, penalty: int | None = None) -> None:
         """Persist an outbound failure with bounded connectivity or protocol backoff."""
 
+        self.service.invalidate_outbound_endpoint(host=peer.host, port=peer.port)
         info = self._known_peer_info(peer.host, peer.port)
         classification = classify_peer_error(error)
         penalize_as_misbehavior = self._should_penalize_as_misbehavior(error, handshake_complete=False)

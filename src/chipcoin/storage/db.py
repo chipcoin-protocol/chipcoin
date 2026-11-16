@@ -109,6 +109,17 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS peer_endpoint_verifications (
+        host TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        network TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        verified_at INTEGER NOT NULL,
+        last_known_height INTEGER NOT NULL,
+        PRIMARY KEY(host, port, network)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS node_registry (
         node_id TEXT PRIMARY KEY,
         payout_address TEXT NOT NULL,

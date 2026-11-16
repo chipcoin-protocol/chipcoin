@@ -43,6 +43,41 @@ class SQLitePeerRepository(PeerRepository):
     def __init__(self, connection: Connection) -> None:
         self.connection = connection
 
+    def verify_endpoint(
+        self, *, host: str, port: int, network: str, node_id: str, verified_at: int, height: int,
+    ) -> None:
+        """Store an authenticated outbound reachability observation separately from sessions."""
+
+        with sqlite_transaction(self.connection, phase="peer_endpoint_verify"):
+            self.connection.execute(
+                """INSERT INTO peer_endpoint_verifications
+                   (host, port, network, node_id, verified_at, last_known_height)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(host, port, network) DO UPDATE SET
+                   node_id=excluded.node_id, verified_at=excluded.verified_at,
+                   last_known_height=excluded.last_known_height""",
+                (host, port, network, node_id, verified_at, height),
+            )
+
+    def verified_endpoints(self, *, network: str) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """SELECT host, port, node_id, verified_at, last_known_height
+               FROM peer_endpoint_verifications WHERE network=?""",
+            (network,),
+        ).fetchall()
+        return [
+            {"host": row[0], "port": row[1], "node_id": row[2],
+             "verified_at": row[3], "last_known_height": row[4]}
+            for row in rows
+        ]
+
+    def invalidate_endpoint(self, *, host: str, port: int, network: str) -> None:
+        with sqlite_transaction(self.connection, phase="peer_endpoint_invalidate"):
+            self.connection.execute(
+                "DELETE FROM peer_endpoint_verifications WHERE host=? AND port=? AND network=?",
+                (host, port, network),
+            )
+
     def add(self, peer: PeerInfo) -> None:
         """Persist a peer endpoint idempotently."""
 

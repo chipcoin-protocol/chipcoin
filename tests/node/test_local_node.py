@@ -1189,7 +1189,7 @@ def test_runtime_start_purges_legacy_inbound_pre_handshake_ephemeral_peers() -> 
 
 def test_runtime_start_purges_persisted_startup_duplicate_aliases() -> None:
     with TemporaryDirectory() as tempdir:
-        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="devnet")
         service.record_peer_observation(
             host="tiltmediaconsulting.com",
             port=18444,
