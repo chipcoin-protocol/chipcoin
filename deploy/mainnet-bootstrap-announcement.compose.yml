@@ -1,0 +1,9 @@
+# Add to an existing Mainnet Compose deployment only for nodes whose operator
+# explicitly opts in to public bootstrap announcements.
+services:
+  node:
+    environment:
+      BOOTSTRAP_URL: ${BOOTSTRAP_URL:-}
+      BOOTSTRAP_ANNOUNCE_ENABLED: ${BOOTSTRAP_ANNOUNCE_ENABLED:-false}
+      NODE_PUBLIC_HOST: ${NODE_PUBLIC_HOST:-}
+      NODE_PUBLIC_P2P_PORT: ${NODE_PUBLIC_P2P_PORT:-8333}
