@@ -8,6 +8,8 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from chipcoin.storage.headers import ChainTip
+
 from chipcoin.consensus.epoch_settlement import RewardAttestation
 from chipcoin.consensus.genesis import mine_genesis
 from chipcoin.consensus.merkle import merkle_root
@@ -1524,6 +1526,59 @@ def test_http_api_public_peers_filters_private_and_unhealthy_records() -> None:
             ],
         }
         assert all("last_error" not in peer and "node_id" not in peer for peer in body["peers"])
+
+
+def test_mainnet_public_peers_require_current_outbound_handshake(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="mainnet")
+        monkeypatch.setattr(service, "chain_tip", lambda: ChainTip(block_hash="0" * 64, height=100))
+        for host, direction, height in (
+            ("fresh.example.com", "outbound", 99),
+            ("inbound-only.example.com", "inbound", 99),
+            ("stale.example.com", "outbound", 50),
+        ):
+            service.record_peer_observation(
+                host=host,
+                port=8333,
+                direction=direction,
+                handshake_complete=True,
+                last_success=1_700_000_001,
+                success_count=1,
+                last_known_height=height,
+            )
+        service.record_peer_observation(
+            host="announced-only.example.com",
+            port=8333,
+            direction="outbound",
+            handshake_complete=False,
+            node_id="inbound-node",
+            last_known_height=99,
+        )
+        service.record_peer_observation(
+            host="198.51.100.42",
+            port=54001,
+            direction="inbound",
+            handshake_complete=True,
+            last_success=1_700_000_001,
+            success_count=1,
+            node_id="inbound-node",
+            last_known_height=99,
+        )
+
+        status, _, body = _call_wsgi(HttpApiApp(service), method="GET", path="/v1/peers/public")
+
+        assert status == "200 OK"
+        assert body == {
+            "network": "mainnet",
+            "count": 1,
+            "peers": [{
+                "host": "fresh.example.com",
+                "port": 8333,
+                "address": "fresh.example.com:8333",
+                "state": "good",
+                "last_known_height": 99,
+            }],
+        }
 
 
 def test_http_api_public_peers_uses_network_canonical_port() -> None:

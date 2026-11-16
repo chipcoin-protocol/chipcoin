@@ -1388,15 +1388,32 @@ class NodeService:
         return None
 
     def public_peers(self) -> dict[str, object]:
-        """Return public bootstrap peers without raw peerbook diagnostics."""
+        """Return public P2P candidates without raw peerbook diagnostics.
+
+        Mainnet requires a current outbound handshake to the canonical port and
+        a peer height close to the validated local tip. An inbound connection
+        does not establish that the advertised endpoint accepts connections.
+        """
 
         now = self.time_provider()
         default_port = get_network_config(self.network).default_p2p_port
         public_peers = []
         seen_endpoints: set[tuple[str, int]] = set()
         candidates = self.peer_diagnostics()
-        operational_records = self._operational_peer_records(candidates)
-        candidates.extend(operational_records)
+        if self.network == "mainnet":
+            tip = self.chain_tip()
+            min_height = max(0, tip.height - 20) if tip is not None else 0
+            candidates = [
+                peer for peer in candidates
+                if peer["direction"] == "outbound"
+                and peer["handshake_complete"] is True
+                and isinstance(peer["last_known_height"], int)
+                and peer["last_known_height"] >= min_height
+            ]
+            operational_records: list[dict[str, object]] = []
+        else:
+            operational_records = self._operational_peer_records(candidates)
+            candidates.extend(operational_records)
         for peer in candidates:
             if peer["port"] != default_port:
                 continue
