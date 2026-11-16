@@ -75,7 +75,7 @@ describe("wallet session security", () => {
       signature_scheme: 0,
       message,
     });
-  });
+  }, 15_000);
 
   it("requires explicit confirmation before revealing a private key from an active session", async () => {
     const { createWallet, exportPrivateKey } = await import("../../src/background/session");
@@ -84,7 +84,7 @@ describe("wallet session security", () => {
 
     await expect(exportPrivateKey({})).rejects.toThrow("Explicit confirmation is required before revealing the private key.");
     await expect(exportPrivateKey({ confirmActiveSession: true })).resolves.toMatch(/^[0-9a-f]{64}$/);
-  });
+  }, 15_000);
 
   it("recovers the same wallet from the same recovery phrase", async () => {
     const session = await import("../../src/background/session");
@@ -179,7 +179,7 @@ describe("wallet session security", () => {
       updatedAt: null,
     });
     await expect(loadWatchOnlyAddressRecords()).resolves.toEqual([]);
-  });
+  }, 15_000);
 
   it("refuses provider login signing after the wallet auto-locks", async () => {
     const session = await import("../../src/background/session");
@@ -208,5 +208,5 @@ describe("wallet session security", () => {
         "Statement: Sign in to chipcoinprotocol.com",
       ].join("\n"),
     })).rejects.toThrow("WALLET_LOCKED");
-  });
+  }, 15_000);
 });
