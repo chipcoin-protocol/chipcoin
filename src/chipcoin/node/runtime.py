@@ -420,6 +420,8 @@ class NodeRuntime:
         self._stop_event.clear()
         self._maybe_start_tracemalloc()
         self._spawn_task(self._connect_loop(), "connect-loop", category="connect")
+        if self.service.network == "mainnet":
+            self._spawn_task(self._endpoint_probe_loop(), "endpoint-probe-loop", category="endpoint-probe")
         self._spawn_task(self._ping_loop(), "ping-loop", category="ping")
         self._spawn_task(self._mempool_relay_loop(), "mempool-relay-loop", category="mempool")
         if self.headers_sync_enabled:
@@ -1079,8 +1081,6 @@ class NodeRuntime:
         """Keep outbound peer connections alive."""
 
         while self._running:
-            if self.service.network == "mainnet":
-                self._schedule_endpoint_probes()
             remaining_dials = max(
                 0,
                 self.max_outbound_sessions - self._active_outbound_session_count() - len(self._pending_outbound_peers),
@@ -1118,6 +1118,16 @@ class NodeRuntime:
                     self._pending_outbound_peers.discard(peer)
             await asyncio.sleep(self.connect_interval)
 
+    async def _endpoint_probe_loop(self) -> None:
+        """Keep public endpoint evidence fresh even during slow operational dials."""
+
+        while self._running:
+            try:
+                self._schedule_endpoint_probes()
+            except Exception:
+                self.logger.exception("endpoint verification scheduling failed")
+            await asyncio.sleep(min(5.0, max(0.5, self.connect_interval)))
+
     def _schedule_endpoint_probes(self) -> None:
         """Renew authenticated public reachability outside operational dial slots."""
 
@@ -1130,7 +1140,18 @@ class NodeRuntime:
             for item in self.service.endpoint_verifications()
         }
         port = get_network_config(self.service.network).default_p2p_port
-        for info in self.service.list_peers():
+
+        def probe_priority(info) -> tuple[int, int, str, int]:
+            record = records.get((info.host, info.port))
+            if record is None:
+                return (2, -(info.last_success or 0), info.host, info.port)
+            age = now - int(record["verified_at"])
+            # Keep currently advertised endpoints fresh before probing old or
+            # unverified entries in a large persisted peerbook.
+            return (0 if 0 <= age < self.service.ENDPOINT_VERIFICATION_TTL_SECONDS else 1,
+                    int(record["verified_at"]), info.host, info.port)
+
+        for info in sorted(self.service.list_peers(), key=probe_priority):
             if len(self._pending_endpoint_probes) >= self.max_endpoint_probes:
                 break
             peer = OutboundPeer(info.host, info.port)

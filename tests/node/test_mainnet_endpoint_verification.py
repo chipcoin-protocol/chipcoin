@@ -429,3 +429,47 @@ def test_endpoint_probe_concurrency_is_bounded(monkeypatch):
         runtime._schedule_endpoint_probes()
         assert len(scheduled) == 2
         assert len(runtime._pending_endpoint_probes) == 2
+
+
+def test_verified_endpoints_renew_before_unverified_candidates(monkeypatch):
+    with TemporaryDirectory() as directory:
+        now = [1_700_000_000]
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet", time_provider=lambda: now[0])
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=8333)
+        scheduled = []
+        monkeypatch.setattr(runtime, "_spawn_task", lambda coro, name, **kw: (scheduled.append(name), coro.close()))
+        for number in range(4):
+            service.record_peer_observation(
+                host=f"a{number}.example", port=8333, direction="inbound",
+                handshake_complete=True, last_success=now[0], node_id=f"unverified-{number}",
+            )
+        for number in range(2):
+            host = f"z{number}.example"
+            service.record_peer_observation(
+                host=host, port=8333, direction="inbound", handshake_complete=True,
+                last_success=now[0], node_id=f"verified-{number}",
+            )
+            service.verify_outbound_endpoint(host=host, port=8333, node_id=f"verified-{number}", height=99)
+        now[0] += 241
+        runtime._schedule_endpoint_probes()
+        assert scheduled == ["endpoint-probe-z0.example:8333", "endpoint-probe-z1.example:8333"]
+
+
+def test_probe_scheduler_runs_while_normal_connect_loop_is_blocked(monkeypatch):
+    async def scenario():
+        with TemporaryDirectory() as directory:
+            service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet")
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=0,
+                                  connect_interval=0.05, memory_metrics_interval_seconds=0)
+            blocked = asyncio.Event()
+            calls = []
+            monkeypatch.setattr(runtime, "_connect_loop", lambda: blocked.wait())
+            monkeypatch.setattr(runtime, "_schedule_endpoint_probes", lambda: calls.append(1))
+            await runtime.start()
+            try:
+                await wait_for(lambda: len(calls) >= 2)
+                assert not blocked.is_set()
+            finally:
+                await runtime.stop()
+
+    asyncio.run(scenario())
