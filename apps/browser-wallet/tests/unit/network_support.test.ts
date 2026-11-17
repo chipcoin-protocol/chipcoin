@@ -170,6 +170,15 @@ describe("browser wallet network support", () => {
     ).resolves.toMatchObject({ expectedNetwork: "mainnet" });
   });
 
+  it("allows a new user to return from Testnet to Mainnet before creating a wallet", async () => {
+    installFetch("mainnet");
+    const session = await import("../../src/background/session");
+
+    await expect(
+      session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),
+    ).resolves.toMatchObject({ expectedNetwork: "mainnet", hasWallet: false });
+  });
+
   it("rejects a mainnet endpoint with a different genesis", async () => {
     installFetch("mainnet", "00000001fb292c1575cc647774e249a7e399b8b2c7b30743bbe9e5090476476d");
     const session = await import("../../src/background/session");

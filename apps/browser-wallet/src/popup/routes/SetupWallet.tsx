@@ -1,20 +1,26 @@
 import { useEffect, useState } from "react";
 
 import type { AppState } from "../../state/app_state";
-import { DEFAULT_NETWORK, getSupportedNetwork } from "../../shared/constants";
+import { getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
+import { NetworkChoice } from "../../shared/NetworkChoice";
 import { sendWalletMessage } from "../../shared/messages";
 
 type SetupMode = "create-seed" | "recover-seed" | "import-key" | "create-pq" | "import-pq";
 
-export function SetupWallet({ onCreated }: { onCreated(state: AppState): void }): JSX.Element {
-  const defaultNetwork = getSupportedNetwork(DEFAULT_NETWORK);
-  const [mode, setMode] = useState<SetupMode>("create-seed");
+export function SetupWallet({ state, onUpdated, onCreated }: {
+  state: AppState;
+  onUpdated(state: AppState): void;
+  onCreated(state: AppState): void;
+}): JSX.Element {
+  const selectedNetwork = getSupportedNetwork(state.expectedNetwork);
+  const [mode, setMode] = useState<SetupMode>("import-pq");
   const [password, setPassword] = useState("");
   const [recoveryPhrase, setRecoveryPhrase] = useState("");
   const [hasBackedUpSeed, setHasBackedUpSeed] = useState(false);
   const [privateKeyHex, setPrivateKeyHex] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingSeed, setIsGeneratingSeed] = useState(false);
+  const [isChangingNetwork, setIsChangingNetwork] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -23,7 +29,7 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
     }
   }, [mode, recoveryPhrase]);
 
-  const canSubmit = password.trim().length > 0
+  const canSubmit = !isChangingNetwork && password.trim().length > 0
     && (
       (mode === "create-seed" && Boolean(recoveryPhrase) && hasBackedUpSeed)
       || (mode === "recover-seed" && recoveryPhrase.trim().length > 0)
@@ -43,6 +49,25 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
       setError(nextError instanceof Error ? nextError.message : "Unable to generate a recovery phrase.");
     } finally {
       setIsGeneratingSeed(false);
+    }
+  }
+
+  async function handleNetworkChange(networkId: SupportedNetworkId): Promise<void> {
+    setIsChangingNetwork(true);
+    setError(null);
+    try {
+      const network = getSupportedNetwork(networkId);
+      const nextState = await sendWalletMessage<AppState>({
+        type: "wallet:updateNode",
+        expectedNetwork: networkId,
+        nodeApiBaseUrl: network.defaultNodeApiBaseUrl,
+      });
+      setMode("import-pq");
+      onUpdated(nextState);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to change network.");
+    } finally {
+      setIsChangingNetwork(false);
     }
   }
 
@@ -73,24 +98,25 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
   return (
     <section className="panel">
       <h2>Set Up Wallet</h2>
-      <p className="message">Create a new wallet, recover from a saved recovery phrase, or import a private key as a fallback. The default network is {defaultNetwork.label} at <span className="mono">{defaultNetwork.defaultNodeApiBaseUrl}</span>; switch networks in Settings only if you intentionally need a legacy or operator endpoint.</p>
-      <div className="nav-tabs">
-        <button className={mode === "create-seed" ? "is-active" : ""} onClick={() => { setMode("create-seed"); setError(null); }}>
-          Create
-        </button>
-        <button className={mode === "recover-seed" ? "is-active" : ""} onClick={() => { setMode("recover-seed"); setError(null); }}>
-          Recover
-        </button>
-        <button className={mode === "import-key" ? "is-active" : ""} onClick={() => { setMode("import-key"); setError(null); }}>
-          Import key
+      <p className="message">Import your {selectedNetwork.label} wallet or create a new ML-DSA-44 wallet. Keep the seed offline.</p>
+      <NetworkChoice value={state.expectedNetwork} disabled={isChangingNetwork || isSubmitting} onChange={(network) => void handleNetworkChange(network)} />
+      <p className="message">Node API: <span className="mono">{selectedNetwork.defaultNodeApiBaseUrl}</span></p>
+      <div className="nav-tabs two-up">
+        <button className={mode === "import-pq" ? "is-active wallet-setup-primary" : ""} onClick={() => { setMode("import-pq"); setError(null); }}>
+          Import {selectedNetwork.label} Wallet
         </button>
         <button className={mode === "create-pq" ? "is-active" : ""} onClick={() => { setMode("create-pq"); setError(null); }}>
-          Create PQ
-        </button>
-        <button className={mode === "import-pq" ? "is-active" : ""} onClick={() => { setMode("import-pq"); setError(null); }}>
-          Import PQ
+          Create {selectedNetwork.label} Wallet
         </button>
       </div>
+      {state.expectedNetwork !== "mainnet" ? (
+        <div className="nav-tabs">
+          <button className={mode === "create-seed" ? "is-active" : ""} onClick={() => { setMode("create-seed"); setError(null); }}>Create legacy</button>
+          <button className={mode === "recover-seed" ? "is-active" : ""} onClick={() => { setMode("recover-seed"); setError(null); }}>Recover legacy</button>
+          <button className={mode === "import-key" ? "is-active" : ""} onClick={() => { setMode("import-key"); setError(null); }}>Import legacy key</button>
+        </div>
+      ) : null}
+      {isChangingNetwork ? <p className="message">Checking network…</p> : null}
       <div className="stack">
         {mode === "create-seed" ? (
           <>
@@ -129,7 +155,7 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
             />
           </>
         ) : null}
-        {mode === "create-pq" ? <p className="message">Create an experimental testnet ML-DSA-44 wallet with a CHCQ address.</p> : null}
+        {mode === "create-pq" ? <p className="message">Create an ML-DSA-44 wallet with a CHCQ address. Back up its seed after creation.</p> : null}
         {mode === "import-pq" ? (
           <>
             <p className="message">Import the 64-character ML-DSA seed hex exported by the Chipcoin CLI.</p>
@@ -143,7 +169,7 @@ export function SetupWallet({ onCreated }: { onCreated(state: AppState): void })
           placeholder="Password"
         />
         <button className="primary-button" disabled={!canSubmit || isSubmitting} onClick={() => void handleSubmit()}>
-          {isSubmitting ? "Setting up..." : mode === "create-pq" ? "Create PQ wallet" : mode === "import-pq" ? "Import PQ wallet" : mode === "create-seed" ? "Create wallet" : mode === "recover-seed" ? "Recover wallet" : "Import private key"}
+          {isSubmitting ? "Setting up..." : mode === "create-pq" ? `Create ${selectedNetwork.label} Wallet` : mode === "import-pq" ? `Import ${selectedNetwork.label} Wallet` : mode === "create-seed" ? "Create legacy wallet" : mode === "recover-seed" ? "Recover legacy wallet" : "Import legacy key"}
         </button>
       </div>
       {error ? <p className="message error">{error}</p> : null}

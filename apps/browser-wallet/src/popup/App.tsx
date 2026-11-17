@@ -48,7 +48,7 @@ export function App(): JSX.Element {
     return (
       <main className="app-shell">
         <h1>Chipcoin Wallet</h1>
-        <SetupWallet onCreated={setState} />
+        <SetupWallet state={state} onUpdated={setState} onCreated={setState} />
       </main>
     );
   }

@@ -274,7 +274,7 @@ export async function updateNodeEndpoint(
   const settings = await loadSettings();
   const network = getSupportedNetwork(expectedNetwork);
   const walletRecord = await loadWalletRecord();
-  if (network.id === "mainnet" && walletRecord?.walletType !== "pq_seed") {
+  if (network.id === "mainnet" && walletRecord && walletRecord.walletType !== "pq_seed") {
     throw new Error("Mainnet requires an ML-DSA-44 post-quantum wallet.");
   }
   const normalized = normalizeNodeEndpoint(nodeApiBaseUrl);

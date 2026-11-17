@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { AppState } from "../../state/app_state";
-import { DEFAULT_NETWORK, SUPPORTED_NETWORKS, getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
+import { DEFAULT_NETWORK, getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
+import { NetworkChoice } from "../../shared/NetworkChoice";
 import { sendWalletMessage } from "../../shared/messages";
 
 export function ConfigureNode(): JSX.Element {
@@ -9,6 +10,13 @@ export function ConfigureNode(): JSX.Element {
   const [nodeApiBaseUrl, setNodeApiBaseUrl] = useState(getSupportedNetwork(DEFAULT_NETWORK).defaultNodeApiBaseUrl);
   const [message, setMessage] = useState<string | null>(null);
   const selectedNetwork = getSupportedNetwork(expectedNetwork);
+
+  useEffect(() => {
+    void sendWalletMessage<AppState>({ type: "wallet:getState" }).then((state) => {
+      setExpectedNetwork(state.expectedNetwork);
+      setNodeApiBaseUrl(state.nodeApiBaseUrl);
+    }).catch(() => setMessage("Unable to load current node settings."));
+  }, []);
 
   function handleNetworkChange(nextNetwork: SupportedNetworkId): void {
     setExpectedNetwork(nextNetwork);
@@ -28,14 +36,7 @@ export function ConfigureNode(): JSX.Element {
   return (
     <section>
       <h2>Configure node</h2>
-      <label>
-        Network
-        <select value={expectedNetwork} onChange={(event) => handleNetworkChange(event.target.value as SupportedNetworkId)}>
-          {SUPPORTED_NETWORKS.map((network) => (
-            <option key={network.id} value={network.id}>{network.label}</option>
-          ))}
-        </select>
-      </label>
+      <NetworkChoice value={expectedNetwork} onChange={handleNetworkChange} />
       <p>{selectedNetwork.description}</p>
       <p>Endpoint mode: {selectedNetwork.defaultEndpointLabel}</p>
       <input value={nodeApiBaseUrl} onChange={(event) => setNodeApiBaseUrl(event.target.value)} placeholder="Node API endpoint" />

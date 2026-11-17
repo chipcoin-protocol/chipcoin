@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
 import type { AppState } from "../../state/app_state";
-import { AUTO_LOCK_MINUTES_OPTIONS, SUPPORTED_NETWORKS, getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
+import { AUTO_LOCK_MINUTES_OPTIONS, getSupportedNetwork, type SupportedNetworkId } from "../../shared/constants";
+import { NetworkChoice } from "../../shared/NetworkChoice";
 import { sendWalletMessage } from "../../shared/messages";
 import type { ConnectedSite } from "../../provider/types";
 
@@ -73,14 +74,7 @@ export function Settings(
     <section className="panel">
       <h2>Settings</h2>
       <div className="stack">
-        <label className="stack">
-          <span>Network</span>
-          <select value={expectedNetwork} onChange={(event) => handleNetworkChange(event.target.value as SupportedNetworkId)}>
-            {SUPPORTED_NETWORKS.map((network) => (
-              <option key={network.id} value={network.id}>{network.label}</option>
-            ))}
-          </select>
-        </label>
+        <NetworkChoice value={expectedNetwork} onChange={handleNetworkChange} />
         <p className="message">{selectedNetwork.description}</p>
         <p className="message">Endpoint mode: {selectedNetwork.defaultEndpointLabel}</p>
         <label className="stack">

@@ -71,7 +71,8 @@ a {
 }
 
 .nav-tabs .is-active,
-.primary-button {
+.primary-button,
+.panel .primary-button {
   background: linear-gradient(135deg, #d8a84c 0%, #b67b1e 100%);
   color: #1e1507;
   font-weight: 700;
@@ -82,7 +83,8 @@ a {
   color: #fff4f4;
 }
 
-.secondary-button {
+.secondary-button,
+.panel .secondary-button {
   background: #32443a;
   color: #eff7f0;
 }
@@ -194,6 +196,37 @@ select {
   color: #ead9ba;
   margin: 0 0 12px;
   padding: 8px 10px;
+}
+
+.network-primary {
+  background: rgba(87, 230, 231, 0.12);
+  border: 1px solid rgba(87, 230, 231, 0.38);
+  border-radius: 10px;
+  color: #d8ffff;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.network-options-toggle {
+  background: transparent !important;
+  color: #b8c7bd !important;
+  font-size: 0.85em;
+  padding: 4px 0 !important;
+  text-align: left;
+}
+
+.network-test-warning {
+  background: rgba(122, 46, 46, 0.18);
+  border: 1px solid rgba(255, 179, 179, 0.24);
+  border-radius: 10px;
+  color: #ffe3e3;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.wallet-setup-primary {
+  font-size: 1.05em;
+  padding: 14px 12px !important;
 }
 
 .mono {

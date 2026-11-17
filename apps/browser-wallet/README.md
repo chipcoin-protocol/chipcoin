@@ -101,12 +101,11 @@ Common endpoint failures:
 
 Create, recover, or import:
 - Fresh install opens onboarding automatically
-- Choose a legacy wallet action or `Create PQ wallet` / `Import PQ seed`
-- `Create new wallet` generates a local recovery phrase, requires you to acknowledge backup, then encrypts the wallet in extension storage
-- `Recover wallet` recreates the same wallet deterministically from the saved recovery phrase
-- `Import private key` remains available as a fallback path for advanced users
-- `Create PQ wallet` generates an ML-DSA-44 seed and encrypts it in extension storage
-- `Import PQ seed` accepts the 64-character hexadecimal seed produced by the Chipcoin CLI
+- Mainnet and `Import Mainnet Wallet` are the initial choices in both Chrome and Firefox
+- `Create Mainnet Wallet` generates an ML-DSA-44 seed and encrypts it in extension storage
+- `Import Mainnet Wallet` accepts the 64-character hexadecimal ML-DSA-44 seed produced by the Chipcoin CLI
+- Open `Testnet / advanced networks` to select Testnet or Devnet; their coins are separate from Mainnet CHC
+- Legacy recovery phrase and private-key actions appear only when a test network is selected
 
 Export private key:
 - Unlock the wallet
@@ -122,13 +121,13 @@ Export recovery phrase:
 Recover from seed phrase:
 - Install or reload the extension
 - Open onboarding
-- Choose `Recover wallet`
+- Open `Testnet / advanced networks`, select Testnet, then choose `Recover legacy wallet`
 - Paste the saved recovery phrase and set a new password
 
 Recover from private key fallback:
 - Install or reload the extension
 - Open onboarding
-- Choose `Import private key`
+- Open `Testnet / advanced networks`, select Testnet, then choose `Import legacy key`
 - Paste the private key hex and set a new password
 
 Reset / remove:

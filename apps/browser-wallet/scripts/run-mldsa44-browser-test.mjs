@@ -87,7 +87,6 @@ async function runChromium() {
   console.error(`chromium_path=${chromium}`);
   console.error(`chromium_version=${(version.stdout || version.stderr).trim()}`);
   const profile = mkdtempSync(`${tmpdir()}/chipcoin-mldsa-chromium-`);
-  const cdpPort = await getFreePort();
   const staticServer = await startStaticServer(resolve("dist-mldsa-browser-test"));
   const proc = spawn(chromium, [
     "--headless=new",
@@ -98,15 +97,18 @@ async function runChromium() {
     "--no-sandbox",
     "--remote-allow-origins=*",
     `--user-data-dir=${profile}`,
-    `--remote-debugging-port=${cdpPort}`,
+    "--remote-debugging-port=0",
     "about:blank",
-  ], { stdio: ["ignore", "ignore", "pipe"] });
-  let stderr = "";
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  let browserOutput = "";
+  proc.stdout.on("data", (chunk) => {
+    browserOutput += chunk.toString();
+  });
   proc.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
+    browserOutput += chunk.toString();
   });
   try {
-    const wsUrl = await waitForChromiumWebSocket(cdpPort, () => stderr, proc);
+    const wsUrl = await waitForChromiumWebSocket(() => browserOutput, proc);
     const client = await connectCdp(wsUrl);
     const browserVersion = await client.send("Browser.getVersion");
     const created = await client.send("Target.createTarget", { url: "about:blank" });
@@ -305,26 +307,19 @@ async function waitForFirefoxWebSocket(stderrProvider) {
   throw new Error(`Firefox did not expose WebDriver BiDi endpoint. stderr: ${stderrProvider()}`);
 }
 
-async function waitForChromiumWebSocket(port, stderrProvider, proc) {
-  const endpoint = `http://127.0.0.1:${port}/json/version`;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (proc.exitCode !== null) {
-      throw new Error(`Chromium exited before DevTools was available. exit=${proc.exitCode} stderr: ${stderrProvider()}`);
+async function waitForChromiumWebSocket(outputProvider, proc) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const output = outputProvider();
+    const match = output.match(/DevTools listening on (ws:\/\/[^\s]+)/);
+    if (match) {
+      return match[1];
     }
-    try {
-      const response = await fetch(endpoint);
-      if (response.ok) {
-        const payload = await response.json();
-        if (typeof payload.webSocketDebuggerUrl === "string") {
-          return payload.webSocketDebuggerUrl;
-        }
-      }
-    } catch {
-      // Chromium is still starting.
+    if (proc.exitCode !== null) {
+      throw new Error(`Chromium exited before DevTools was available. exit=${proc.exitCode} output: ${output}`);
     }
     await sleep(100);
   }
-  throw new Error(`Chromium did not expose DevTools endpoint at ${endpoint}. stderr: ${stderrProvider()}`);
+  throw new Error(`Chromium did not announce a DevTools endpoint. output: ${outputProvider()}`);
 }
 
 async function pollCdpHarnessResult(client, sessionId) {
