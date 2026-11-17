@@ -53,11 +53,13 @@ copy_required_file "package-amo-source.sh"
 copy_required_file "popup.html"
 copy_required_file "settings.html"
 copy_required_file "onboarding.html"
+copy_required_file "approval.html"
 
 copy_required_dir "manifest"
 copy_required_dir "public"
 copy_required_dir "src"
 copy_required_dir "tests"
+copy_required_dir "scripts"
 
 cat > "${STAGING_DIR}/README.md" <<'README'
 # Chipcoin Wallet Firefox Source Package
