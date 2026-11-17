@@ -59,6 +59,21 @@ class SQLitePeerRepository(PeerRepository):
                 (host, port, network, node_id, verified_at, height),
             )
 
+    def update_verified_peer(self, *, host: str, port: int, network: str,
+                             node_id: str, verified_at: int, height: int) -> None:
+        """Update peerbook identity and success after an authenticated endpoint handshake."""
+
+        with sqlite_transaction(self.connection, phase="peer_endpoint_peerbook"):
+            self.connection.execute(
+                """UPDATE peers SET node_id=?, last_success=?, last_known_height=?,
+                   handshake_complete=CASE WHEN node_id IS NOT ? THEN 0 ELSE handshake_complete END,
+                   success_count=COALESCE(success_count, 0)+1,
+                   score=MAX(COALESCE(score, 0), 1), reconnect_attempts=0,
+                   backoff_until=0, last_error=NULL, protocol_error_class=NULL
+                   WHERE host=? AND port=? AND network=?""",
+                (node_id, verified_at, height, node_id, host, port, network),
+            )
+
     def verified_endpoints(self, *, network: str) -> list[dict[str, object]]:
         rows = self.connection.execute(
             """SELECT host, port, node_id, verified_at, last_known_height
@@ -70,6 +85,17 @@ class SQLitePeerRepository(PeerRepository):
              "verified_at": row[3], "last_known_height": row[4]}
             for row in rows
         ]
+
+    def update_verified_node_height(self, *, network: str, node_id: str, height: int) -> None:
+        """Refresh height evidence from a live authenticated session without renewing reachability TTL."""
+
+        with sqlite_transaction(self.connection, phase="peer_endpoint_height"):
+            self.connection.execute(
+                """UPDATE peer_endpoint_verifications
+                   SET last_known_height=?
+                   WHERE network=? AND node_id=? AND last_known_height<?""",
+                (height, network, node_id, height),
+            )
 
     def invalidate_endpoint(self, *, host: str, port: int, network: str) -> None:
         with sqlite_transaction(self.connection, phase="peer_endpoint_invalidate"):

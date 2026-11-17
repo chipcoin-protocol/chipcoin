@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "public-peers":
             assert service is not None
-            _print_json(service.public_peers())
+            _print_json(service.public_peers(diagnostics=args.diagnostics))
             return 0
 
         if args.command == "peerbook-clean":
@@ -1112,7 +1112,8 @@ def _build_parser() -> argparse.ArgumentParser:
     peer_detail_parser = subparsers.add_parser("peer-detail")
     peer_detail_parser.add_argument("--node-id", required=True)
     subparsers.add_parser("peer-summary")
-    subparsers.add_parser("public-peers")
+    public_peers_parser = subparsers.add_parser("public-peers")
+    public_peers_parser.add_argument("--diagnostics", action="store_true")
     peerbook_clean_parser = subparsers.add_parser("peerbook-clean")
     peerbook_clean_parser.add_argument("--reset-penalties", action="store_true")
     peerbook_clean_parser.add_argument("--dry-run", action="store_true")

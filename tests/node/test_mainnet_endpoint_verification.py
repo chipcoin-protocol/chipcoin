@@ -83,6 +83,7 @@ def test_real_mainnet_handshake_verifies_duplicate_endpoint_without_second_sessi
                 assert left_runtime.connected_peer_count() == 1
                 assert right_runtime.connected_peer_count() == 1
                 assert left_runtime._has_recent_duplicate_endpoint_verification(endpoint)
+                assert any(item["port"] == left_runtime.bound_port for item in right.recent_endpoint_verifications())
             finally:
                 await right_runtime.stop()
                 await left_runtime.stop()
@@ -248,3 +249,183 @@ def test_verified_dns_and_ip_aliases_publish_one_node(monkeypatch):
             "host": "13.140.151.41", "port": 8333, "address": "13.140.151.41:8333",
             "state": "good", "last_known_height": 99,
         }]
+
+
+def test_probe_scheduler_renews_with_full_operational_slots(monkeypatch):
+    with TemporaryDirectory() as directory:
+        now = [1_700_000_000]
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet", time_provider=lambda: now[0])
+        monkeypatch.setattr(service, "chain_tip", lambda: SimpleNamespace(height=100))
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=8333, max_outbound_sessions=1)
+        runtime._running = True
+        endpoint = OutboundPeer("janusart.xyz", 8333)
+        service.add_peer(endpoint.host, endpoint.port, source="manual")
+        service.verify_outbound_endpoint(host=endpoint.host, port=endpoint.port, node_id="janus-id", height=99)
+        active = FakeSession("other-id", inbound=False)
+        runtime._sessions[active] = SessionHandle(protocol=active, outbound=True, endpoint=OutboundPeer("other.example", 8333))
+        assert runtime._active_outbound_session_count() == 1
+        scheduled = []
+        monkeypatch.setattr(runtime, "_spawn_task", lambda coro, name, **kw: (scheduled.append(name), coro.close()))
+        runtime.max_endpoint_probes = 1
+        now[0] += 241
+        runtime._schedule_endpoint_probes()
+        assert scheduled == ["endpoint-probe-janusart.xyz:8333"]
+        assert endpoint in runtime._pending_endpoint_probes
+        runtime._schedule_endpoint_probes()
+        assert len(scheduled) == 1
+
+
+def test_verified_peer_identity_change_and_fresh_height(monkeypatch):
+    with TemporaryDirectory() as directory:
+        now = [1_700_000_000]
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet", time_provider=lambda: now[0])
+        tip = [100]
+        monkeypatch.setattr(service, "chain_tip", lambda: SimpleNamespace(height=tip[0]))
+        endpoint = OutboundPeer("janusart.xyz", 8333)
+        service.record_peer_observation(host=endpoint.host, port=endpoint.port, node_id="old-id", direction="inbound", last_known_height=100)
+        service.verify_outbound_endpoint(host=endpoint.host, port=endpoint.port, node_id="new-id", height=99)
+        assert service.peer_info(endpoint.host, endpoint.port).node_id == "new-id"
+        assert service.public_peers()["count"] == 1
+        tip[0] = 121
+        assert service.public_peers()["count"] == 0
+        assert service.public_peers(diagnostics=True)["excluded"][0]["reason"] == "stale_height"
+        service.update_verified_node_height(node_id="new-id", height=120)
+        assert service.public_peers()["count"] == 1
+        now[0] += service.ENDPOINT_VERIFICATION_TTL_SECONDS
+        assert service.public_peers()["count"] == 0
+        assert service.public_peers(diagnostics=True)["excluded"][0]["reason"] == "verification_expired"
+
+
+def test_failed_probe_clears_verification_and_pending_slot(monkeypatch):
+    async def scenario():
+        with TemporaryDirectory() as directory:
+            service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet")
+            runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=8333)
+            runtime._running = True
+            endpoint = OutboundPeer("janusart.xyz", 8333)
+            service.add_peer(endpoint.host, endpoint.port, source="manual")
+            service.verify_outbound_endpoint(host=endpoint.host, port=8333, node_id="janus-id", height=99)
+            runtime._pending_endpoint_probes.add(endpoint)
+            invalid = FakeSession("janus-id", inbound=False, valid=False)
+            runtime._sessions[invalid] = SessionHandle(protocol=invalid, outbound=True, endpoint=endpoint, endpoint_probe=True)
+            await runtime._on_handshake_complete(invalid)
+            await runtime._drop_session(invalid)
+            assert endpoint not in runtime._pending_endpoint_probes
+            assert service.public_peers()["count"] == 0
+            assert service.public_peers(diagnostics=True)["excluded"][0]["reason"] in {"banned_or_backoff", "unverified_endpoint"}
+
+    asyncio.run(scenario())
+
+
+def test_real_probe_uses_separate_capacity_and_keeps_inbound_session(monkeypatch):
+    async def scenario():
+        with TemporaryDirectory() as directory:
+            left = NodeService.open_sqlite(Path(directory) / "left.sqlite3", network="mainnet")
+            right = NodeService.open_sqlite(Path(directory) / "right.sqlite3", network="mainnet")
+            left_runtime = NodeRuntime(service=left, listen_host="127.0.0.1", listen_port=0,
+                                       connect_interval=0.05, max_outbound_sessions=1)
+            right_runtime = NodeRuntime(service=right, listen_host="127.0.0.1", listen_port=0,
+                                        connect_interval=0.05)
+            monkeypatch.setattr(left, "is_public_peer_host", lambda host: host == "127.0.0.1")
+            await left_runtime.start()
+            await right_runtime.start()
+            try:
+                right_runtime._outbound_targets[("127.0.0.1", left_runtime.bound_port)] = OutboundPeer(
+                    "127.0.0.1", left_runtime.bound_port,
+                )
+                await wait_for(lambda: left_runtime.connected_peer_count() == 1)
+                endpoint = OutboundPeer("127.0.0.1", right_runtime.bound_port)
+                occupied = FakeSession("occupied-slot", inbound=False)
+                occupied.state.handshake_complete = False
+                left_runtime._sessions[occupied] = SessionHandle(
+                    protocol=occupied, outbound=True, endpoint=OutboundPeer("occupied.example", 8333),
+                )
+                assert left_runtime._active_outbound_session_count() == 1
+                config = get_network_config("mainnet")
+                monkeypatch.setattr("chipcoin.node.runtime.get_network_config",
+                                    lambda network: replace(config, default_p2p_port=endpoint.port))
+                left.add_peer(endpoint.host, endpoint.port, source="manual")
+                left.record_peer_observation(
+                    host=endpoint.host, port=endpoint.port, direction="inbound", handshake_complete=True,
+                    last_success=left.time_provider(), node_id=right_runtime.node_id, last_known_height=0,
+                )
+                await wait_for(lambda: any(item["port"] == endpoint.port for item in left.recent_endpoint_verifications()))
+                assert left_runtime._active_outbound_session_count() == 1
+                assert left_runtime.connected_peer_count() == 1
+                assert right_runtime.connected_peer_count() == 1
+            finally:
+                await right_runtime.stop()
+                await left_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_active_outbound_refreshes_without_extra_probe(monkeypatch):
+    with TemporaryDirectory() as directory:
+        now = [1_700_000_000]
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet", time_provider=lambda: now[0])
+        monkeypatch.setattr(service, "chain_tip", lambda: SimpleNamespace(height=100))
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=8333)
+        endpoint = OutboundPeer("janusart.xyz", 8333)
+        session = FakeSession("janus-id", inbound=False)
+        runtime._sessions[session] = SessionHandle(protocol=session, outbound=True, endpoint=endpoint)
+        service.record_peer_observation(host=endpoint.host, port=endpoint.port, direction="outbound",
+                                        handshake_complete=True, last_success=now[0], node_id="janus-id",
+                                        last_known_height=99)
+        service.verify_outbound_endpoint(host=endpoint.host, port=8333, node_id="janus-id", height=99)
+        now[0] += 241
+        runtime._schedule_endpoint_probes()
+        assert not runtime._pending_endpoint_probes
+        assert service.recent_endpoint_verifications()[0]["verified_at"] == now[0]
+
+
+def test_verified_dns_alias_preferred_over_recent_direct_ip(monkeypatch):
+    with TemporaryDirectory() as directory:
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet")
+        monkeypatch.setattr(service, "chain_tip", lambda: SimpleNamespace(height=100))
+        service.record_peer_observation(
+            host="13.140.151.41", port=8333, direction="outbound", handshake_complete=True,
+            last_success=service.time_provider(), last_known_height=99, node_id="janus-id", score=1,
+        )
+        service.verify_outbound_endpoint(host="janusart.xyz", port=8333, node_id="janus-id", height=99)
+        assert service.public_peers()["peers"] == [{
+            "host": "janusart.xyz", "port": 8333, "address": "janusart.xyz:8333",
+            "state": "good", "last_known_height": 99,
+        }]
+
+
+def test_stale_peerbook_identity_triggers_reverification(monkeypatch):
+    with TemporaryDirectory() as directory:
+        now = [1_700_000_000]
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet", time_provider=lambda: now[0])
+        monkeypatch.setattr(service, "chain_tip", lambda: SimpleNamespace(height=100))
+        endpoint = OutboundPeer("janusart.xyz", 8333)
+        service.record_peer_observation(host=endpoint.host, port=8333, direction="inbound",
+                                        last_success=now[0], node_id="old-id", last_known_height=99)
+        service.verify_outbound_endpoint(host=endpoint.host, port=8333, node_id="old-id", height=99)
+        service.record_peer_observation(host=endpoint.host, port=8333, direction="inbound",
+                                        last_success=now[0], node_id="new-id", last_known_height=99)
+        assert service.public_peers()["count"] == 0
+        assert service.public_peers(diagnostics=True)["excluded"][0]["reason"] == "identity_changed_since_verification"
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=8333)
+        scheduled = []
+        monkeypatch.setattr(runtime, "_spawn_task", lambda coro, name, **kw: (scheduled.append(name), coro.close()))
+        runtime._schedule_endpoint_probes()
+        assert scheduled == ["endpoint-probe-janusart.xyz:8333"]
+        service.verify_outbound_endpoint(host=endpoint.host, port=8333, node_id="new-id", height=99)
+        assert service.public_peers()["count"] == 1
+
+
+def test_endpoint_probe_concurrency_is_bounded(monkeypatch):
+    with TemporaryDirectory() as directory:
+        service = NodeService.open_sqlite(Path(directory) / "node.sqlite3", network="mainnet")
+        runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=8333)
+        scheduled = []
+        monkeypatch.setattr(runtime, "_spawn_task", lambda coro, name, **kw: (scheduled.append(name), coro.close()))
+        for number in range(4):
+            service.record_peer_observation(host=f"peer{number}.example", port=8333,
+                                            direction="inbound", handshake_complete=True,
+                                            last_success=service.time_provider(), node_id=f"id-{number}")
+        runtime._schedule_endpoint_probes()
+        assert len(scheduled) == 2
+        assert len(runtime._pending_endpoint_probes) == 2

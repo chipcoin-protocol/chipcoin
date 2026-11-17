@@ -98,6 +98,7 @@ class SessionHandle:
     addr_relay_entries_sent: int = 0
     opened_at: float = 0.0
     endpoint_verification_only: bool = False
+    endpoint_probe: bool = False
 
 
 @dataclass(frozen=True)
@@ -339,6 +340,9 @@ class NodeRuntime:
         self._sessions: dict[PeerProtocol, SessionHandle] = {}
         self._sessions_by_node_id: dict[str, PeerProtocol] = {}
         self._pending_outbound_peers: set[OutboundPeer] = set()
+        self._pending_endpoint_probes: set[OutboundPeer] = set()
+        self._last_endpoint_probe_at: dict[OutboundPeer, int] = {}
+        self.max_endpoint_probes = 2
         self._outbound_targets: dict[tuple[str, int], OutboundPeer] = {
             (peer.host, peer.port): peer for peer in (outbound_peers or [])
         }
@@ -489,6 +493,8 @@ class NodeRuntime:
         self._sessions.clear()
         self._sessions_by_node_id.clear()
         self._pending_outbound_peers.clear()
+        self._pending_endpoint_probes.clear()
+        self._last_endpoint_probe_at.clear()
         self._relayed_mempool_txids.clear()
         self._recent_peer_txids.clear()
         self.service.set_runtime_sync_status(None)
@@ -984,7 +990,7 @@ class NodeRuntime:
         return sum(
             1
             for session, handle in self._sessions.items()
-            if handle.outbound and not session.state.closed
+            if handle.outbound and not handle.endpoint_probe and not session.state.closed
         )
 
     def _active_inbound_session_count(self) -> int:
@@ -1073,6 +1079,8 @@ class NodeRuntime:
         """Keep outbound peer connections alive."""
 
         while self._running:
+            if self.service.network == "mainnet":
+                self._schedule_endpoint_probes()
             remaining_dials = max(
                 0,
                 self.max_outbound_sessions - self._active_outbound_session_count() - len(self._pending_outbound_peers),
@@ -1109,6 +1117,71 @@ class NodeRuntime:
                 finally:
                     self._pending_outbound_peers.discard(peer)
             await asyncio.sleep(self.connect_interval)
+
+    def _schedule_endpoint_probes(self) -> None:
+        """Renew authenticated public reachability outside operational dial slots."""
+
+        now = self.service.time_provider()
+        renew_after = self.service.ENDPOINT_VERIFICATION_TTL_SECONDS * 4 // 5
+        tip = self.service.chain_tip()
+        height_threshold = -1 if tip is None else tip.height - 15
+        records = {
+            (str(item["host"]), int(item["port"])): item
+            for item in self.service.endpoint_verifications()
+        }
+        port = get_network_config(self.service.network).default_p2p_port
+        for info in self.service.list_peers():
+            if len(self._pending_endpoint_probes) >= self.max_endpoint_probes:
+                break
+            peer = OutboundPeer(info.host, info.port)
+            if info.port != port or not self.service.is_public_peer_host(info.host):
+                continue
+            if peer in self._pending_endpoint_probes or peer in self._pending_outbound_peers:
+                continue
+            if self._is_peer_currently_banned(peer.host, peer.port) or self._is_backoff_active(peer):
+                continue
+            record = records.get((peer.host, peer.port))
+            needs_height = record is not None and int(record["last_known_height"]) < height_threshold
+            identity_changed = record is not None and info.node_id is not None and info.node_id != record["node_id"]
+            if record is not None and now - int(record["verified_at"]) < renew_after and not needs_height and not identity_changed:
+                continue
+            if (needs_height or identity_changed) and now - self._last_endpoint_probe_at.get(peer, 0) < 30:
+                continue
+            active_outbound = next((
+                session for session, handle in self._sessions.items()
+                if handle.outbound and not handle.endpoint_probe and handle.endpoint == peer
+                and not session.state.closed and self._valid_outbound_verification_identity(session)
+            ), None)
+            if active_outbound is not None:
+                remote = active_outbound.state.remote_version
+                assert remote is not None
+                observed_height = remote.start_height
+                if info.node_id == remote.node_id and isinstance(info.last_known_height, int):
+                    observed_height = max(observed_height, info.last_known_height)
+                self.service.verify_outbound_endpoint(
+                    host=peer.host, port=peer.port, node_id=remote.node_id, height=observed_height,
+                )
+                self._last_endpoint_probe_at[peer] = now
+                continue
+            if record is None and not (info.handshake_complete or info.last_success):
+                continue
+            # A previous authenticated session is sufficient to make this a
+            # bounded verification candidate; publication still requires a
+            # fresh outbound identity handshake to this exact endpoint.
+            self._pending_endpoint_probes.add(peer)
+            self._last_endpoint_probe_at[peer] = now
+            self._spawn_task(self._start_endpoint_probe(peer), f"endpoint-probe-{peer.host}:{peer.port}", category="endpoint-probe")
+
+    async def _start_endpoint_probe(self, peer: OutboundPeer) -> None:
+        try:
+            await self._connect_outbound(peer, endpoint_probe=True)
+        except asyncio.CancelledError:
+            self._pending_endpoint_probes.discard(peer)
+            raise
+        except Exception as exc:
+            self._pending_endpoint_probes.discard(peer)
+            if self._running:
+                self._register_peer_failure(peer, error=exc)
 
     async def _bootstrap_discovery_loop(self, client: SeedClient) -> None:
         """Refresh optional untrusted peer hints; P2P handshake remains authoritative."""
@@ -1213,7 +1286,7 @@ class NodeRuntime:
         self._session_created_count += 1
         self._spawn_task(self._run_session(session), "inbound-session", category="session")
 
-    async def _connect_outbound(self, peer: OutboundPeer) -> None:
+    async def _connect_outbound(self, peer: OutboundPeer, *, endpoint_probe: bool = False) -> None:
         """Establish an outbound connection to a configured peer."""
 
         self.logger.info("attempting outbound connect peer=%s:%s", peer.host, peer.port)
@@ -1237,6 +1310,7 @@ class NodeRuntime:
             outbound=True,
             endpoint=peer,
             opened_at=asyncio.get_running_loop().time(),
+            endpoint_probe=endpoint_probe,
         )
         self.logger.info("outbound TCP connected peer=%s:%s", peer.host, peer.port)
         self._session_created_count += 1
@@ -1253,7 +1327,9 @@ class NodeRuntime:
             raise
         except Exception as exc:
             self.logger.info("session failed handshake_complete=%s error=%s", session.state.handshake_complete, exc)
-            self._apply_session_penalty(session, error=exc, penalty=20 if not session.state.handshake_complete else 10)
+            handle = self._sessions.get(session)
+            if handle is None or not handle.endpoint_probe:
+                self._apply_session_penalty(session, error=exc, penalty=20 if not session.state.handshake_complete else 10)
             await session.close(reason=str(exc), error=exc)
         finally:
             await self._drop_session(session)
@@ -1286,6 +1362,19 @@ class NodeRuntime:
                 self._forget_self_alias(session)
                 error = DuplicateConnectionError("Refusing self-connection.")
                 await session.close(reason=str(error), error=error)
+                return
+
+            handle = self._sessions.get(session)
+            if handle is not None and handle.endpoint_probe:
+                if not self._valid_outbound_verification_identity(session) or handle.endpoint is None:
+                    await session.close(reason="Invalid endpoint verification identity.")
+                    return
+                self.service.verify_outbound_endpoint(
+                    host=handle.endpoint.host, port=handle.endpoint.port,
+                    node_id=remote.node_id, height=remote.start_height,
+                )
+                handle.endpoint_verification_only = True
+                await session.close(reason="Endpoint verification complete.")
                 return
 
             existing = self._sessions_by_node_id.get(remote.node_id)
@@ -1375,6 +1464,11 @@ class NodeRuntime:
                         canonical_host=endpoint.host,
                         canonical_port=endpoint.port,
                         prefer_configured=handle.endpoint if handle is not None else None,
+                    )
+                if handle is not None and handle.outbound and self.service.network == "mainnet" and self._valid_outbound_verification_identity(session):
+                    self.service.verify_outbound_endpoint(
+                        host=endpoint.host, port=endpoint.port,
+                        node_id=remote.node_id, height=remote.start_height,
                     )
             self.logger.info(
                 "peer handshake complete node_id=%s direction=%s height=%s",
@@ -2340,6 +2434,11 @@ class NodeRuntime:
         handle = self._sessions.pop(session, None)
         if handle is not None:
             self._session_closed_count += 1
+            if handle.endpoint_probe and handle.endpoint is not None:
+                self._pending_endpoint_probes.discard(handle.endpoint)
+                if not handle.endpoint_verification_only and self._running:
+                    error = session.state.error_causes[-1] if session.state.error_causes else "Endpoint handshake failed."
+                    self._register_peer_failure(handle.endpoint, error=error)
         peer_id = self._sync_peer_id(session)
         released_requests = self.sync_manager.release_peer_requests(peer_id)
         for request in released_requests:
@@ -2457,6 +2556,8 @@ class NodeRuntime:
         for pending in self._pending_outbound_peers:
             if pending == peer or self._peers_equivalent(pending, peer):
                 return True
+        if peer in self._pending_endpoint_probes:
+            return True
         known = self._known_peer_info(peer.host, peer.port)
         known_node_id = None if known is None else known.node_id
         for protocol, handle in self._sessions.items():
@@ -3434,6 +3535,8 @@ class NodeRuntime:
             last_penalty_reason=None if info is None else info.last_penalty_reason,
             last_penalty_at=None if info is None else info.last_penalty_at,
         )
+        if self.service.network == "mainnet" and remote is not None and session.state.handshake_complete:
+            self.service.update_verified_node_height(node_id=remote.node_id, height=height)
 
     def _is_backoff_active(self, peer: OutboundPeer) -> bool:
         """Return whether an outbound peer is still under reconnect backoff."""

@@ -1530,7 +1530,8 @@ def test_http_api_public_peers_filters_private_and_unhealthy_records() -> None:
 
 def test_mainnet_public_peers_require_current_outbound_handshake(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
-        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="mainnet")
+        service = NodeService.open_sqlite(Path(tempdir) / "chipcoin.sqlite3", network="mainnet",
+                                          time_provider=lambda: 1_700_000_002)
         monkeypatch.setattr(service, "chain_tip", lambda: ChainTip(block_hash="0" * 64, height=100))
         for host, direction, height in (
             ("fresh.example.com", "outbound", 99),
@@ -1546,6 +1547,8 @@ def test_mainnet_public_peers_require_current_outbound_handshake(monkeypatch) ->
                 success_count=1,
                 last_known_height=height,
             )
+        service.verify_outbound_endpoint(host="fresh.example.com", port=8333,
+                                         node_id="fresh-node", height=99)
         service.record_peer_observation(
             host="announced-only.example.com",
             port=8333,

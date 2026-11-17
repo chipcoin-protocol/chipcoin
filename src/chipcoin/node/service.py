@@ -1393,51 +1393,76 @@ class NodeService:
     def verify_outbound_endpoint(self, *, host: str, port: int, node_id: str, height: int) -> None:
         """Record successful authenticated outbound reachability."""
 
+        now = self.time_provider()
         if self.peer_repository is not None:
             self.peer_repository.verify_endpoint(
                 host=host, port=port, network=self.network, node_id=node_id,
-                verified_at=self.time_provider(), height=height,
+                verified_at=now, height=height,
             )
+        known = self.peerbook.get(host=host, port=port, network=self.network)
+        if known is not None:
+            # Keep operational session direction separate. The authenticated
+            # endpoint identity replaces a stale peerbook ID after a restart.
+            updated = replace(
+                known, node_id=node_id, last_success=now, last_known_height=height,
+                handshake_complete=known.handshake_complete if known.node_id == node_id else False,
+                success_count=(known.success_count or 0) + 1,
+                score=max(known.score or 0, 1), reconnect_attempts=0,
+                backoff_until=0, last_error=None, protocol_error_class=None,
+            )
+            self.peerbook.remove(known)
+            self.peerbook.add(updated)
+            if self.peer_repository is not None:
+                self.peer_repository.update_verified_peer(
+                    host=host, port=port, network=self.network,
+                    node_id=node_id, verified_at=now, height=height,
+                )
+
+    @staticmethod
+    def is_public_peer_host(host: str) -> bool:
+        return _is_public_peer_host(host)
 
     def recent_endpoint_verifications(self) -> list[dict[str, object]]:
-        if self.peer_repository is None:
-            return []
         now = self.time_provider()
         return [
-            record for record in self.peer_repository.verified_endpoints(network=self.network)
+            record for record in self.endpoint_verifications()
             if 0 <= now - int(record["verified_at"]) < self.ENDPOINT_VERIFICATION_TTL_SECONDS
         ]
+
+    def endpoint_verifications(self) -> list[dict[str, object]]:
+        if self.peer_repository is None:
+            return []
+        return self.peer_repository.verified_endpoints(network=self.network)
+
+    def update_verified_node_height(self, *, node_id: str, height: int) -> None:
+        if self.peer_repository is not None:
+            self.peer_repository.update_verified_node_height(network=self.network, node_id=node_id, height=height)
 
     def invalidate_outbound_endpoint(self, *, host: str, port: int) -> None:
         if self.peer_repository is not None:
             self.peer_repository.invalidate_endpoint(host=host, port=port, network=self.network)
 
-    def public_peers(self) -> dict[str, object]:
+    def public_peers(self, *, diagnostics: bool = False) -> dict[str, object]:
         """Return public P2P candidates without raw peerbook diagnostics.
 
-        Mainnet requires a current outbound handshake to the canonical port and
-        a peer height close to the validated local tip. An inbound connection
-        does not establish that the advertised endpoint accepts connections.
+        Mainnet requires recent authenticated outbound reachability on the
+        canonical port and height evidence close to the validated local tip.
+        An inbound connection alone does not prove endpoint reachability.
         """
 
         now = self.time_provider()
         default_port = get_network_config(self.network).default_p2p_port
         public_peers = []
+        excluded: list[dict[str, object]] = []
         seen_endpoints: set[tuple[str, int]] = set()
         seen_node_ids: set[str] = set()
         candidates = self.peer_diagnostics()
-        verified = []
+        known_peers = {(peer.host, peer.port): peer for peer in self.list_peers()}
+        all_verifications = self.endpoint_verifications() if self.network == "mainnet" else []
         if self.network == "mainnet":
             tip = self.chain_tip()
             min_height = max(0, tip.height - 20) if tip is not None else 0
-            candidates = [
-                peer for peer in candidates
-                if peer["direction"] == "outbound"
-                and peer["handshake_complete"] is True
-                and isinstance(peer["last_known_height"], int)
-                and peer["last_known_height"] >= min_height
-            ]
-            verified = self.recent_endpoint_verifications()
+            candidates = []  # Persisted peerbook direction alone is not reachability proof.
             operational_records: list[dict[str, object]] = []
         else:
             operational_records = self._operational_peer_records(candidates)
@@ -1474,43 +1499,55 @@ class NodeService:
         # A duplicate outbound connection proves reachability after a full
         # network-identity handshake, but must not replace the inbound session.
         # Keep this evidence separate from peerbook direction/session state.
-        peer_records = self.peer_diagnostics()
-        known_peers = {(peer.host, peer.port): peer for peer in self.list_peers()}
-        for verification in sorted(verified, key=lambda item: (not any(c.isalpha() for c in str(item["host"])), str(item["host"]))):
+        for verification in sorted(all_verifications, key=lambda item: (not any(c.isalpha() for c in str(item["host"])), str(item["host"]))):
             host, port = str(verification["host"]), int(verification["port"])
             if port != default_port or not _is_public_peer_host(host):
                 continue
             endpoint = (host, port)
             node_id = str(verification["node_id"])
+            reason = None
+            if not 0 <= now - int(verification["verified_at"]) < self.ENDPOINT_VERIFICATION_TTL_SECONDS:
+                reason = "verification_expired"
+            elif int(verification["last_known_height"]) < min_height:
+                reason = "stale_height"
             if endpoint in seen_endpoints or node_id in seen_node_ids:
+                if diagnostics:
+                    excluded.append({"host": host, "port": port, "reason": "duplicate_verified_node"})
                 continue
             known = known_peers.get(endpoint)
-            if known is not None and (
-                (known.ban_until or 0) > now or (known.backoff_until or 0) > now
-                or (known.node_id is not None and known.node_id != verification["node_id"])
-            ):
-                continue
-            current_height = max(
-                [int(verification["last_known_height"])]
-                + [
-                    int(peer["last_known_height"])
-                    for peer in peer_records
-                    if peer["node_id"] == node_id
-                    and peer["handshake_complete"] is True
-                    and isinstance(peer["last_known_height"], int)
-                ]
-            )
-            if current_height < min_height:
+            if known is not None and ((known.ban_until or 0) > now or (known.backoff_until or 0) > now):
+                reason = "banned_or_backoff"
+            elif known is not None and known.node_id is not None and known.node_id != node_id:
+                reason = "identity_changed_since_verification"
+            if reason is not None:
+                if diagnostics:
+                    excluded.append({"host": host, "port": port, "reason": reason})
                 continue
             seen_endpoints.add(endpoint)
             seen_node_ids.add(node_id)
             public_peers.append({
                 "host": host, "port": port, "address": f"{host}:{port}",
-                "state": "good", "last_known_height": current_height,
+                "state": "good", "last_known_height": int(verification["last_known_height"]),
             })
 
+        if diagnostics and self.network == "mainnet":
+            verified_endpoints = {(str(item["host"]), int(item["port"])) for item in all_verifications}
+            for peer in self.peer_diagnostics():
+                host, port = str(peer["host"]), int(peer["port"])
+                if port != default_port or not _is_public_peer_host(host) or (host, port) in verified_endpoints:
+                    continue
+                if (host, port) in seen_endpoints:
+                    continue
+                reason = "unverified_endpoint"
+                if (peer["ban_until"] or 0) > now or (peer["backoff_until"] or 0) > now:
+                    reason = "banned_or_backoff"
+                excluded.append({"host": host, "port": port, "reason": reason})
+
         public_peers.sort(key=lambda peer: (str(peer["host"]), int(peer["port"])))
-        return {"network": self.network, "peers": public_peers, "count": len(public_peers)}
+        result = {"network": self.network, "peers": public_peers, "count": len(public_peers)}
+        if diagnostics:
+            result["excluded"] = sorted(excluded, key=lambda item: (str(item["host"]), int(item["port"])))
+        return result
 
     def _operational_peer_records(self, peers: list[dict[str, object]]) -> list[dict[str, object]]:
         """Return one best operational record per remote node id."""
