@@ -931,6 +931,92 @@ def test_http_api_blocks_and_block_lookup_by_height_and_hash() -> None:
         assert by_hash_body["height"] == 0
 
 
+def test_http_api_coinbase_only_block_does_not_replay_chain_state(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        block = _mine_block(service.build_candidate_block("CHCminer").block)
+        service.apply_block(block)
+        app = HttpApiApp(service)
+
+        def replay_forbidden(_height):
+            raise AssertionError("coinbase-only block must not replay chain state")
+
+        monkeypatch.setattr(service, "_replay_chain_state_before_height", replay_forbidden)
+        for query in ("height=0", f"hash={block.block_hash()}"):
+            status, _, body = _call_wsgi(app, method="GET", path="/v1/block", query=query)
+            assert status == "200 OK"
+            assert body["fees_chipbits"] == 0
+            assert body["transaction_count"] == 1
+
+
+def test_http_api_block_with_payment_preserves_fees_and_replay_errors(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        timestamps = iter(range(1_700_000_000, 1_700_000_400))
+        service = NodeService.open_sqlite(
+            Path(tempdir) / "chipcoin.sqlite3",
+            params=replace(MAINNET_PARAMS, coinbase_maturity=1),
+            time_provider=lambda: next(timestamps),
+        )
+        miner = wallet_key(0)
+        first = _mine_block(service.build_candidate_block(miner.address).block)
+        service.apply_block(first)
+        coinbase = first.transactions[0]
+        payment = signed_payment(
+            OutPoint(txid=coinbase.txid(), index=0),
+            value=int(coinbase.outputs[0].value),
+            sender=miner,
+            fee=1_000,
+        )
+        service.receive_transaction(payment)
+        second = _mine_block(service.build_candidate_block(miner.address).block)
+        assert len(second.transactions) == 2
+        service.apply_block(second)
+        app = HttpApiApp(service)
+        original_replay = service._replay_chain_state_before_height
+        replayed_heights = []
+
+        def count_replay(height):
+            replayed_heights.append(height)
+            return original_replay(height)
+
+        monkeypatch.setattr(service, "_replay_chain_state_before_height", count_replay)
+        status, _, body = _call_wsgi(app, method="GET", path="/v1/block", query="height=1")
+        assert status == "200 OK"
+        assert body["fees_chipbits"] == 1_000
+        assert body["transaction_count"] == 2
+        assert replayed_heights == [1]
+
+        def unavailable_replay(_height):
+            raise ValueError("Missing active-chain block")
+
+        monkeypatch.setattr(service, "_replay_chain_state_before_height", unavailable_replay)
+        error_status, _, error_body = _call_wsgi(app, method="GET", path="/v1/block", query="height=1")
+        assert error_status == "200 OK"
+        assert error_body["fees_chipbits"] is None
+        assert set(error_body) == set(body)
+
+
+def test_http_api_malformed_coinbase_only_block_does_not_take_shortcut(monkeypatch) -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "chipcoin.sqlite3")
+        block = _mine_block(service.build_candidate_block("CHCminer").block)
+        service.apply_block(block)
+        malformed = replace(block, transactions=(
+            replace(block.transactions[0], metadata={"coinbase": "false"}),
+        ))
+        monkeypatch.setattr(service, "get_block_by_height", lambda _height: malformed)
+
+        def unavailable_replay(_height):
+            raise ValueError("Missing active-chain block")
+
+        monkeypatch.setattr(service, "_replay_chain_state_before_height", unavailable_replay)
+        status, _, body = _call_wsgi(
+            HttpApiApp(service), method="GET", path="/v1/block", query="height=0",
+        )
+        assert status == "200 OK"
+        assert body["fees_chipbits"] is None
+
+
 def test_http_api_block_lookup_rejects_invalid_queries_and_returns_not_found() -> None:
     with TemporaryDirectory() as tempdir:
         service = _make_service(Path(tempdir) / "chipcoin.sqlite3")

@@ -3769,7 +3769,7 @@ class NodeService:
 
             if coinbase.outputs and coinbase.outputs[0].recipient == recipient:
                 try:
-                    fees_chipbits = self._block_total_fees_chipbits(height, block)
+                    fees_chipbits = self._active_block_fees_chipbits(height, block)
                 except ValueError:
                     fees_chipbits = 0
                 rows.append(
@@ -3997,36 +3997,46 @@ class NodeService:
             return []
 
         rows: list[dict[str, object]] = []
+        # A full node already walks the chain in height order here. Keep the
+        # pre-block registry in memory instead of rebuilding it for each match.
+        registry_view = InMemoryNodeRegistryView() if self.snapshot_anchor() is None else None
         for height in range(tip.height + 1):
             block = self.get_block_by_height(height)
-            if block is None or not block.transactions or not block.transactions[0].outputs:
+            if block is None:
+                registry_view = None  # Preserve replay's missing-block error on a later match.
                 continue
-            coinbase = block.transactions[0]
-            if coinbase.outputs[0].recipient != recipient:
-                continue
-            try:
-                fees_chipbits = self._block_total_fees_chipbits(height, block)
-            except ValueError:
-                fees_chipbits = 0
-            node_pool_chipbits = node_reward_pool_chipbits(height, self.params)
-            rewarded_nodes = select_rewarded_nodes(
-                self._replay_chain_state_before_height(height)[1],
-                height=height,
-                previous_block_hash=block.header.previous_block_hash,
-                node_reward_pool_chipbits=node_pool_chipbits,
-                params=self.params,
-            )
-            rows.append(
-                {
-                    "height": height,
-                    "block_hash": block.block_hash(),
-                    "miner_subsidy_chipbits": miner_subsidy_chipbits(height, self.params),
-                    "fees_chipbits": fees_chipbits,
-                    "node_reward_chipbits": node_pool_chipbits,
-                    "node_reward_recipient_count": len(rewarded_nodes),
-                    "timestamp": block.header.timestamp,
-                }
-            )
+            if block.transactions and block.transactions[0].outputs:
+                coinbase = block.transactions[0]
+                if coinbase.outputs[0].recipient == recipient:
+                    try:
+                        fees_chipbits = self._active_block_fees_chipbits(height, block)
+                    except ValueError:
+                        fees_chipbits = 0
+                    node_pool_chipbits = node_reward_pool_chipbits(height, self.params)
+                    pre_block_registry = (
+                        registry_view if registry_view is not None
+                        else self._replay_chain_state_before_height(height)[1]
+                    )
+                    rewarded_nodes = select_rewarded_nodes(
+                        pre_block_registry,
+                        height=height,
+                        previous_block_hash=block.header.previous_block_hash,
+                        node_reward_pool_chipbits=node_pool_chipbits,
+                        params=self.params,
+                    )
+                    rows.append(
+                        {
+                            "height": height,
+                            "block_hash": block.block_hash(),
+                            "miner_subsidy_chipbits": miner_subsidy_chipbits(height, self.params),
+                            "fees_chipbits": fees_chipbits,
+                            "node_reward_chipbits": node_pool_chipbits,
+                            "node_reward_recipient_count": len(rewarded_nodes),
+                            "timestamp": block.header.timestamp,
+                        }
+                    )
+            if registry_view is not None:
+                self._apply_node_registry_block(block, height, registry_view=registry_view)
         rows.sort(key=lambda row: (row["height"], row["block_hash"]))
         if descending:
             rows.reverse()
@@ -4164,7 +4174,7 @@ class NodeService:
                 continue
             miner_address = block.transactions[0].outputs[0].recipient
             try:
-                fees_chipbits = self._block_total_fees_chipbits(height, block)
+                fees_chipbits = self._active_block_fees_chipbits(height, block)
             except ValueError:
                 fees_chipbits = 0
             node_pool_chipbits = node_reward_pool_chipbits(height, self.params)
@@ -4717,9 +4727,32 @@ class NodeService:
             transactions.extend(block.transactions[1:])
         return transactions
 
-    def _block_total_fees_chipbits(self, height: int, block: Block) -> int:
-        """Replay active-chain state up to one block and compute contained fees."""
+    def _active_block_fees_chipbits(self, height: int, block: Block) -> int:
+        """Read fees from the validated active-chain coinbase payout when possible.
 
+        Consensus requires the first coinbase output to equal the miner base
+        subsidy plus all block fees. Keep the replay path for genesis, malformed
+        blocks, and blocks that are no longer active after a concurrent reorg.
+        """
+
+        if (
+            height > 0
+            and block.transactions
+            and is_coinbase_transaction(block.transactions[0])
+            and block.transactions[0].outputs
+            and self.headers.get_hash_at_height(height) == block.block_hash()
+        ):
+            fees_chipbits = int(block.transactions[0].outputs[0].value) - miner_subsidy_chipbits(height, self.params)
+            if fees_chipbits >= 0:
+                return fees_chipbits
+        return self._block_total_fees_chipbits(height, block)
+
+    def _block_total_fees_chipbits(self, height: int, block: Block) -> int:
+        """Compute contained fees, replaying prior chain state only when needed."""
+
+        # Stored blocks were validated; a lone coinbase has no fee-paying transactions.
+        if len(block.transactions) == 1 and is_coinbase_transaction(block.transactions[0]):
+            return 0
         utxo_view, node_registry_view = self._replay_chain_state_before_height(height)
         total_fees_chipbits = 0
         for index, transaction in enumerate(block.transactions):
