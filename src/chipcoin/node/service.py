@@ -2536,7 +2536,7 @@ class NodeService:
         total_fees_chipbits = None
         if block_height is not None:
             try:
-                total_fees_chipbits = self._block_total_fees_chipbits(block_height, block)
+                total_fees_chipbits = self._active_block_fees_chipbits(block_height, block)
             except ValueError:
                 total_fees_chipbits = None
         miner_payout_chipbits = int(block.transactions[0].outputs[0].value) if block.transactions and block.transactions[0].outputs else 0

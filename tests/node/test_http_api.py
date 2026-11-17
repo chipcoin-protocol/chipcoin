@@ -949,7 +949,7 @@ def test_http_api_coinbase_only_block_does_not_replay_chain_state(monkeypatch) -
             assert body["transaction_count"] == 1
 
 
-def test_http_api_block_with_payment_preserves_fees_and_replay_errors(monkeypatch) -> None:
+def test_http_api_active_block_with_payment_reads_validated_fees_without_replay(monkeypatch) -> None:
     with TemporaryDirectory() as tempdir:
         timestamps = iter(range(1_700_000_000, 1_700_000_400))
         service = NodeService.open_sqlite(
@@ -984,7 +984,7 @@ def test_http_api_block_with_payment_preserves_fees_and_replay_errors(monkeypatc
         assert status == "200 OK"
         assert body["fees_chipbits"] == 1_000
         assert body["transaction_count"] == 2
-        assert replayed_heights == [1]
+        assert replayed_heights == []
 
         def unavailable_replay(_height):
             raise ValueError("Missing active-chain block")
@@ -992,8 +992,17 @@ def test_http_api_block_with_payment_preserves_fees_and_replay_errors(monkeypatc
         monkeypatch.setattr(service, "_replay_chain_state_before_height", unavailable_replay)
         error_status, _, error_body = _call_wsgi(app, method="GET", path="/v1/block", query="height=1")
         assert error_status == "200 OK"
-        assert error_body["fees_chipbits"] is None
+        assert error_body["fees_chipbits"] == 1_000
         assert set(error_body) == set(body)
+
+        # A block that is no longer on the active path still uses replay and
+        # preserves the existing null-on-error API behavior.
+        monkeypatch.setattr(service.headers, "get_hash_at_height", lambda _height: None)
+        stale_status, _, stale_body = _call_wsgi(
+            app, method="GET", path="/v1/block", query=f"hash={second.block_hash()}",
+        )
+        assert stale_status == "200 OK"
+        assert stale_body["fees_chipbits"] is None
 
 
 def test_http_api_malformed_coinbase_only_block_does_not_take_shortcut(monkeypatch) -> None:
