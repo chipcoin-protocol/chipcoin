@@ -219,7 +219,10 @@ describe("mainnet/testnet wallet and login isolation", () => {
       "https://testnet-api.chipcoinprotocol.com",
       "mainnet",
     )).rejects.toThrow("Wrong network. Expected mainnet, got testnet.");
-    await expect(loadSettings()).resolves.toMatchObject({ expectedNetwork: "testnet" });
+    await expect(loadSettings()).resolves.toMatchObject({
+      expectedNetwork: "mainnet",
+      nodeApiBaseUrl: "https://mainnet-api.chipcoinprotocol.com",
+    });
 
     await expect(
       session.updateNodeEndpoint("https://mainnet-api.chipcoinprotocol.com", "mainnet"),

@@ -141,12 +141,39 @@ describe("browser wallet network support", () => {
     });
   });
 
+  it("keeps a newly created PQ wallet on Mainnet after the wallet record is saved", async () => {
+    installFetch("mainnet");
+    const session = await import("../../src/background/session");
+    const { loadSettings } = await import("../../src/storage/preferences_store");
+
+    await expect(session.createPqWallet("phase12-password")).resolves.toMatchObject({
+      hasWallet: true,
+      expectedNetwork: "mainnet",
+      nodeApiBaseUrl: "https://mainnet-api.chipcoinprotocol.com",
+    });
+    await expect(loadSettings()).resolves.toMatchObject({
+      expectedNetwork: "mainnet",
+      nodeApiBaseUrl: "https://mainnet-api.chipcoinprotocol.com",
+    });
+  });
+
   it("keeps legacy settings without a network on Testnet", async () => {
     const { STORAGE_KEYS } = await import("../../src/shared/constants");
     const { storageSet } = await import("../../src/shared/browser");
     const { loadSettings } = await import("../../src/storage/preferences_store");
     await storageSet(STORAGE_KEYS.settings, { nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com" });
     await expect(loadSettings()).resolves.toMatchObject({ expectedNetwork: "testnet" });
+  });
+
+  it("preserves Testnet for a preexisting wallet without saved settings", async () => {
+    const { STORAGE_KEYS } = await import("../../src/shared/constants");
+    const { storageSet } = await import("../../src/shared/browser");
+    const { loadSettings } = await import("../../src/storage/preferences_store");
+    await storageSet(STORAGE_KEYS.wallet, { walletType: "pq_seed" });
+    await expect(loadSettings()).resolves.toMatchObject({
+      expectedNetwork: "testnet",
+      nodeApiBaseUrl: "https://testnet-api.chipcoinprotocol.com",
+    });
   });
 
   it("accepts a node endpoint only when the selected network matches", async () => {

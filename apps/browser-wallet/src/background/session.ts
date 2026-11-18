@@ -605,6 +605,10 @@ async function persistSeedWallet(recoveryPhrase: string, password: string, accou
 }
 
 async function persistPqSeedWallet(pqSeedHex: string, password: string): Promise<AppState> {
+  // Pin the selected network before storing a new wallet. Without settings, a
+  // wallet record is treated as a legacy Testnet installation by loadSettings().
+  const settings = await loadSettings();
+  await saveSettings(settings);
   const backend = createExperimentalMlDsa44Backend();
   await backend.initialize();
   const keyPair = await backend.generateKeyPair(hexToBytes(pqSeedHex));
@@ -623,7 +627,6 @@ async function persistPqSeedWallet(pqSeedHex: string, password: string): Promise
   await clearAllSubmittedTransactions();
   await clearAllWalletDataCaches();
   await saveWalletRecord(record);
-  const settings = await loadSettings();
   await setActiveSession(await makeUnlockedPqSession(pqSeedHex, settings.autoLockMinutes, 0));
   await scheduleAutoLock(settings.autoLockMinutes);
   await refreshWalletDataCache(settings, record.address, { includeHistory: false });
