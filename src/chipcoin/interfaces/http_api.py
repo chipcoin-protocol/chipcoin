@@ -388,20 +388,24 @@ class HttpApiApp:
             max_chars=self.BLOCK_SUBMIT_RAW_HEX_MAX_CHARS,
         )
         miner_id = payload.get("miner_id")
-        if not isinstance(template_id, str) or not template_id.strip():
-            raise ApiError(400, "invalid_request", "template_id is required")
-        if not isinstance(miner_id, str) or not miner_id.strip():
-            raise ApiError(400, "invalid_request", "miner_id is required")
+        if template_id is not None and (not isinstance(template_id, str) or not template_id.strip()):
+            raise ApiError(400, "invalid_request", "template_id must be a nonempty string")
+        if template_id is not None and (not isinstance(miner_id, str) or not miner_id.strip()):
+            raise ApiError(400, "invalid_request", "miner_id is required with template_id")
+        if template_id is None and miner_id is not None and not isinstance(miner_id, str):
+            raise ApiError(400, "invalid_request", "miner_id must be a string")
+        parsed_template_id = template_id.strip() if template_id is not None else None
+        parsed_miner_id = miner_id.strip() if isinstance(miner_id, str) else ""
         if self.mining_submit_handler is not None:
             return self.mining_submit_handler(
-                template_id=template_id.strip(),
+                template_id=parsed_template_id,
                 serialized_block_hex=serialized_block,
-                miner_id=miner_id.strip(),
+                miner_id=parsed_miner_id,
             )
         return self.service.submit_mined_block(
-            template_id=template_id.strip(),
+            template_id=parsed_template_id,
             serialized_block_hex=serialized_block,
-            miner_id=miner_id.strip(),
+            miner_id=parsed_miner_id,
         )
 
     def _handle_address(self, *, method: str, path: str, environ) -> object:

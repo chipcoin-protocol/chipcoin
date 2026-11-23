@@ -553,7 +553,7 @@ class NodeRuntime:
     def submit_mined_block_from_http(
         self,
         *,
-        template_id: str,
+        template_id: str | None,
         serialized_block_hex: str,
         miner_id: str,
     ) -> dict[str, object]:
@@ -585,27 +585,65 @@ class NodeRuntime:
     async def _submit_mined_block_from_http(
         self,
         *,
-        template_id: str,
+        template_id: str | None,
         serialized_block_hex: str,
         miner_id: str,
     ) -> dict[str, object]:
         """Validate one template submission and accept it through announce_block."""
 
-        prepared = self.service.prepare_mined_block_submission(
-            template_id=template_id,
-            serialized_block_hex=serialized_block_hex,
-            miner_id=miner_id,
+        prepared = (
+            self.service.prepare_mined_block_submission(
+                template_id=template_id,
+                serialized_block_hex=serialized_block_hex,
+                miner_id=miner_id,
+            )
+            if template_id is not None
+            else self.service.prepare_full_block_submission(serialized_block_hex=serialized_block_hex)
         )
         if prepared.get("accepted") is False:
             return prepared
+        if "block" not in prepared:
+            return prepared
         block = prepared["block"]
+        if template_id is None:
+            result = self.service.accept_full_block(block, sync_manager=self.sync_manager)
+            if result["stored"] and result["consensus_validity"] != "invalid":
+                try:
+                    await self._broadcast_inventory(InventoryVector(object_type="block", object_hash=block.block_hash()))
+                except Exception:
+                    self.logger.exception("full block stored but relay failed block=%s", block.block_hash())
+                    result["relay_failed"] = True
+                current = self.service.full_block_status(block.block_hash())
+                if current is not None:
+                    initial_reason = result["reason"]
+                    result.update({key: current[key] for key in (
+                        "accepted", "stored", "on_active_chain", "consensus_validity", "became_tip",
+                    )})
+                    if not current["on_active_chain"] and initial_reason == "accepted":
+                        result["reason"] = "known_side_branch"
+                    elif current["on_active_chain"] and initial_reason == "stored_side_branch":
+                        result["reason"] = "accepted"
+            return result
         try:
             await self.announce_block(block)
         except ValidationError as exc:
-            self.service.discard_mining_template(template_id)
+            if template_id is not None:
+                self.service.discard_mining_template(template_id)
             return {"accepted": False, "reason": f"validation_error:{exc}", "block_hash": None, "became_tip": False}
-        self.service.discard_mining_template(template_id)
-        return {"accepted": True, "reason": "accepted", "block_hash": block.block_hash(), "became_tip": True}
+        except Exception:
+            # An inventory broadcast can fail after the block has committed.
+            committed = self.service.prepare_full_block_submission(serialized_block_hex=serialized_block_hex)
+            if committed.get("reason") != "already_accepted":
+                raise
+            self.logger.exception("mined block committed but relay failed block=%s", block.block_hash())
+            if template_id is not None:
+                self.service.discard_mining_template(template_id)
+            return committed
+        if template_id is not None:
+            self.service.discard_mining_template(template_id)
+        tip = self.service.chain_tip()
+        return {"accepted": True, "reason": "accepted", "block_hash": block.block_hash(),
+                "became_tip": bool(tip is not None and tip.block_hash == block.block_hash())}
 
     async def _submit_raw_transaction_from_http(self, *, raw_hex: str) -> dict[str, object]:
         """Decode and accept one raw transaction through the runtime relay path."""
