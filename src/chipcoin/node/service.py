@@ -10,6 +10,7 @@ import json
 import logging
 from pathlib import Path
 import secrets
+import struct
 import time
 
 from ..config import MAINNET_TEST_ONLY_CONFIG, get_network_config, require_startable_network
@@ -66,7 +67,7 @@ from ..consensus.economics import (
     subsidy_totals_through_height,
 )
 from ..consensus.utxo import InMemoryUtxoView, OverlayUtxoView
-from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block, validate_transaction
+from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block, validate_block_stateless, validate_transaction
 from ..storage.blocks import SQLiteBlockRepository
 from ..storage.chainstate import SQLiteChainStateRepository
 from ..storage.db import SQLiteRuntimeConfig, checkpoint_wal, initialize_database, sqlite_config_from_env, sqlite_transaction
@@ -326,6 +327,7 @@ class NodeService:
     """Local node orchestrator for validation, chain persistence, and sync."""
 
     ENDPOINT_VERIFICATION_TTL_SECONDS = 300
+    MAX_MINING_TEMPLATES = 256
 
     def __init__(
         self,
@@ -649,7 +651,6 @@ class NodeService:
                 self.mempool.pq_metrics.pq_tx_rejected += 1
             raise
         accepted = self.mempool.accept(transaction)
-        self.invalidate_mining_templates()
         return accepted
 
     def decode_raw_transaction(self, raw_hex: str) -> Transaction:
@@ -759,6 +760,8 @@ class NodeService:
             node_reward_total_chipbits=sum(int(output.value) for output in coinbase.outputs[1:]),
         )
         self._template_cache_tip_hash = candidate.block.header.previous_block_hash
+        if len(self._mining_templates) >= self.MAX_MINING_TEMPLATES:
+            self._mining_templates.pop(next(iter(self._mining_templates)))
         self._mining_templates[template_id] = record
         return {
             "template_id": template_id,
@@ -812,27 +815,37 @@ class NodeService:
     def submit_mined_block(
         self,
         *,
-        template_id: str,
+        template_id: str | None,
         serialized_block_hex: str,
         miner_id: str,
     ) -> dict[str, object]:
         """Fallback submit path for non-runtime use."""
 
-        prepared = self.prepare_mined_block_submission(
-            template_id=template_id,
-            serialized_block_hex=serialized_block_hex,
-            miner_id=miner_id,
+        prepared = (
+            self.prepare_mined_block_submission(
+                template_id=template_id,
+                serialized_block_hex=serialized_block_hex,
+                miner_id=miner_id,
+            )
+            if template_id is not None
+            else self.prepare_full_block_submission(serialized_block_hex=serialized_block_hex)
         )
         if prepared["accepted"] is False:
             return prepared
+        if "block" not in prepared:
+            return prepared
         block = prepared["block"]
+        if template_id is None:
+            return self.accept_full_block(block)
         try:
             self.apply_block(block)
         except ValidationError as exc:
-            self.discard_mining_template(template_id)
+            if template_id is not None:
+                self.discard_mining_template(template_id)
             return {"accepted": False, "reason": f"validation_error:{exc}", "block_hash": None, "became_tip": False}
         finally:
-            self._mining_templates.pop(template_id, None)
+            if template_id is not None:
+                self._mining_templates.pop(template_id, None)
         new_tip = self.chain_tip()
         return {
             "accepted": True,
@@ -881,13 +894,109 @@ class NodeService:
             return {"accepted": False, "reason": "transaction_set_mismatch", "block_hash": None, "became_tip": False}
         return {"accepted": True, "block": block, "template_id": template_id}
 
+    def prepare_full_block_submission(self, *, serialized_block_hex: str) -> dict[str, object]:
+        """Decode an autonomous block; apply_block performs consensus validation."""
+
+        try:
+            payload = bytes.fromhex(serialized_block_hex)
+            block, offset = deserialize_block(payload)
+        except (ValueError, IndexError, struct.error, UnicodeError) as exc:
+            return {"accepted": False, "reason": f"decode_error:{exc}", "block_hash": None, "became_tip": False}
+        if offset != len(payload):
+            return {"accepted": False, "reason": "decode_error:trailing_bytes", "block_hash": None, "became_tip": False}
+        block_hash = block.block_hash()
+        known_status = self.full_block_status(block_hash)
+        if known_status is not None:
+            return known_status
+        return {"accepted": True, "block": block}
+
+    def full_block_status(self, block_hash: str) -> dict[str, object] | None:
+        """Report stored-block status independently of template and response timing."""
+
+        known = self.headers.get_record(block_hash)
+        if known is None or self.get_block_by_hash(block_hash) is None:
+            return None
+        active = self.headers.get_hash_at_height(known.height) == block_hash
+        tip = self.chain_tip()
+        return {
+            "accepted": active,
+            "reason": "already_accepted" if active else "known_side_branch",
+            "block_hash": block_hash,
+            "became_tip": bool(active and tip is not None and tip.block_hash == block_hash),
+            "stored": True,
+            "on_active_chain": active,
+            "consensus_validity": "validated" if active else "pending",
+        }
+
+    def accept_full_block(self, block: Block, *, sync_manager=None) -> dict[str, object]:
+        """Store a full block through the P2P fork-choice engine.
+
+        Side branches are stored as pending until a stronger chain validates and
+        activates them; storage alone does not assert consensus validity.
+        """
+
+        from .sync import SyncManager
+
+        manager = sync_manager if sync_manager is not None else SyncManager(node=self)
+        block_hash = block.block_hash()
+        known_status = self.full_block_status(block_hash)
+        if known_status is not None:
+            return known_status
+        tip = self.chain_tip()
+        active_parent = "00" * 32 if tip is None else tip.block_hash
+        if block.header.previous_block_hash == active_parent:
+            try:
+                self.apply_block(block)
+            except ValidationError as exc:
+                return {"accepted": False, "reason": f"validation_error:{exc}", "block_hash": block_hash,
+                        "became_tip": False, "stored": False, "on_active_chain": False,
+                        "consensus_validity": "invalid"}
+            return {"accepted": True, "reason": "accepted", "block_hash": block_hash,
+                    "became_tip": True, "stored": True, "on_active_chain": True,
+                    "consensus_validity": "validated"}
+        try:
+            validate_block_stateless(block)
+            header_result = manager.ingest_headers((block.header,))
+            if header_result.parent_unknown is not None:
+                return {"accepted": False, "reason": "unknown_parent", "block_hash": block_hash,
+                        "became_tip": False, "stored": False, "on_active_chain": False,
+                        "consensus_validity": "not_validated"}
+            result = manager.receive_block(block)
+        except (ValidationError, ValueError) as exc:
+            stored = self.get_block_by_hash(block_hash) is not None
+            return {"accepted": False, "reason": f"validation_error:{exc}", "block_hash": block_hash,
+                    "became_tip": False, "stored": stored, "on_active_chain": False,
+                    "consensus_validity": "invalid"}
+        stored = (
+            result.parent_unknown is None
+            and result.block_hash == block_hash
+            and result.accepted_blocks > 0
+            and self.get_block_by_hash(block_hash) is not None
+        )
+        if not stored:
+            return {"accepted": False, "reason": "unknown_parent" if result.parent_unknown else "not_stored",
+                    "block_hash": block_hash, "became_tip": False, "stored": False,
+                    "on_active_chain": False, "consensus_validity": "not_validated"}
+        record = self.headers.get_record(block_hash)
+        active = record is not None and self.headers.get_hash_at_height(record.height) == block_hash
+        tip = self.chain_tip()
+        return {
+            "accepted": active,
+            "reason": "accepted" if active else "stored_side_branch",
+            "block_hash": block_hash,
+            "became_tip": bool(active and tip is not None and tip.block_hash == block_hash),
+            "stored": stored,
+            "on_active_chain": active,
+            "consensus_validity": "validated" if active else "pending",
+        }
+
     def discard_mining_template(self, template_id: str) -> None:
         """Remove one cached mining template."""
 
         self._mining_templates.pop(template_id, None)
 
     def invalidate_mining_templates(self) -> None:
-        """Remove all cached mining templates after any state mutation."""
+        """Remove cached mining jobs after a chain-state change."""
 
         self._mining_templates.clear()
         self._template_cache_tip_hash = None
