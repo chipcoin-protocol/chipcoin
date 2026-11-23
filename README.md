@@ -20,7 +20,7 @@ cd chipcoin
 ./setup.sh
 ```
 
-It needs Git, Docker Engine/Desktop with Compose v2, and a recognized host architecture; it needs no host Python packages, compiler or Python headers. It builds the pinned Core from this checkout, then runs the wizard in a temporary setup container. It prints Compose build/start and verification commands, but starts no service. Mainnet is the default; Testnet and Devnet are explicit choices. See [the setup guide](docs/setup-wizard.md) for validated platforms.
+It needs Git, Docker Engine/Desktop with Compose v2, and a recognized host architecture; it needs no host Python packages, compiler or Python headers. It builds the pinned Core from this checkout, then runs the wizard in a temporary setup container. It prints Compose build/start and verification commands, but starts no service. Mainnet is the default; Testnet and Devnet are explicit choices. See [the setup guide](docs/setup-wizard.md) and [validation status](docs/setup-wizard-validation.md).
 
 The advanced host-Python wizard remains available as `python3 scripts/setup/wizard.py`. To generate/import PQ wallets with it, use an isolated `.venv` with the native extension installed. The Docker-first path performs wallet generation inside the verified image.
 

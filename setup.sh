@@ -47,11 +47,15 @@ result_path="$storage/.chipcoin-setup-result-$$.json"
 trap 'rm -f -- "$result_path"' EXIT HUP INT TERM
 
 revision=$(git -C "$repo" rev-parse --short=12 HEAD)
+full_revision=$(git -C "$repo" rev-parse HEAD)
 core_image="chipcoin-setup-core:$revision-$docker_arch"
 setup_image="chipcoin-setup:$revision-$docker_arch"
 printf 'Building pinned Chipcoin Core for %s from commit %s...\n' "$platform" "$revision"
-docker build --pull --platform "$platform" -f "$repo/Dockerfile" -t "$core_image" "$repo" || fail 'Core image build failed. Check Docker/network access and try again.'
-docker build --platform "$platform" -f "$repo/Dockerfile.setup" --build-arg "CORE_IMAGE=$core_image" -t "$setup_image" "$repo" || fail 'Setup image build failed.'
+docker build --pull --platform "$platform" --label "org.opencontainers.image.revision=$full_revision" -f "$repo/Dockerfile" -t "$core_image" "$repo" || fail 'Core image build failed. Check Docker/network access and try again.'
+docker build --platform "$platform" --label "org.opencontainers.image.revision=$full_revision" -f "$repo/Dockerfile.setup" --build-arg "CORE_IMAGE=$core_image" -t "$setup_image" "$repo" || fail 'Setup image build failed.'
+core_revision=$(docker image inspect "$core_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') || fail 'Cannot inspect Core image provenance.'
+setup_revision=$(docker image inspect "$setup_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') || fail 'Cannot inspect setup image provenance.'
+[ "$core_revision" = "$full_revision" ] && [ "$setup_revision" = "$full_revision" ] || fail 'Image revision does not match this checkout.'
 image_arch=$(docker image inspect "$setup_image" --format '{{.Architecture}}') || fail 'Cannot inspect setup image.'
 case "$platform:$image_arch" in
   linux/amd64:amd64|linux/arm64:arm64) ;;

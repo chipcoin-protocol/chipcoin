@@ -34,6 +34,8 @@ The wizard:
 
 Existing host-Python and deployed Mainnet paths remain unchanged. They are not automatically migrated into the new storage tree. If Docker Desktop rejects a bind mount, enable sharing of the selected storage base and checkout in Docker Desktop, then rerun setup. If Docker uses the wrong architecture, fix the Docker installation instead of using emulation. If a directory is unwritable or has broad permissions, choose a new user-owned base or correct its permissions explicitly. If the backend check fails, rebuild via `./setup.sh`; never select a legacy key as a Mainnet fallback.
 
+Platform validation and exact test results are in [setup-wizard-validation.md](setup-wizard-validation.md). Linux x86_64 has been exercised on Tobia; ARM and macOS hardware checks remain pending. The public Run a Node website is maintained in the separate `chipcoin-central` repository and has not yet been updated from this branch.
+
 ## When To Use It
 
 Use the wizard when:

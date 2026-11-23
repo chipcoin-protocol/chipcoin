@@ -613,8 +613,8 @@ def _prepare_runtime_with_sudo(target_parent: Path, label: str, original_error: 
         f"{label} needs a writable runtime directory under {runtime_root}, "
         f"but the current user cannot create {target_parent}."
     )
-    answer = input("Prepare the runtime directory with sudo now? [Y/n]: ").strip().lower()
-    if answer in {"", "y", "yes"}:
+    answer = input("Prepare the runtime directory with sudo now? [y/N]: ").strip().lower()
+    if answer in {"y", "yes"}:
         user = getpass.getuser()
         group = _primary_group_name()
         mkdir_args = ["sudo", "install", "-d", "-m", "700", "-o", user, "-g", group,
@@ -1101,7 +1101,12 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testn
                 key = wallet_key_from_mldsa44_seed(bytes.fromhex(payload["private_seed_hex"]))
             else:
                 key = wallet_key_from_private_key(parse_private_key_hex(payload["private_key_hex"]))
-            if payload["address"] != key.address or payload["public_key_hex"] != key.public_key.hex() or not parse_address(key.address):
+            if (payload["address"] != key.address
+                or payload["public_key_hex"] != key.public_key.hex()
+                or payload["scheme_id"] != key.scheme_id
+                or payload["scheme_name"] != key.scheme_name
+                or payload["address_kind"] != key.address_kind
+                or not parse_address(key.address)):
                 raise ValueError("wallet identity mismatch")
         except Exception:  # noqa: BLE001
             _die(f"Existing wallet cannot be safely reused: {wallet_path}. It was not changed.")
