@@ -66,7 +66,7 @@ from ..consensus.economics import (
     subsidy_totals_through_height,
 )
 from ..consensus.utxo import InMemoryUtxoView, OverlayUtxoView
-from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_transaction, validate_block, validate_transaction
+from ..consensus.validation import ValidationContext, ValidationError, block_weight_units, is_coinbase_mature, is_coinbase_transaction, validate_block, validate_transaction
 from ..storage.blocks import SQLiteBlockRepository
 from ..storage.chainstate import SQLiteChainStateRepository
 from ..storage.db import SQLiteRuntimeConfig, checkpoint_wal, initialize_database, sqlite_config_from_env, sqlite_transaction
@@ -2890,9 +2890,11 @@ class NodeService:
     def list_spendable_outputs(self, recipient: str) -> list[SpendCandidate]:
         """Return active-chain UTXOs spendable by the supplied recipient."""
 
+        tip = self.chain_tip()
+        spend_height = 0 if tip is None else tip.height + 1
         spendable = []
         for outpoint, entry in self.chainstate.list_utxos():
-            if entry.output.recipient != recipient:
+            if entry.output.recipient != recipient or not is_coinbase_mature(entry, spend_height, self.params):
                 continue
             spendable.append(
                 SpendCandidate(
@@ -2914,7 +2916,7 @@ class NodeService:
         for outpoint, entry in self.chainstate.list_utxos():
             if entry.output.recipient != recipient:
                 continue
-            mature = True if not entry.is_coinbase else spend_height - int(entry.height) >= self.params.coinbase_maturity
+            mature = is_coinbase_mature(entry, spend_height, self.params)
             entries.append(
                 {
                     "txid": outpoint.txid,
