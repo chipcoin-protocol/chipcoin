@@ -420,7 +420,8 @@ def test_testnet_success_output_uses_env_file_and_project(capsys) -> None:
     output = capsys.readouterr().out
     assert "Role: reward-node" in output
     assert "Environment file:" in output
-    assert "docker compose up -d node" in output
+    assert " up -d node" in output
+    assert "docker-compose.yml" in output
     assert "Reward-node registration command (run after the reward-node wallet is funded):" in output
     assert "--node-pubkey-hex 021111111111111111111111111111111111111111111111111111111111111111" in output
     assert "--declared-port 28444" in output

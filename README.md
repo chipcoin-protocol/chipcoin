@@ -12,16 +12,17 @@ New wizard and browser wallet installations select `mainnet` by default. Testnet
 
 Mainnet identity: Core `0.1.2` at commit `aa11445837d0c101e827e5f3619ea3f054ab6c21`, chain ID `chipcoin-mainnet-1`, genesis `00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f`, bits `0x1e0537e7`. The genesis incorporates “Die Welt ist alles, was der Fall ist.”
 
-For a new installation run `python3 scripts/setup/wizard.py`. It writes `.env.mainnet` for Mainnet, `.env` for Testnet, or `.env.devnet` for Devnet and prints the matching Compose command. P2P is private by default. Never reuse database or wallet files across networks.
+For a new installation use the Docker-first launcher:
 
-A passive full node needs Python 3 and Docker Compose on the host; it does not
-need a Python virtual environment, `pip install`, or GCC. The native ML-DSA-44
-module is compiled inside the Docker image during `docker compose ... up --build`.
-If you install the Python CLI directly on the host, or ask the wizard to create
-a miner/reward wallet or import a snapshot on the host, install a C compiler,
-Python development headers, and the Python package first. On Ubuntu:
-`sudo apt-get install build-essential python3-dev python3-venv`, then
-`python3 -m venv .venv && .venv/bin/python -m pip install -e .`.
+```sh
+git clone https://github.com/chipcoin-protocol/chipcoin.git
+cd chipcoin
+./setup.sh
+```
+
+It needs Git, Docker Engine/Desktop with Compose v2, and a recognized host architecture; it needs no host Python packages, compiler or Python headers. It builds the pinned Core from this checkout, then runs the wizard in a temporary setup container. It prints Compose build/start and verification commands, but starts no service. Mainnet is the default; Testnet and Devnet are explicit choices. See [the setup guide](docs/setup-wizard.md) and [validation status](docs/setup-wizard-validation.md).
+
+The advanced host-Python wizard remains available as `python3 scripts/setup/wizard.py`. To generate/import PQ wallets with it, use an isolated `.venv` with the native extension installed. The Docker-first path performs wallet generation inside the verified image.
 
 Public testnet defaults included in `.env.example`:
 
@@ -222,7 +223,7 @@ Local state vs network state:
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.11+ only for the advanced host-Python path
 - Docker Engine with `docker compose`
 - Node.js 20+ and npm if you want to build the browser wallet
 
@@ -231,15 +232,10 @@ Local state vs network state:
 ```bash
 git clone https://github.com/chipcoin-protocol/chipcoin.git
 cd chipcoin
-python3 scripts/setup/wizard.py
-docker compose --env-file .env.mainnet config --quiet
-docker compose --env-file .env.mainnet up -d --build node
-docker compose --env-file .env.mainnet ps
+./setup.sh
 ```
 
-The wizard selects Mainnet on Enter, prepares a separate runtime and prints the
-exact Compose command. It starts no service. The command above starts only the
-node; mining remains a separate action. Keep the node HTTP API on loopback.
+The wizard selects Mainnet on Enter, prepares persistent network-specific storage and prints exact Compose commands. It starts no service. Follow the printed commands for the selected role; keep the node HTTP API on loopback.
 
 For manual configuration, copy `.env.mainnet.example` to `.env.mainnet` and
 review paths and permissions before starting Docker. `.env.example` is the
@@ -465,7 +461,7 @@ When the local SQLite database is pristine and the runtime has at least one star
 If you want a guided setup instead of editing `.env` manually, use:
 
 ```bash
-python3 scripts/setup/wizard.py
+./setup.sh
 ```
 
 The wizard can now prepare:
@@ -474,9 +470,7 @@ The wizard can now prepare:
 - a miner
 - a reward-participating node with prewired `REWARD_NODE_AUTO_*` env values
 
-Mainnet is the default wizard path and writes `.env.mainnet`. Select Testnet or
-Devnet explicitly. Use the environment file printed by the wizard in each
-Compose command, for example `docker compose --env-file .env.mainnet up -d --build node`.
+Mainnet is the default wizard path. The Docker-first flow writes the environment file under the selected network's persistent `config/` directory. Select Testnet or Devnet explicitly and use the exact Compose commands printed by the wizard. The advanced host-Python path retains its existing `.env.mainnet` / `.env` / `.env.devnet` conventions.
 
 For reward-node operators on the public testnet, the wizard assumes the bootstrap funding source is the faucet path or another funded testnet wallet. Registration still requires CHC because reward-node participation is an on-chain paid action.
 
@@ -762,7 +756,7 @@ Detailed instructions:
 
 ## Manual Testnet Path
 
-The following legacy manual path is for Testnet. For a new Mainnet installation use `python3 scripts/setup/wizard.py` or `.env.mainnet.example` and keep its runtime separate:
+The following legacy manual path is for Testnet. For a new Mainnet installation use `./setup.sh` or `.env.mainnet.example` and keep its runtime separate:
 
 1. Clone the repository and create `.env` from `.env.example`.
 2. Create and own the runtime directories referenced by `.env`.

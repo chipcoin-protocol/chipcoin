@@ -7,16 +7,15 @@ This repository uses Docker Compose as the public runtime path for:
 
 The browser wallet is built separately and connects to the node HTTP API.
 
-From a fresh clone, `python3 scripts/setup/wizard.py` prepares a passive node
-without host `pip`, a virtual environment, or GCC. `docker compose ... up --build`
-compiles the native ML-DSA-44 extension inside the Docker builder. Host-side
-CLI installation, wallet generation/import, and snapshot import require a C
-compiler and Python development headers; see `docs/setup-wizard.md`.
+From a fresh clone, `./setup.sh` prepares the selected role without host Python packages, a compiler or headers. The launcher builds the pinned Core and a disposable setup image, then runs the wizard inside Docker. It does not start services. See `docs/setup-wizard.md` for the advanced host-Python route.
 
 ## Public Compose Files
 
 - `docker-compose.yml`
   The canonical public configuration. It is environment-variable driven and contains no machine-specific paths.
+
+- `docker-compose.setup-runtime.yml`
+  Applied only by newly installed Docker-first setups; mounts the selected persistent `runtime/` directory and allows the host UID/GID to own new data. The existing base Compose layout is unchanged.
 
 - `docker-compose.override.yml`
   Optional local-only customization file. It is ignored by git and is applied automatically by `docker compose` when present.
@@ -25,7 +24,15 @@ compiler and Python development headers; see `docs/setup-wizard.md`.
 
 The recommended runtime layout keeps mutable state outside the repository.
 
-Mainnet example (the wizard's default):
+New Mainnet installation with the Docker-first wizard (Linux default):
+
+- `~/.local/share/chipcoin/mainnet/chain/node.sqlite3`
+- `~/.local/share/chipcoin/mainnet/wallets/miner/miner-wallet.json`
+- `~/.local/share/chipcoin/mainnet/wallets/reward/reward-owner-wallet.json`
+- `~/.local/share/chipcoin/mainnet/runtime/`
+- `~/.local/share/chipcoin/mainnet/config/.env`
+
+Existing deployed Mainnet layout (unchanged):
 
 - `/var/lib/chipcoin-mainnet-official/data/node.sqlite3`
 - `/var/lib/chipcoin-mainnet-official/keys/miner-wallet.json`
@@ -50,12 +57,10 @@ Relevant `.env` keys:
 New installation (Mainnet node only):
 
 ```bash
-python3 scripts/setup/wizard.py
-docker compose --env-file .env.mainnet up -d --build node
+./setup.sh
 ```
 
-The wizard prints the correct environment file for a different network.
-It does not start services. To use the manual Mainnet template, copy
+The wizard prints exact Compose build/start commands with the correct environment file and runtime override. It does not start services. To use the manual Mainnet template, copy
 `.env.mainnet.example` to `.env.mainnet` and prepare its runtime paths first.
 
 After generating and backing up a miner wallet, start the miner explicitly:

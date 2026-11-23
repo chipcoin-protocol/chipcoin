@@ -6,8 +6,8 @@ The Chipcoin node maintains chain state, validates blocks and transactions, expo
 
 The node can run without any wallet material.
 
-For a new installation, use `python3 scripts/setup/wizard.py` and its printed
-Compose command. Mainnet is the wizard default and uses `.env.mainnet`, P2P
+For a new installation, use `./setup.sh` and its printed
+Compose commands. Mainnet is the wizard default and stores its environment file in the selected persistent `mainnet/config/` directory. P2P
 `8333/tcp`, and local HTTP `127.0.0.1:8080`. The generic examples further
 down this page include earlier Devnet and Testnet maintenance workflows; use
 their network and ports only when that network was explicitly selected. Never

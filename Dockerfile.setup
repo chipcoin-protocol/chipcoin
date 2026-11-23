@@ -1,0 +1,7 @@
+ARG CORE_IMAGE=chipcoin-setup-core:missing-required-build-arg
+FROM ${CORE_IMAGE}
+
+# This image is built immediately after the pinned Core image from the same checkout.
+COPY scripts/setup /opt/chipcoin-setup
+
+ENTRYPOINT ["python3", "/opt/chipcoin-setup/wizard.py"]

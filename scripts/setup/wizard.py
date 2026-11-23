@@ -9,20 +9,22 @@ import ipaddress
 import json
 import os
 import re
+import shlex
 import socket
 import shutil
-import stat
 import subprocess
 import sys
 import time
+import tempfile
 from pathlib import Path
 from typing import NamedTuple
 from urllib import error, request
 from urllib.parse import parse_qsl, urlsplit
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+IN_SETUP_CONTAINER = os.environ.get("CHIPCOIN_SETUP_IN_CONTAINER") == "1"
+REPO_ROOT = Path(os.environ.get("CHIPCOIN_SETUP_REPO_ROOT", Path(__file__).resolve().parents[2]))
 SRC_ROOT = REPO_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
+if not IN_SETUP_CONTAINER and str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from chipcoin.config import MAINNET_CONFIG, get_network_config  # noqa: E402
@@ -31,8 +33,11 @@ from chipcoin.consensus.genesis import GENESIS_MESSAGE, canonical_genesis_block 
 
 ENV_PATH = REPO_ROOT / ".env"
 ENV_EXAMPLE_PATH = REPO_ROOT / "config" / "env" / ".env.example"
+SETUP_STORAGE_BASE = os.environ.get("CHIPCOIN_SETUP_STORAGE_BASE", "").strip()
+if SETUP_STORAGE_BASE and not Path(SETUP_STORAGE_BASE).is_absolute():
+    raise SystemExit("CHIPCOIN_SETUP_STORAGE_BASE must be absolute.")
 RUNTIME_ROOT = Path("/var/lib/chipcoin")
-MAINNET_RUNTIME_ROOT = Path("/var/lib/chipcoin-mainnet-official")
+MAINNET_RUNTIME_ROOT = Path(SETUP_STORAGE_BASE) / "mainnet" if SETUP_STORAGE_BASE else Path("/var/lib/chipcoin-mainnet-official")
 NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.sqlite3")
 NODE_SNAPSHOT_PATH = str(RUNTIME_ROOT / "data" / "node-devnet.snapshot")
 TESTNET_NODE_DATA_PATH = str(RUNTIME_ROOT / "data" / "node-testnet.sqlite3")
@@ -54,7 +59,7 @@ PUBLIC_TESTNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/s
 PUBLIC_MAINNET_BOOTSTRAP_URL = "https://mainnet-bootstrap.chipcoinprotocol.com"
 PUBLIC_MAINNET_SNAPSHOT_MANIFEST_URL = "https://chipcoinprotocol.com/downloads/snapshots/mainnet/latest.manifest.json"
 MAINNET_SNAPSHOT_SIGNER_KEY_HEX = "d3cb77ba741ec9f71ac2aca4f49878d428ff588c46200dbeede225baa451b031"
-MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE = str(MAINNET_RUNTIME_ROOT / "snapshots" / "trusted-signers.txt")
+MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE = str(MAINNET_RUNTIME_ROOT / ("runtime" if SETUP_STORAGE_BASE else "snapshots") / "trusted-signers.txt")
 TESTNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:28081"
 PUBLIC_MAINNET_WALLET_API_ENDPOINT = "https://mainnet-api.chipcoinprotocol.com"
 MAINNET_LOCAL_NODE_ENDPOINT = "http://127.0.0.1:8080"
@@ -70,6 +75,8 @@ DEFAULTS = {
     "COMPOSE_PROJECT_NAME": "chipcoin-mainnet",
     "CHIPCOIN_RUNTIME_DIR": str(MAINNET_RUNTIME_ROOT),
     "CHIPCOIN_RUNTIME_HOST_DIR": str(MAINNET_RUNTIME_ROOT),
+    "CHIPCOIN_RUNTIME_UID": "",
+    "CHIPCOIN_RUNTIME_COMPAT_HOST_DIR": "",
     "DEFAULT_NODE_ENDPOINT": PUBLIC_MAINNET_WALLET_API_ENDPOINT,
     "DEFAULT_BOOTSTRAP_PEER": "",
     "DEFAULT_EXPLORER_URL": "https://explorer.chipcoinprotocol.com/api/mainnet",
@@ -139,6 +146,37 @@ class SnapshotManifestEntry(NamedTuple):
     signer_pubkeys: tuple[str, ...] = ()
 
 
+_TRACK_NEW_FILES = False
+_NEW_FILES: list[tuple[Path, int]] = []
+
+
+def _remember_new_file(path: Path) -> None:
+    if _TRACK_NEW_FILES:
+        _NEW_FILES.append((path, path.stat().st_ino))
+
+
+def main() -> int:
+    """Roll back newly written setup artifacts if a step fails."""
+    global _TRACK_NEW_FILES
+    _TRACK_NEW_FILES = True
+    _NEW_FILES.clear()
+    completed = False
+    try:
+        result = _run_wizard()
+        completed = True
+        return result
+    finally:
+        _TRACK_NEW_FILES = False
+        if not completed:
+            for path, inode in reversed(_NEW_FILES):
+                try:
+                    if path.stat().st_ino == inode:
+                        path.unlink()
+                except FileNotFoundError:
+                    pass
+        _NEW_FILES.clear()
+
+
 def _require_verified_mainnet_core() -> None:
     """Fail closed if this source tree is not the verified Mainnet Core."""
     if (MAINNET_CONFIG.chain_id != "chipcoin-mainnet-1"
@@ -155,8 +193,8 @@ def _snapshot_metadata_path(node_data_path: Path) -> Path:
     return node_data_path.with_suffix(node_data_path.suffix + ".snapshot.meta.json")
 
 
-def main() -> int:
-    print("Chipcoin Phase 1 Setup Wizard")
+def _run_wizard() -> int:
+    print("Chipcoin Setup Wizard")
     _check_prerequisites()
     setup_mode = _ask_choice(
         "Select setup mode",
@@ -189,6 +227,8 @@ def main() -> int:
     )
     if network == "mainnet":
         _require_verified_mainnet_core()
+    if SETUP_STORAGE_BASE:
+        _prepare_storage_root(Path(SETUP_STORAGE_BASE) / network)
     env_path = _ask_env_path(network)
     runtime_mode = _ask_choice("How should services run?", {"foreground": "Foreground", "background": "Background"}, "foreground")
     _print_public_reachability_note(network=network)
@@ -207,7 +247,6 @@ def main() -> int:
             "generate",
         )
         miner_wallet_path = _wallet_path(network, "miner-wallet.json")
-        _prepare_wallet_path(miner_wallet_path)
         miner_wallet_address, _miner_wallet_public_key_hex = _handle_wallet(wallet_mode, miner_wallet_path, network=network)
 
     env_values = dict(DEFAULTS)
@@ -235,11 +274,15 @@ def main() -> int:
                 network=network,
             )
     _preflight_validate(env_values, role=role)
+    existing_database = Path(env_values["NODE_DATA_PATH"]).exists() if role in {"node", "both"} else False
     _prepare_runtime_files(env_values, role=role)
     if role in {"node", "both"}:
+        if existing_database and env_values["NODE_BOOTSTRAP_MODE"] != "full":
+            _die("Existing node database found. Snapshot import would replace it; select full bootstrap or use a new storage root.")
         bootstrap_notes = _prepare_node_bootstrap(env_values, network=network)
 
     _write_env(env_values, env_path)
+    _write_setup_result(env_path, role, network)
     _print_success(
         selected_role,
         network,
@@ -259,12 +302,13 @@ def main() -> int:
 
 
 def _check_prerequisites() -> None:
-    if shutil.which("docker") is None:
+    if not IN_SETUP_CONTAINER and shutil.which("docker") is None:
         _die("Docker is not installed or not available in PATH.")
-    try:
-        subprocess.run(["docker", "compose", "version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except (OSError, subprocess.CalledProcessError):
-        _die("Docker Compose is not available.")
+    if not IN_SETUP_CONTAINER:
+        try:
+            subprocess.run(["docker", "compose", "version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            _die("Docker Compose is not available.")
     if not ENV_EXAMPLE_PATH.exists():
         _die(f"Missing environment template: {ENV_EXAMPLE_PATH}")
 
@@ -292,12 +336,38 @@ def _ask_env_path(network: str) -> Path:
     }
     if network not in default_names:
         _die("Unsupported network for environment file selection.")
-    default_path = REPO_ROOT / default_names[network]
+    default_path = (Path(SETUP_STORAGE_BASE) / network / "config" / ".env") if SETUP_STORAGE_BASE else REPO_ROOT / default_names[network]
     answer = input(f"Where should the environment file be written? [{default_path}]: ").strip()
     path = Path(answer) if answer else default_path
     if not path.is_absolute():
         path = REPO_ROOT / path
+    if IN_SETUP_CONTAINER and not path.is_relative_to(Path(SETUP_STORAGE_BASE) / network):
+        _die("Choose an environment file inside the selected persistent network storage directory.")
     return path
+
+
+def _prepare_storage_root(root: Path) -> None:
+    if root.is_symlink():
+        _die(f"Storage directory must not be a symbolic link: {root}")
+    for child in (root, root / "wallets", root / "wallets" / "miner", root / "wallets" / "reward", root / "chain", root / "runtime", root / "config"):
+        if child.is_symlink():
+            _die(f"Storage directory must not be a symbolic link: {child}")
+        existed = child.exists()
+        child.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not child.is_dir() or not os.access(child, os.W_OK):
+            _die(f"Storage directory is not writable: {child}")
+        if existed:
+            if child.stat().st_mode & 0o077:
+                _die(f"Storage directory permissions are too broad: {child}. Restrict them explicitly before setup.")
+        else:
+            child.chmod(0o700)
+
+
+def _write_setup_result(env_path: Path, role: str, network: str) -> None:
+    if not IN_SETUP_CONTAINER:
+        return
+    result_path = Path(os.environ["CHIPCOIN_SETUP_RESULT_PATH"])
+    _atomic_new_file(result_path, (str(env_path) + "\n").encode())
 
 
 def _parse_peer_list(value: str) -> list[str]:
@@ -339,6 +409,16 @@ def _ask_http_url(prompt: str, default: str) -> str:
             print("URLs containing credentials are not accepted.")
             continue
         print("Invalid URL. Expected http://host or https://host.")
+
+
+def _ask_required_mining_url() -> str:
+    while True:
+        answer = input("Enter a mining node API URL reachable from the miner container (http(s)://host:port): ").strip()
+        if answer.startswith(("http://", "https://")) and not _url_contains_credentials(answer):
+            parsed = urlsplit(answer)
+            if parsed.hostname and parsed.hostname not in {"localhost", "127.0.0.1", "::1", "node"}:
+                return answer
+        print("Use a reachable node API URL. Container localhost and 'node' are unavailable for a miner-only installation.")
 
 
 def _ask_optional_http_urls(prompt: str, default: str) -> str:
@@ -533,8 +613,8 @@ def _prepare_runtime_with_sudo(target_parent: Path, label: str, original_error: 
         f"{label} needs a writable runtime directory under {runtime_root}, "
         f"but the current user cannot create {target_parent}."
     )
-    answer = input("Prepare the runtime directory with sudo now? [Y/n]: ").strip().lower()
-    if answer in {"", "y", "yes"}:
+    answer = input("Prepare the runtime directory with sudo now? [y/N]: ").strip().lower()
+    if answer in {"y", "yes"}:
         user = getpass.getuser()
         group = _primary_group_name()
         mkdir_args = ["sudo", "install", "-d", "-m", "700", "-o", user, "-g", group,
@@ -567,7 +647,7 @@ def _primary_group_name() -> str:
 
 
 def _default_reward_node_id() -> str:
-    raw = socket.gethostname().strip().lower()
+    raw = os.environ.get("CHIPCOIN_SETUP_HOST_NAME", socket.gethostname()).strip().lower()
     normalized = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
     if not normalized:
         normalized = "local"
@@ -610,6 +690,9 @@ def _reward_fee_guidance(network: str) -> tuple[str, str, str]:
 
 
 def _default_reward_registration_peer(env_values: dict[str, str]) -> str:
+    if SETUP_STORAGE_BASE:
+        # `compose run` has its own network namespace; loopback is not the running node.
+        return f"node:{env_values.get('NODE_P2P_BIND_PORT', '18444')}"
     peers = [item.strip() for item in env_values.get("NODE_DIRECT_PEERS", "").split(",") if item.strip()]
     if peers:
         return peers[0]
@@ -678,6 +761,7 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_MAINNET_WALLET_API_ENDPOINT
         env_values["MINING_MIN_INTERVAL_SECONDS"] = "10.0"
         env_values["MINING_NONCE_BATCH_SIZE"] = "50000"
+        _apply_new_storage(env_values, network)
         return
     if network == "devnet":
         env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-devnet"
@@ -700,6 +784,7 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_DEVNET_NODE_ENDPOINT
         env_values["MINING_MIN_INTERVAL_SECONDS"] = "1.0"
         env_values["MINING_NONCE_BATCH_SIZE"] = "250000"
+        _apply_new_storage(env_values, network)
         return
     if network == "testnet":
         env_values["COMPOSE_PROJECT_NAME"] = "chipcoin-testnet"
@@ -722,8 +807,24 @@ def _apply_network_defaults(env_values: dict[str, str], network: str) -> None:
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = PUBLIC_TESTNET_WALLET_API_ENDPOINT
         env_values["MINING_MIN_INTERVAL_SECONDS"] = "10.0"
         env_values["MINING_NONCE_BATCH_SIZE"] = "50000"
+        _apply_new_storage(env_values, network)
         return
     _die(f"Unsupported network selection: {network}")
+
+
+def _apply_new_storage(env_values: dict[str, str], network: str) -> None:
+    if not SETUP_STORAGE_BASE:
+        return
+    root = Path(SETUP_STORAGE_BASE) / network
+    env_values["CHIPCOIN_RUNTIME_DIR"] = str(root)
+    env_values["CHIPCOIN_RUNTIME_HOST_DIR"] = str(root)
+    env_values["CHIPCOIN_RUNTIME_UID"] = f"{os.getuid()}:{os.getgid()}"
+    env_values["CHIPCOIN_RUNTIME_COMPAT_HOST_DIR"] = str(root / "runtime")
+    env_values["NODE_DATA_PATH"] = str(root / "chain" / "node.sqlite3")
+    env_values["NODE_SNAPSHOT_FILE"] = str(root / "chain" / "node.snapshot")
+    env_values["MINER_WALLET_FILE"] = str(_wallet_path(network, "miner-wallet.json"))
+    if network == "mainnet":
+        env_values["NODE_SNAPSHOT_TRUSTED_KEYS_FILE"] = MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE
 
 
 def _public_node_endpoint_for_network(network: str) -> str:
@@ -739,6 +840,9 @@ def _wallet_endpoint_for_network(network: str) -> str:
 
 
 def _wallet_path(network: str, name: str) -> Path:
+    if SETUP_STORAGE_BASE:
+        kind = "miner" if name == "miner-wallet.json" else "reward"
+        return Path(SETUP_STORAGE_BASE) / network / "wallets" / kind / name
     if network == "mainnet":
         return MAINNET_RUNTIME_ROOT / "keys" / name
     if network == "testnet":
@@ -766,7 +870,7 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str, *,
         env_values["BROWSER_WALLET_DEFAULT_NODE_ENDPOINT"] = _wallet_endpoint_for_network(network)
         env_values["NODE_DIRECT_PEERS"] = ""
         env_values["NODE_DIRECT_PEER"] = ""
-        env_values["MINING_NODE_URLS"] = miner_node_default
+        env_values["MINING_NODE_URLS"] = _ask_required_mining_url() if role == "miner" and SETUP_STORAGE_BASE else miner_node_default
         env_values["DIRECT_PEERS"] = ""
         env_values["DIRECT_PEER"] = ""
         env_values["BOOTSTRAP_URL"] = ""
@@ -797,7 +901,7 @@ def _apply_setup_mode(env_values: dict[str, str], setup_mode: str, role: str, *,
     env_values["NODE_DIRECT_PEERS"] = ""
     env_values["NODE_DIRECT_PEER"] = ""
     env_values["NODE_BOOTSTRAP_URL"] = ""
-    env_values["MINING_NODE_URLS"] = _local_node_endpoint(env_values) if role == "miner" else _same_compose_node_endpoint(env_values)
+    env_values["MINING_NODE_URLS"] = (_ask_required_mining_url() if SETUP_STORAGE_BASE else _local_node_endpoint(env_values)) if role == "miner" else _same_compose_node_endpoint(env_values)
     env_values["DIRECT_PEERS"] = ""
     env_values["DIRECT_PEER"] = ""
     env_values["BOOTSTRAP_URL"] = ""
@@ -907,8 +1011,7 @@ def _configure_node_bootstrap(env_values: dict[str, str], *, setup_mode: str) ->
         if key_path == Path(MAINNET_SNAPSHOT_TRUSTED_KEYS_FILE):
             _ensure_runtime_parent(key_path, "Snapshot trust")
             if not key_path.exists():
-                with key_path.open("x", encoding="utf-8") as handle:
-                    handle.write(MAINNET_SNAPSHOT_SIGNER_KEY_HEX + "\n")
+                _atomic_new_file(key_path, (MAINNET_SNAPSHOT_SIGNER_KEY_HEX + "\n").encode())
             elif key_path.read_text(encoding="utf-8").strip() != MAINNET_SNAPSHOT_SIGNER_KEY_HEX:
                 _die(f"Mainnet snapshot trust key differs from the approved signer: {key_path}")
 
@@ -928,20 +1031,95 @@ def _print_public_reachability_note(*, network: str = "devnet") -> None:
 
 def _prepare_wallet_path(wallet_path: Path) -> None:
     _ensure_runtime_parent(wallet_path, "Wallet")
-    if wallet_path.exists():
-        overwrite = input(f"Wallet file already exists at {wallet_path}. Overwrite it? [y/N]: ").strip().lower()
-        if overwrite not in {"y", "yes"}:
-            _die("Setup aborted because the wallet file would be overwritten.")
+    if wallet_path.is_symlink():
+        _die(f"Wallet path must not be a symbolic link: {wallet_path}")
+
+
+def _check_pq_backend() -> None:
+    """Check the pinned native backend against the consensus test vector."""
+    try:
+        from chipcoin.crypto.pq.mldsa import derive_mldsa44_keypair, mldsa44_backend_info, sign_mldsa44, verify_mldsa44
+        info = mldsa44_backend_info()
+        seed = bytes(range(32))  # Public test vector; never written to a wallet.
+        digest = bytes.fromhex("00" * 31 + "01")
+        private, public = derive_mldsa44_keypair(seed)
+        signature = sign_mldsa44(seed, digest)
+        if (info.get("backend") != "mldsa-native"
+            or info.get("upstream_commit") != "9b0ee84f4cf399043eca59eca4e5f8531ca1d61b"
+            or info.get("scheme") != "ML-DSA-44"
+            or hashlib.sha256(private).hexdigest() != "04bf6b9f579166a627961dfc5c3bf9717df868db88863856356c4668c8b56b0b"
+            or hashlib.sha256(public).hexdigest() != "9f107644c1084526af3bc8098680b05499a2325a644e388fb4f970e058d19d46"
+            or hashlib.sha256(signature).hexdigest() != "1fad42d544aac40d1c38ac277fad988b5eb675459cd4f3f83d477b613c1b4eb4"
+            or not verify_mldsa44(public, digest, signature)):
+            raise ValueError("backend test vector mismatch")
+    except Exception:  # noqa: BLE001 - never print private material or backend traceback
+        _die("ML-DSA-44 backend check failed. Docker setup: rebuild with ./setup.sh. Host Python: create .venv, install this checkout with .venv/bin/python -m pip install -e ., then rerun with .venv/bin/python scripts/setup/wizard.py.")
+
+
+def _atomic_new_file(path: Path, data: bytes) -> None:
+    """Create a private file without exposing partial contents or replacing an existing file."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temporary = tempfile.mkstemp(prefix=".chipcoin-setup-", dir=path.parent)
+    linked = False
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path, follow_symlinks=False)
+        linked = True
+        _remember_new_file(path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except FileExistsError:
+        _die(f"Existing file left unchanged: {path}")
+    except OSError:
+        if linked:
+            path.unlink(missing_ok=True)
+        _die(f"Could not safely save {path}; check free space and permissions. Existing files were not changed.")
+    finally:
+        os.unlink(temporary)
 
 
 def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testnet") -> tuple[str, str]:
+    _prepare_wallet_path(wallet_path)
+    require_pq = network == "mainnet"
+    if wallet_path.exists():
+        try:
+            if not wallet_path.is_file() or wallet_path.stat().st_mode & 0o077:
+                raise ValueError("wallet permissions must be private")
+            payload = json.loads(wallet_path.read_text(encoding="utf-8"))
+            from chipcoin.crypto.addresses import parse_address
+            from chipcoin.wallet.signer import wallet_key_from_mldsa44_seed, wallet_key_from_private_key
+            from chipcoin.crypto.keys import parse_private_key_hex
+            if require_pq:
+                _check_pq_backend()
+                key = wallet_key_from_mldsa44_seed(bytes.fromhex(payload["private_seed_hex"]))
+            else:
+                key = wallet_key_from_private_key(parse_private_key_hex(payload["private_key_hex"]))
+            if (payload["address"] != key.address
+                or payload["public_key_hex"] != key.public_key.hex()
+                or payload["scheme_id"] != key.scheme_id
+                or payload["scheme_name"] != key.scheme_name
+                or payload["address_kind"] != key.address_kind
+                or not parse_address(key.address)):
+                raise ValueError("wallet identity mismatch")
+        except Exception:  # noqa: BLE001
+            _die(f"Existing wallet cannot be safely reused: {wallet_path}. It was not changed.")
+        print(f"Reusing existing wallet at {wallet_path}; identity unchanged.")
+        return key.address, key.public_key.hex()
+    if require_pq:
+        _check_pq_backend()
     try:
         from chipcoin.crypto.keys import parse_private_key_hex
         from chipcoin.wallet.signer import generate_wallet_key, wallet_key_from_mldsa44_seed, wallet_key_from_private_key
     except ImportError:
         _die("Wallet setup needs the host Python package. On Ubuntu install build-essential python3-dev python3-venv, then create a venv and run: .venv/bin/python -m pip install -e .")
 
-    require_pq = network == "mainnet"
     if wallet_mode == "generate":
         wallet_key = generate_wallet_key(scheme="mldsa44" if require_pq else "secp256k1")
     else:
@@ -970,22 +1148,7 @@ def _handle_wallet(wallet_mode: str, wallet_path: Path, *, network: str = "testn
     else:
         payload["private_key_hex"] = wallet_key.private_key.hex()
     encoded_wallet = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    fd: int | None = None
-    try:
-        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(wallet_path, flags, 0o600)
-        os.fchmod(fd, 0o600)
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError("wallet destination is not a regular file")
-        os.ftruncate(fd, 0)
-        with os.fdopen(fd, "w", encoding="utf-8") as wallet_file:
-            fd = None
-            wallet_file.write(encoded_wallet)
-    except OSError as exc:
-        _die(f"Unable to securely write wallet file ({exc.strerror or 'I/O error'}).")
-    finally:
-        if fd is not None:
-            os.close(fd)
+    _atomic_new_file(wallet_path, encoded_wallet.encode("utf-8"))
     return wallet_key.address, wallet_key.public_key.hex()
 
 
@@ -994,7 +1157,10 @@ def _prepare_sqlite_file(path: Path, label: str) -> None:
     if path.exists() and path.is_dir():
         _die(f"{label} path points to a directory, but a writable SQLite file is required: {path}")
     try:
-        path.touch(exist_ok=True)
+        if not path.exists():
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            os.close(fd)
+            _remember_new_file(path)
     except PermissionError as exc:
         _die(
             f"{label} file is not writable: {path}. "
@@ -1003,6 +1169,8 @@ def _prepare_sqlite_file(path: Path, label: str) -> None:
         )
     if not path.is_file():
         _die(f"{label} path is not a regular file: {path}")
+    if path.is_symlink():
+        _die(f"{label} path must not be a symbolic link: {path}")
     if not os.access(path, os.W_OK):
         _die(f"{label} file is not writable: {path}")
 
@@ -1014,14 +1182,16 @@ def _reset_sqlite_file(path: Path, label: str) -> None:
             shutil.rmtree(path)
         else:
             path.unlink()
-    path.touch()
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    _remember_new_file(path)
 
 
 def _write_snapshot_metadata_file(node_data_path: Path, metadata: dict[str, object]) -> None:
     """Persist a small audit/debug record next to the node DB."""
 
     metadata_path = _snapshot_metadata_path(node_data_path)
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _atomic_new_file(metadata_path, (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode())
 
 
 def _remove_snapshot_metadata_file(node_data_path: Path) -> None:
@@ -1111,6 +1281,10 @@ def _prepare_node_bootstrap(env_values: dict[str, str], *, network: str) -> list
     if bootstrap_mode == "full":
         notes.append("Node bootstrap mode: full sync from genesis.")
         return notes
+
+    snapshot_file = Path(env_values["NODE_SNAPSHOT_FILE"])
+    if snapshot_file.exists() or snapshot_file.is_symlink():
+        _die(f"Existing snapshot cache left unchanged: {snapshot_file}. Use a new storage root or review it explicitly.")
 
     try:
         from chipcoin.interfaces.cli import _load_snapshot_trusted_keys
@@ -1226,8 +1400,18 @@ def _fetch_json_from_url(url: str) -> object:
 
 def _download_snapshot_file(url: str, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with request.urlopen(url, timeout=60) as response:
-        destination.write_bytes(response.read())
+    fd, temporary = tempfile.mkstemp(prefix=".chipcoin-snapshot-", dir=destination.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as output, request.urlopen(url, timeout=60) as response:
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        os.link(temporary, destination, follow_symlinks=False)
+        _remember_new_file(destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _file_sha256(path: Path) -> str:
@@ -1300,12 +1484,14 @@ def _select_latest_compatible_snapshot(manifest_urls: list[str], *, network: str
 
 
 def _write_env(values: dict[str, str], env_path: Path) -> None:
-    if env_path.exists():
-        overwrite = input(f"{env_path} already exists. Overwrite it? [y/N]: ").strip().lower()
-        if overwrite not in {"y", "yes"}:
-            _die(f"Setup aborted because {env_path.name} would be overwritten.")
     lines = [f"{key}={values[key]}" for key in DEFAULTS]
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    encoded = ("\n".join(lines) + "\n").encode("utf-8")
+    if env_path.exists():
+        if env_path.read_bytes() != encoded:
+            _die(f"Existing settings left unchanged: {env_path}. Use a new storage root or edit explicitly after backup.")
+        print(f"Reusing identical settings at {env_path}.")
+        return
+    _atomic_new_file(env_path, encoded)
 
 
 def _print_success(
@@ -1325,8 +1511,11 @@ def _print_success(
 ) -> None:
     service_role = "node" if role == "reward-node" else role
     command_suffix = {"node": "node", "miner": "miner", "both": "node miner"}[service_role]
-    env_file_arg = f"--env-file {env_path.relative_to(REPO_ROOT) if env_path.is_relative_to(REPO_ROOT) else env_path}"
-    compose_base = "docker compose" if env_path == ENV_PATH else f"docker compose {env_file_arg}"
+    host_repo = Path(os.environ.get("CHIPCOIN_SETUP_HOST_REPO", str(REPO_ROOT)))
+    env_file_arg = f"--env-file {shlex.quote(str(env_path))}"
+    compose_base = f"docker compose {env_file_arg} -f {shlex.quote(str(host_repo / 'docker-compose.yml'))}"
+    if SETUP_STORAGE_BASE:
+        compose_base += f" -f {shlex.quote(str(host_repo / 'docker-compose.setup-runtime.yml'))}"
     compose_up_background = f"{compose_base} up -d {command_suffix}".strip()
 
     print()
@@ -1422,8 +1611,8 @@ def _print_success(
         print("Reward-node registration command (run after the reward-node wallet is funded):")
         print(
             f"  {compose_base} run --rm --no-deps --entrypoint chipcoin "
-            f"-v \"{env_values['NODE_DATA_PATH']}:/runtime/node.sqlite3\" "
-            f"-v \"{reward_wallet_path}:/runtime/reward-node-wallet.json:ro\" "
+            f"-v {shlex.quote(env_values['NODE_DATA_PATH'] + ':/runtime/node.sqlite3')} "
+            f"-v {shlex.quote(str(reward_wallet_path) + ':/runtime/reward-node-wallet.json:ro')} "
             "node "
             f"--network {network} --data /runtime/node.sqlite3 "
             "register-reward-node "
@@ -1437,7 +1626,10 @@ def _print_success(
         )
     print()
     print("Next commands:")
+    print(f"  {compose_base} build {command_suffix}")
     print(f"  {compose_up_background}")
+    if service_role in {"node", "both"}:
+        print(f"  curl -fsS 'http://127.0.0.1:{env_values['NODE_HTTP_PUBLISH_PORT']}/v1/status'")
     if service_role in {"node", "both"}:
         print(f"  {compose_base} logs -f node")
     if service_role in {"miner", "both"}:

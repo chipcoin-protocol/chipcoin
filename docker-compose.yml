@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    user: ${CHIPCOIN_RUNTIME_UID:-}
     entrypoint: ["/usr/local/bin/chipcoin-entrypoint", "node"]
     mem_limit: ${CHIPCOIN_MEMORY_LIMIT:-2g}
     environment:
@@ -120,6 +121,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    user: ${CHIPCOIN_RUNTIME_UID:-}
     entrypoint: ["/usr/local/bin/chipcoin-entrypoint", "miner"]
     environment:
       TZ: Europe/Rome
