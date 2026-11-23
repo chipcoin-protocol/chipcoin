@@ -139,3 +139,72 @@ def test_new_chain_db_private_and_no_existing_snapshot_overwrite(monkeypatch, tm
     with pytest.raises(SystemExit):
         w._prepare_node_bootstrap(values, network="mainnet")
     assert snapshot.read_text(encoding="utf-8") == "preserve"
+
+
+def test_persistent_wizard_reward_wallet_renews_with_immature_coinbase_after_restart(monkeypatch, tmp_path):
+    """A wizard-created PQ identity is usable by the Core across a DB reopen."""
+
+    import asyncio
+    from dataclasses import replace
+
+    from chipcoin.consensus.genesis import mine_genesis
+    from chipcoin.consensus.models import OutPoint
+    from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
+    from chipcoin.node.runtime import NodeRuntime, RewardNodeAutomationConfig, _load_wallet_key
+    from chipcoin.node.service import NodeService
+    from tests.helpers import put_wallet_utxo
+    from tests.node.test_mainnet_pq_end_to_end import MAINNET_PQ_TEST_PARAMS, _mine, _register_reward_node, _wallet
+
+    w = wizard(monkeypatch, tmp_path)
+    root = tmp_path / "mainnet"
+    w._prepare_storage_root(root)
+    w._check_pq_backend()
+    wallet_path = w._wallet_path("mainnet", "reward-owner-wallet.json")
+    address, _ = w._handle_wallet("generate", wallet_path, network="mainnet")
+    owner = _load_wallet_key(wallet_path)
+    assert owner.address == address and owner.scheme_name == "mldsa44"
+    assert os.stat(wallet_path).st_mode & 0o077 == 0
+
+    params = replace(MAINNET_PQ_TEST_PARAMS, coinbase_maturity=100)
+    database = root / "chain" / "node.sqlite3"
+
+    def open_service():
+        service = NodeService.open_sqlite(database, network="mainnet", params=params,
+                                          time_provider=lambda: 1_800_000_000)
+        service.install_or_verify_genesis(mine_genesis(timestamp=1_799_999_999, bits=params.genesis_bits),
+                                          chain_id=PUBLIC_MAINNET_CHAIN_ID)
+        return service
+
+    def make_runtime(service):
+        return NodeRuntime(service=service, reward_automation=RewardNodeAutomationConfig(
+            node_id="wizard-reward", owner_wallet_path=wallet_path, attest_wallet_path=wallet_path,
+            auto_renew_enabled=True, auto_attest_enabled=True,
+        ))
+
+    service = open_service()
+    miner = _wallet(1)
+    put_wallet_utxo(service, OutPoint(txid="ab" * 32, index=0), value=300_000_000,
+                    owner=owner, is_coinbase=False)
+    _register_reward_node(service, wallet=owner, node_id="wizard-reward", port=19001)
+    for _ in range(9):
+        _mine(service, miner.address)
+    put_wallet_utxo(service, OutPoint(txid="cd" * 32, index=0), value=1,
+                    owner=owner, height=9, is_coinbase=True)
+    asyncio.run(make_runtime(service)._run_reward_automation_once())
+    renewal = next(tx for tx in service.list_mempool_transactions()
+                   if tx.metadata.get("kind") == "renew_reward_node")
+    assert OutPoint(txid="cd" * 32, index=0) not in {item.previous_output for item in renewal.inputs}
+    _mine(service, miner.address)
+    assert service.get_registered_node("wizard-reward").last_renewed_height == 10
+    service.connection.close()
+
+    restarted = open_service()
+    for _ in range(9):
+        _mine(restarted, miner.address)
+    put_wallet_utxo(restarted, OutPoint(txid="ef" * 32, index=0), value=1,
+                    owner=owner, height=19, is_coinbase=True)
+    asyncio.run(make_runtime(restarted)._run_reward_automation_once())
+    next_renewal = next(tx for tx in restarted.list_mempool_transactions()
+                       if tx.metadata.get("kind") == "renew_reward_node"
+                       and tx.metadata.get("renewal_epoch") == "2")
+    assert OutPoint(txid="ef" * 32, index=0) not in {item.previous_output for item in next_renewal.inputs}
