@@ -1,6 +1,6 @@
 # Block submission release candidate: isolated evaluation
 
-Status: local candidate only. No production deployment, public tag, or message to an operator has occurred.
+Status: this document records the earlier pool-only candidate. The later combined candidate remains local and requires its own external validation; see [integrated readiness](MAINNET_INTEGRATED_RC_READINESS.md). No production deployment or public release is implied.
 
 ## Changelog
 

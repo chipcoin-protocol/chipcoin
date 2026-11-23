@@ -1,0 +1,25 @@
+# Integrated Core RC: proposed Mainnet rollout and rollback
+
+**Procedure only. No production action or approval is implied.** Candidate code: `f2789e9171e3e6469dbcb071adf590553f601d49`; local Core and setup image tags are recorded in [readiness](MAINNET_INTEGRATED_RC_READINESS.md). The running chipcom Core is sourced from `171ed3e`; compare actual image IDs, not only tags.
+
+## Gates before any rollout
+
+1. Obtain explicit maintainer approval for release and production rollout. Offer the *integrated* candidate to an affected pool operator for an isolated trial, including legacy job flow, full-block retry, changed mempool, TTL expiry and post-commit lookup. Keep private correspondence, logs and operator feedback outside the public repository. A test of an earlier pool-only build does not establish compatibility of this combined image.
+2. Finish the open T1–T12 and Mainnet-profile isolation tests, including concurrent jobs, reward renewal at an epoch boundary, restart, malformed PQ payout, side branch and reorg, and HTTP 500 after commit. Record failures and stop if any valid block is rejected or an unvalidated block is reported active.
+3. On **each** host, determine the active Docker daemon (rootful or rootless), Compose project/config files, service and image ID, bind mounts, environment file, reward-node ID, wallet mount, chain database, snapshot trust and API/P2P binding. Do not copy chipcom Compose commands to another host. The mapping of `reward-chipcom-mainnet`, `janus-node`, `reward-tilt-mainnet`, `reward-tobia-mainnet` to currently active containers must be confirmed read-only before writing host-specific deployment commands. Confirm current Mainnet chain ID, genesis hash, tip, cumulative work, sync phase, peers and reward status. Include the passive node and separate testnet services in the inventory so they cannot be targeted accidentally.
+4. Create and verify a consistent SQLite backup, wallet/key backup and environment/Compose backup for the host. Record current image ID and retain a local tag for it. Verify restore access, disk space and exact volume mounts. Never use `docker compose down -v`; never regenerate reward keys or overwrite existing storage.
+5. Build the candidate from the reviewed commit with pinned dependencies. Verify the revision label, architecture, 92-file source digest and native ML-DSA-44 known-answer test on the intended host. Check compatibility of startup flags and the host-specific Compose configuration before recreation.
+
+## Sequence after separate deployment authorization
+
+Roll out **chipcom → janus → tilt → tobia**, one host at a time, with an explicit pause between hosts. Because chipcom is the explorer reference and bootstrap host, schedule its maintenance window and verify explorer/API continuity immediately after its update; if the reference role cannot tolerate that first step, revise the order with the operator before deploying. Use the reviewed Compose project and file set of that host, replacing only the Core image reference and preserving all binds, wallet files, data and settings. The Docker-first wizard is for *new* installations and must not migrate existing production paths.
+
+After each host, verify: container health, Mainnet chain ID `chipcoin-mainnet-1`, genesis `00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f`, height/tip/work against an independent node, incoming/outgoing P2P, API `/v1/status`, `/v1/block?hash` active indicator, public peers, local template generation for a CHCQ payout, and normal miner/pool submission telemetry. Do **not** submit a synthetic block to production. Observe real pool submissions and reconcile ambiguous failures by hash. Check that reward-node automation uses mature inputs, that attestations continue, and that renewals confirm at the next eligible epoch. Continue monitoring for at least one full epoch after the last host.
+
+Stop immediately if tips or work diverge unexpectedly, genesis/chain ID differ, a wallet or database mount changes, the Core reports an immature coinbase spend, a valid pool job is rejected, an invalid block is accepted, HTTP 500s/unknown templates rise materially, reward automation stalls, or explorer/peer connectivity fails. Freeze further host updates and preserve logs and candidate image for diagnosis.
+
+## Rollback
+
+For the affected host only, restore the previous image reference and saved Compose/environment configuration, then recreate just its approved Core service using that host's actual Docker daemon and project. Keep its persistent chain database, peerbook and wallet binds intact. The candidate has no schema or wallet migration. Recheck genesis, chain tip, cumulative work, P2P, API, pool response behavior and reward automation. If the database itself is corrupt, use only the verified consistent backup under a separate recovery decision; do not silently replace live chain data. Record the incident and suspend the remaining rollout.
+
+No executable production command is provided until the per-host inventory and backup paths have been confirmed.
