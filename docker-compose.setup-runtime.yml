@@ -1,0 +1,7 @@
+# New Docker-first installations only. Existing deployed Compose layouts are unchanged.
+services:
+  node:
+    volumes:
+      - type: bind
+        source: ${CHIPCOIN_RUNTIME_COMPAT_HOST_DIR:?Missing setup runtime directory}
+        target: /runtime

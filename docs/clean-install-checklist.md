@@ -7,22 +7,16 @@ This checklist is for verifying the public repository from a fresh clone.
 ```bash
 git clone https://github.com/chipcoin-protocol/chipcoin.git
 cd chipcoin
-python3 scripts/setup/wizard.py
-docker compose --env-file .env.mainnet config --quiet
-docker compose --env-file .env.mainnet up -d --build node
-docker compose --env-file .env.mainnet ps
+./setup.sh
 ```
 
-This path needs Python 3 and Docker Compose on the host. The Docker builder
-compiles the native ML-DSA-44 module; host GCC and a virtual environment are
-unnecessary for a passive node. The wizard prepares a distinct Mainnet database
+This path needs Git and Docker Compose on the host; it needs no host Python, GCC or virtual environment even for miner/reward wallet generation. Follow the exact Compose build/start/verification commands printed by the wizard. The wizard prepares a distinct Mainnet database
 and keeps P2P private by default. Select Testnet or Devnet explicitly in the
 wizard and use its printed environment file for that network.
 
 ## Optional Native Python CLI
 
-For native CLI use, wallet creation/import in the wizard, or wizard snapshot
-import, install host build dependencies first. On Ubuntu:
+For the advanced host-Python CLI or wizard, install host build dependencies yourself. On Ubuntu:
 
 ```bash
 sudo apt-get install build-essential python3-dev python3-venv
@@ -39,15 +33,12 @@ Checks:
 ## Explicit Testnet Installation
 
 ```bash
-python3 scripts/setup/wizard.py
-docker compose --env-file .env config --quiet
-docker compose --env-file .env up -d --build node
+./setup.sh
 ```
 
-Select Testnet explicitly in the wizard. The wizard prepares `.env` and an
-isolated Testnet runtime. The node starts without activating the miner.
+Select Testnet explicitly in the wizard. The wizard prepares a separate `testnet/config/.env` and runtime. The node starts only when you run its printed Compose command.
 
-Verify with `docker compose --env-file .env ps` and
+Verify with the printed Compose `ps` command and
 `curl http://127.0.0.1:28081/v1/status`. Start a miner separately only after
 its wallet has been created and backed up.
 

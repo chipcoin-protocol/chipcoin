@@ -2,30 +2,25 @@
 
 ## Purpose
 
-The setup wizard creates a network-specific environment file and prepares an isolated runtime. New installations select Mainnet by default.
+The recommended setup runs the existing wizard inside a disposable Docker image. From a clean checkout:
 
-Run it from the repository root:
-
-```bash
-python3 scripts/setup/wizard.py
+```sh
+git clone https://github.com/chipcoin-protocol/chipcoin.git
+cd chipcoin
+./setup.sh
 ```
 
-For the default passive node, a fresh clone needs only host Python 3 and Docker
-Compose. Do not run `pip install -e .` or install GCC on the host for this path.
-The Docker builder compiles the native ML-DSA-44 module when the image is built;
-the running container includes it. Host-side CLI installation, wizard wallet
-creation/import, and wizard snapshot import do use Python crypto packages and
-the native extension. On Ubuntu those paths require
-`sudo apt-get install build-essential python3-dev python3-venv`, followed by
-`python3 -m venv .venv` and `.venv/bin/python -m pip install -e .`; run the
-wizard with `.venv/bin/python scripts/setup/wizard.py` for those paths.
+Prerequisites are Git, a working Docker Engine or Docker Desktop daemon, Compose v2, an interactive terminal, and a recognized Linux x86_64/AArch64 or macOS Intel/Apple Silicon host. Host Python, a virtual environment, GCC and Python headers are **not** needed for this path. Mainnet is selected on Enter; Testnet and Devnet require an explicit choice. The wizard does not start the node, miner, or reward automation. It prints build, startup, status, and registration commands for the selected role. Architecture recognition alone is not an official platform validation; see the test matrix below.
 
-The wizard writes a network-specific environment file by default: `.env` for
-testnet, `.env.devnet` for devnet, and `.env.mainnet` for mainnet. Network
-selection remains explicit; pressing Enter at the network prompt selects
-Mainnet. Testnet and Devnet remain selectable.
+`setup.sh` checks the Git checkout, host and Docker architectures, and a writable persistent storage base. It builds the Core from this clean checkout using the base-image digests pinned in `Dockerfile`, then builds `Dockerfile.setup` from that local Core image and runs the wizard with the same architecture. No `latest` image is pulled for key generation. The setup container receives a read-only checkout and a writable selected storage base; it receives no Docker socket, privileged flag, or host home mount. Docker build requires network access to fetch pinned bases and locked build dependencies when they are not cached; a failed build stops before wallet generation. The image runs the project's ML-DSA-44 known-answer test before any Mainnet wallet generation or import.
 
-The wizard is now Docker-first:
+The default Linux storage base is `${XDG_DATA_HOME:-$HOME/.local/share}/chipcoin`; the default macOS base is `~/Library/Application Support/Chipcoin`. The launcher prompts for another absolute base; `/var/lib/chipcoin` requires explicit administrator provisioning and must be writable by the operator. For each selected network it creates a separate `mainnet/`, `testnet/` or `devnet/` tree with `wallets/miner/`, `wallets/reward/`, `chain/`, `runtime/`, and `config/`. The environment file is `<base>/<network>/config/.env`. New wallet and config files use mode 0600; new sensitive directories use 0700. The Compose override `docker-compose.setup-runtime.yml` binds the selected `runtime/` to `/runtime` and assigns the host UID/GID to new services. The base Compose file continues to support existing deployments at their existing paths.
+
+For backup, copy the entire selected network tree to encrypted offline storage while the node is stopped or use a consistent SQLite backup for the chain database. Protect `wallets/` and `config/`; retain the wallet seeds and owner wallet identity. Never use `docker compose down -v` for routine upgrades. Rebuild and recreate containers using the printed commands; the bind-mounted network tree remains on the host. A rerun reuses a valid existing wallet and identical config; it refuses to replace changed settings, invalid wallets, or an existing database with a snapshot. It does not migrate active Linux installations.
+
+Advanced host-Python setup remains supported: `python3 scripts/setup/wizard.py`. For wallet generation/import, create an isolated `.venv` and install this checkout with `.venv/bin/python -m pip install -e .` using a compiler and Python headers supplied by the operator. Then use `.venv/bin/python scripts/setup/wizard.py`. The wizard checks the pinned native backend and known-answer vector before handling Mainnet keys and gives a clear remediation message if it is missing. The host-Python path retains legacy `.env.mainnet`, `.env` and `.env.devnet` defaults and runtime locations. Do not use system Python with `sudo pip`.
+
+The wizard:
 
 - it validates that the repository `docker-compose.yml` exists
 - it prepares the runtime files that the compose stack actually mounts
@@ -37,7 +32,7 @@ The wizard is now Docker-first:
 - it can now prepare either a passive node or a reward-participating node
 - it offers explicit roles for full node, miner, and reward node
 
-Mainnet uses `/var/lib/chipcoin-mainnet-official`; Testnet and Devnet use separate database and wallet paths under `/var/lib/chipcoin`. On a fresh Linux host the wizard can create the new runtime directory with `sudo`. It refuses to change ownership of an existing runtime tree.
+Existing host-Python and deployed Mainnet paths remain unchanged. They are not automatically migrated into the new storage tree. If Docker Desktop rejects a bind mount, enable sharing of the selected storage base and checkout in Docker Desktop, then rerun setup. If Docker uses the wrong architecture, fix the Docker installation instead of using emulation. If a directory is unwritable or has broad permissions, choose a new user-owned base or correct its permissions explicitly. If the backend check fails, rebuild via `./setup.sh`; never select a legacy key as a Mainnet fallback.
 
 ## When To Use It
 
