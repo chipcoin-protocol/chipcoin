@@ -101,7 +101,7 @@ def test_registration_uses_compose_dns_not_container_loopback(monkeypatch, tmp_p
 
 def test_miner_only_requires_container_reachable_url(monkeypatch, tmp_path):
     w = wizard(monkeypatch, tmp_path)
-    answers = iter(["http://127.0.0.1:8080", "http://node:8080", "http://miner-node.example.com:8080"])
+    answers = iter(["http://127.0.0.1:8080", "http://node:8080", "http://", "http://miner-node.example.com:8080"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     assert w._ask_required_mining_url() == "http://miner-node.example.com:8080"
 

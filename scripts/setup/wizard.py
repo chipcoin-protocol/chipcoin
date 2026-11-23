@@ -416,7 +416,7 @@ def _ask_required_mining_url() -> str:
         answer = input("Enter a mining node API URL reachable from the miner container (http(s)://host:port): ").strip()
         if answer.startswith(("http://", "https://")) and not _url_contains_credentials(answer):
             parsed = urlsplit(answer)
-            if parsed.hostname not in {"localhost", "127.0.0.1", "::1", "node"}:
+            if parsed.hostname and parsed.hostname not in {"localhost", "127.0.0.1", "::1", "node"}:
                 return answer
         print("Use a reachable node API URL. Container localhost and 'node' are unavailable for a miner-only installation.")
 
