@@ -8,7 +8,7 @@ import json
 
 from chipcoin.consensus.merkle import merkle_root
 from chipcoin.consensus.models import Block, BlockHeader, OutPoint, Transaction, TxOutput
-from chipcoin.consensus.params import DEVNET_PARAMS
+from chipcoin.consensus.params import DEVNET_PARAMS, TESTNET_PARAMS
 from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.consensus.pq_activation import pq_support_activation_height
 from chipcoin.consensus.pow import verify_proof_of_work
@@ -32,6 +32,17 @@ def _request(app, path, body):
         "CONTENT_LENGTH": str(len(encoded)),
         "wsgi.input": BytesIO(encoded),
     }
+    response = {}
+
+    def start(status, _headers):
+        response["status"] = status
+
+    response["body"] = json.loads(b"".join(app(environ, start)).decode())
+    return response
+
+
+def _get_block_by_hash(app, block_hash):
+    environ = {"REQUEST_METHOD": "GET", "PATH_INFO": "/v1/block", "QUERY_STRING": f"hash={block_hash}"}
     response = {}
 
     def start(status, _headers):
@@ -288,6 +299,10 @@ def test_side_branch_storage_then_reorganization_and_retry(tmp_path):
         "consensus_validity": "pending",
     }
     assert _submit(app, b)["body"]["reason"] == "known_side_branch"
+    side_lookup = _get_block_by_hash(app, b.block_hash())
+    assert side_lookup["status"] == "200 OK"
+    assert side_lookup["body"]["on_active_chain"] is False
+    assert _get_block_by_hash(app, a.block_hash())["body"]["on_active_chain"] is True
 
     next_template = _template(app)
     candidate = _solved_block(next_template)
@@ -305,6 +320,34 @@ def test_side_branch_storage_then_reorganization_and_retry(tmp_path):
     assert service.chain_tip().block_hash == child.block_hash()
     assert _submit(app, b)["body"]["reason"] == "already_accepted"
     assert _submit(app, a)["body"]["reason"] == "known_side_branch"
+    assert _get_block_by_hash(app, b.block_hash())["body"]["on_active_chain"] is True
+    assert _get_block_by_hash(app, a.block_hash())["body"]["on_active_chain"] is False
+
+
+@pytest.mark.parametrize("network,params", [("devnet", DEVNET_PARAMS), ("testnet", TESTNET_PARAMS)])
+def test_template_rejects_chcq_before_activation_and_accepts_at_boundary(tmp_path, network, params):
+    now = [1_700_000_000]
+    service = NodeService.open_sqlite(
+        tmp_path / f"{network}-activation.sqlite3", network=network,
+        params=replace(params, genesis_bits=0x207FFFFF, pq_support_activation_height=1),
+        time_provider=lambda: now[0],
+    )
+    app = HttpApiApp(service)
+    pq_address = wallet_key_from_mldsa44_seed(bytes(range(32))).address
+    rejected = _request(app, "/mining/get-block-template", {
+        "payout_address": pq_address, "miner_id": "test-worker",
+    })
+    assert rejected["status"] == "400 Bad Request"
+    assert "CHCQ payout addresses are not active" in rejected["body"]["error"]["message"]
+    assert service._mining_templates == {}
+
+    legacy = _template(app)
+    assert _submit(app, _solved_block(legacy))["body"]["reason"] == "accepted"
+    accepted = _request(app, "/mining/get-block-template", {
+        "payout_address": pq_address, "miner_id": "test-worker",
+    })
+    assert accepted["status"] == "200 OK"
+    assert accepted["body"]["height"] == 1
 
 
 def test_http_error_after_commit_is_reconciled_by_retry(tmp_path):

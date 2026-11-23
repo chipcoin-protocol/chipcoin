@@ -29,4 +29,8 @@ Full-block response fields:
 
 Successful full-block storage returns HTTP 200 with structured JSON. Malformed JSON, oversized body, or missing/invalid hex are HTTP 400 with `error.code=invalid_request`. The existing API wrapper may return HTTP 500 for unhandled server failures. If a connection closes or HTTP 500 occurs, query `GET /v1/block?hash=<block hash>` and retry the identical full block. A retry of an active block returns `already_accepted`, without a second write or relay. A side-branch lookup must not be treated as active-chain confirmation.
 
+`GET /v1/block?hash=<block hash>` and `GET /v1/block?height=<height>` also return `on_active_chain`: `true` only when that exact stored block occupies its recorded height on the active chain. The hash lookup may return a stored side-branch block with `on_active_chain=false`; a block's presence by hash alone is not confirmation. This field is additive and does not change existing block fields.
+
+`POST /mining/get-block-template` rejects a CHCQ payout address with HTTP 400 `invalid_request` before the network's PQ activation height. Mainnet activates at height 0, Testnet at 20,000, and Devnet at 30,000 according to the current consensus parameters. The check uses the candidate block height. It does not change activation rules or mining-template expiry.
+
 The endpoint is intended for locally bound, trusted pool-to-node access. Do not publish it through an unauthenticated Internet proxy. The Core's local API has no built-in pool identity authentication or per-client rate limiter. Deployment operators must restrict access and monitor requests. This candidate is not a promise of universal status codes across old releases.

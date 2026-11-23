@@ -49,6 +49,7 @@ from ..consensus.nodes import (
     select_rewarded_nodes,
 )
 from ..consensus.params import ConsensusParams, target_block_time_seconds_for_height
+from ..consensus.pq_activation import pq_support_is_active
 from ..consensus.pow import bits_to_target, calculate_next_work_required, header_work
 from ..consensus.serialization import deserialize_block, deserialize_transaction, serialize_transaction
 from ..consensus.economics import (
@@ -669,6 +670,10 @@ class NodeService:
 
         tip = self.headers.get_tip()
         height = 0 if tip is None else tip.height + 1
+        if miner_address.startswith("CHCQ") and not pq_support_is_active(
+            network=self.network, height=height, params=self.params,
+        ):
+            raise ValueError("CHCQ payout addresses are not active on this network at this height.")
         previous_block_hash = "00" * 32 if tip is None else tip.block_hash
         expected_bits = self._expected_bits_for_height(height)
         mempool_entries = self.mempool.list_transactions()
@@ -2642,6 +2647,9 @@ class NodeService:
             return None
         record = self.headers.get_record(block.block_hash())
         block_height = None if record is None else record.height
+        on_active_chain = bool(
+            record is not None and self.headers.get_hash_at_height(record.height) == block.block_hash()
+        )
         total_fees_chipbits = None
         if block_height is not None:
             try:
@@ -2652,6 +2660,7 @@ class NodeService:
         return {
             "block_hash": block.block_hash(),
             "height": block_height,
+            "on_active_chain": on_active_chain,
             "header": {
                 "version": block.header.version,
                 "previous_block_hash": block.header.previous_block_hash,
@@ -2997,13 +3006,19 @@ class NodeService:
         return rows
 
     def list_spendable_outputs(self, recipient: str) -> list[SpendCandidate]:
-        """Return active-chain UTXOs spendable by the supplied recipient."""
+        """Return mature active-chain UTXOs not committed by pending transactions."""
 
         tip = self.chain_tip()
         spend_height = 0 if tip is None else tip.height + 1
+        pending_inputs = {
+            tx_input.previous_output
+            for entry in self.mempool.list_transactions()
+            for tx_input in entry.transaction.inputs
+        }
         spendable = []
         for outpoint, entry in self.chainstate.list_utxos():
-            if entry.output.recipient != recipient or not is_coinbase_mature(entry, spend_height, self.params):
+            if (entry.output.recipient != recipient or outpoint in pending_inputs
+                    or not is_coinbase_mature(entry, spend_height, self.params)):
                 continue
             spendable.append(
                 SpendCandidate(

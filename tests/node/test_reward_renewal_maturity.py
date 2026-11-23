@@ -11,6 +11,7 @@ import pytest
 
 from chipcoin.consensus.genesis import mine_genesis
 from chipcoin.consensus.models import OutPoint
+from chipcoin.interfaces.cli import _build_wallet_transaction
 from chipcoin.consensus.network_identity import PUBLIC_MAINNET_CHAIN_ID
 from chipcoin.consensus.params import MAINNET_PARAMS
 from chipcoin.node.runtime import NodeRuntime, RewardNodeAutomationConfig
@@ -72,6 +73,28 @@ def test_only_immature_coinbase_outputs_cannot_fund_a_transaction(tmp_path: Path
                     owner=owner, is_coinbase=False)
     with pytest.raises(ValueError, match="Insufficient spendable balance"):
         select_inputs(service.list_spendable_outputs(owner.address), 10)
+
+
+def test_wallet_send_selection_skips_immature_and_pending_inputs(tmp_path: Path) -> None:
+    service = _mainnet_reward_service(tmp_path / "wallet-send.sqlite3", start_time=1_800_000_000)
+    owner, recipient = _wallet(3), _wallet(4)
+    immature = OutPoint(txid="11" * 32, index=0)
+    first_funding = OutPoint(txid="22" * 32, index=0)
+    second_funding = OutPoint(txid="33" * 32, index=0)
+    put_wallet_utxo(service, immature, value=1, owner=owner, height=0, is_coinbase=True)
+    put_wallet_utxo(service, first_funding, value=20, owner=owner, is_coinbase=False)
+    put_wallet_utxo(service, second_funding, value=30, owner=owner, is_coinbase=False)
+    args = SimpleNamespace(to=recipient.address, amount=10, fee=1, change_address=None)
+
+    first = _build_wallet_transaction(service, owner, args)
+    assert {item.previous_output for item in first.transaction.inputs} == {first_funding}
+    service.receive_transaction(first.transaction)
+    second = _build_wallet_transaction(service, owner, args)
+    assert {item.previous_output for item in second.transaction.inputs} == {second_funding}
+    service.receive_transaction(second.transaction)
+    assert immature not in {item.previous_output for item in second.transaction.inputs}
+    with pytest.raises(ValueError, match="Insufficient spendable balance"):
+        _build_wallet_transaction(service, owner, args)
 
 
 def _mainnet_reward_service(path: Path, *, start_time: int) -> NodeService:

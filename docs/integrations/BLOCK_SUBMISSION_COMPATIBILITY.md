@@ -19,7 +19,11 @@ This describes a local development candidate. Existing deployed nodes still use 
 | Full side branch | Unsupported | `accepted=false`, `stored=true`, `on_active_chain=false`, `consensus_validity=pending` |
 | Full duplicate | Unsupported | `already_accepted` or `known_side_branch` according to active-chain inclusion |
 | Relay failure after commit | Can become HTTP 500 | Committed full block returned with `relay_failed=true`; legacy path reconciles after caught relay failure |
+| `GET /v1/block?hash=` | Existing fields, no active-chain indicator | Adds `on_active_chain` boolean for active blocks and stored side branches |
+| Premature CHCQ payout on Testnet/Devnet | May issue a template rejected at block validation | HTTP 400 `invalid_request` before issuing the template |
 
 Legacy clients should continue to send their existing JSON unchanged. Full mode is opt-in by omitting `template_id`; it is not an alias for using a new ID to reconstruct an old block. In particular, a changed transaction list cannot be silently replaced by a new template. The observed Crypto Connection workaround remains possible when all consensus-relevant bytes match, subject to normal legacy checks. It cannot be claimed to solve changed jobs.
 
 The default HTTP response status for validation results remains 200 with a structured body. Invalid request syntax is HTTP 400. Unhandled server failures remain HTTP 500. The full `reason` vocabulary is documented in [BLOCK_SUBMISSION_SPEC.md](BLOCK_SUBMISSION_SPEC.md). Request latency and exact client compatibility require pre-release testing with Crypto Connection.
+
+Pending pool-contract proposals, excluded from this candidate: return `already_accepted` for a legacy retry whose template was removed but whose exact block is on the active chain; distinguish tip-change eviction from TTL/limit expiry; and refine `coinbase_outputs_mismatch` versus `transaction_set_mismatch`. Existing legacy error codes and validation order remain unchanged until pool operators approve a versioned or explicitly compatible transition. Full-block retry and hash lookup provide the current reconciliation path.
