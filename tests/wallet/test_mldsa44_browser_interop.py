@@ -3,6 +3,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.crypto.pq.mldsa import (
     ML_DSA_44_PUBLIC_KEY_SIZE,
