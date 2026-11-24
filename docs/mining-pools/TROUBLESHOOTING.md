@@ -4,7 +4,7 @@ Applies to tagged release `12e4dbc8974bd76885e30e6dacdf1b7be898e126`. Log the re
 
 | Symptom | Likely meaning | Pool action |
 | --- | --- | --- |
-| `unknown_or_expired_template` | Legacy job ID absent after 15-second TTL, 256-job eviction, restart, or tip invalidation. | Query the submitted hash; if absent, retry the identical complete block in full mode or refresh the job. Do not assume the block was invalid. |
+| `unknown_or_expired_template` | Legacy job ID absent after 15-second TTL, 256-job eviction, restart, or tip invalidation. | Query the submitted hash; if absent, the full-block API can retry the identical complete block. One pool first compares candidate parent with `GET /v1/tip` and skips fallback on a mismatch; that is an optional, race-sensitive pool policy, not a Core guarantee. Do not assume the block was invalid. |
 | `already_accepted` | Full-mode duplicate is on active chain. | Record the hash; confirm via `GET /v1/block?hash=` and watch reorgs. This result is **not** promised for legacy retry with an expired ID. |
 | `coinbase_outputs_mismatch` | Legacy submission's ordered output list differs from its issued template. | Rebuild from that template or use full mode for an autonomous candidate; verify actual reward outputs. It is checked before transaction IDs, so a changed transaction set can also affect the reported first mismatch. |
 | `transaction_set_mismatch` | Legacy non-coinbase TXIDs differ from issued job. | Never attach an older solution to a new, different job ID. Submit the original complete block in full mode if still consensus-valid. |

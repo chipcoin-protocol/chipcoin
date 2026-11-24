@@ -1,4 +1,4 @@
-# Chipcoin Mining Pool Integration Handbook v1.2
+# Chipcoin Mining Pool Integration Handbook v1.3
 
 **Reference Core:** [Mainnet v0.1.2](https://github.com/chipcoin-protocol/chipcoin/releases/tag/mainnet-v0.1.2), tag target `12e4dbc8974bd76885e30e6dacdf1b7be898e126`. The vectors were generated at ancestor `4c0984e65de31a50db7558d468167d513769bb20` and are verified unchanged against the release Core. The published Docker archive is AMD64; other architectures require a separately verified native build from the tagged source. This handbook is published separately from the immutable v0.1.2 tag. See [release alignment and evidence](RELEASE_ALIGNMENT.md).
 
@@ -53,4 +53,4 @@ After your pool builds a live candidate, send `{"serialized_block":"<complete he
 
 Bind the mining API to loopback or a private network with operator-controlled access. This release API has no built-in pool identity authentication or per-client rate limiter. Separate pool wallets and chain state by network; protect ML-DSA-44 wallet material, minimize request logging, back up persistent data consistently, and monitor tip/hash, template errors, accepted blocks, and reorgs. Never publish the mining API through an unauthenticated Internet proxy. See [operational details](INTEGRATION_GUIDE.md).
 
-The Core release is public and has been deployed on Mainnet nodes as recorded in [release alignment](RELEASE_ALIGNMENT.md). This revision adds an anonymized, operator-reported production backend configuration; its server source and wire transcript have not been independently inspected. No third-party Stratum dialect is declared an official Chipcoin standard.
+The Core release is public and has been deployed on Mainnet nodes as recorded in [release alignment](RELEASE_ALIGNMENT.md). [Crypto Connection](https://crypto-connection.net) and its operator Julien provided implementation details and test results for their Miningcore Chipcoin module v6.1; the backend source and the reported Stratum vector have not been independently inspected. Those details describe one pool, not an official Chipcoin Stratum standard. See the [v1.3 changelog](CHANGELOG.md) and [Stratum reference](STRATUM_REFERENCE.md).

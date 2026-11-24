@@ -1,6 +1,6 @@
 # Mainnet v0.1.2 release alignment and evidence
 
-This document records the evidence boundary for Handbook v1.2. The reference is the **published Core release**, not the handbook's Git ancestry. The handbook was published separately after that immutable release tag. Inspect the tagged commit for release code bytes.
+This document records the evidence boundary for Handbook v1.3. The reference is the **published Core release**, not the handbook's Git ancestry. The handbook was published separately after that immutable release tag. Inspect the tagged commit for release code bytes. Crypto Connection's Miningcore v6.1 behavior below is attributed operator evidence, not Core source evidence.
 
 ## Provenance
 
@@ -32,7 +32,8 @@ In this table `R` means tagged Core `12e4dbc...`; `V` means original vector sour
 | SOLO direct CHCQ miner output | [Coinbase](COINBASE_AND_PAYOUTS.md) | `node/mining.py`, `consensus/validation.py` (R) | Mainnet | Template and consensus checks | VERIFIED for one miner output; pool ownership/accounting external |
 | PPLNS direct multi-miner coinbase payout | [Coinbase](COINBASE_AND_PAYOUTS.md) | `consensus/validation.py::_validate_coinbase_distribution` (R) | All | Exact output count rule | VERIFIED UNSUPPORTED; use later signed v2 payouts |
 | CHCQ codec and ML-DSA-44 payout precheck | [PQ](PQ_ADDRESSES.md) | `crypto/addresses.py`, `crypto/pq/mldsa.py`, `consensus/pq_activation.py`, `node/service.py` (R) | Mainnet height 0; Testnet 20,000; Devnet 30,000 | Address vectors; Mainnet negative/positive template regression | VERIFIED; do not use test addresses for funds |
-| Worker Stratum dialect and share target | [Stratum](STRATUM_REFERENCE.md) | External miner client at `6d40215...` / v0.10.2; no Core Stratum server | Pool-specific | Local read of CPU/GPU client; anonymized operator report | OPERATOR_REPORTED for server internals; wire trace and source not independently checked |
+| Worker Stratum dialect, authorization, share target and job scheduling | [Stratum](STRATUM_REFERENCE.md) | External miner client at `6d40215...` / v0.10.2; no Core Stratum server | Pool-specific | Local read of CPU/GPU client; Crypto Connection operator report | OPERATOR_REPORTED for server internals; wire vector and source not independently checked |
+| Pool full-block fallback and hashrate policy | [Submission](BLOCK_SUBMISSION.md), [Stratum](STRATUM_REFERENCE.md) | Core full-block API is R; Miningcore v6.1 is external | Pool-specific | Julien reports deployment since 2026-11-24 23:16 UTC, 12 restart tests; no backend source or trace in this checkout | OPERATOR_REPORTED for pool behavior and outcomes; Core API VERIFIED separately |
 | Docker example | [Quick start](README.md), [Compose](examples/compose.devnet.yml) | Tagged R build context | Isolated Devnet | Compose config check and local HTTP smoke | VERIFIED without Docker end-to-end run in this review |
 | Public use rights | This page | No root `LICENSE` in R; `vendor/mldsa-native/LICENSE` covers only vendor material | All | Git tree audit | BLOCKED for clear third-party redistribution terms; maintainer/legal decision needed |
 
@@ -47,15 +48,18 @@ In this table `R` means tagged Core `12e4dbc...`; `V` means original vector sour
 
 ## Open integration questions
 
-An operator has reported answers for some of these, but direct source or scrubbed wire evidence remains outstanding:
+Julien of Crypto Connection has reported answers for some of these, but direct source or scrubbed wire evidence remains outstanding:
 
 1. Confirm the reported one-template-per-job mapping and four-job retention with a scrubbed job/template trace; verify behavior under a mempool-only update.
 2. Confirm the reported locktime split with exact `coinb1`, extranonce1/2, `coinb2` and resulting coinbase bytes. How are worker extranonces partitioned and rotated without collision?
-3. The reported backend currently submits legacy and tests, but has not deployed, a full-block fallback. When a valid network share arrives after legacy TTL, does it preserve the **same full block bytes** and reconcile by hash?
+3. Miningcore v6.1 reportedly deployed full-block fallback on 2026-11-24. Acquire `chc_stratum_vector.json` and independently verify that candidate bytes stay unchanged through legacy failure, tip check, full submission and active-chain reconciliation.
 4. The operator reports tip-driven job invalidation, hash lookup and its own confirmation/orphan thresholds. How are duplicate shares, stored side branches, reorgs and delayed HTTP responses reflected in pool accounting and logs?
 5. For a new SOLO/PPLNS backend: is a single miner coinbase output acceptable, and can participant payouts be delayed until 100-block Mainnet maturity using signed CHCQ v2 transactions?
+6. Confirm the deployed backend's `clean_jobs` flag at a tip change; only the same-tip refresh value is documented here.
 
 ## Publication and editorial follow-up
+
+For this v1.3 document-only review, the unchanged `test-vectors/v1.json` passed its verifier against tagged Core v0.1.2; 131 local Markdown links resolved. No Core regression suite, external Miningcore server test, or new Stratum wire-vector validation was run. Julien's reported `chc_stratum_vector.json` is not present in this checkout. These current checks do not upgrade the operator-reported outcomes above to independently verified results.
 
 - The handbook is not part of `mainnet-v0.1.2`; it was applied as a document/test-example patch onto public `main` containing tagged Core `12e4dbc...`. The earlier `4c0984e` Core tree was not merged over the release.
 - The project root has no explicit public `LICENSE` at this tag. The vendor license does not license original Core code. The maintainer must resolve licensing before promising redistribution rights to third-party pool operators.
