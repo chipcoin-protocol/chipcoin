@@ -15,6 +15,8 @@ from chipcoin.consensus.pow import verify_proof_of_work
 from chipcoin.consensus.serialization import deserialize_transaction, serialize_block
 from chipcoin.consensus.utxo import InMemoryUtxoView
 from chipcoin.consensus.validation import ContextualValidationError, ValidationContext, _validate_transaction_outputs_for_activation
+from chipcoin.crypto.addresses import public_key_to_pq_address
+from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44, SIG_SCHEME_ML_DSA_65_RESERVED
 from chipcoin.interfaces.http_api import HttpApiApp
 from chipcoin.node.service import NodeService
 from chipcoin.node.runtime import NodeRuntime
@@ -454,3 +456,45 @@ def test_pq_policy_is_network_specific_without_changing_pow():
     _validate_transaction_outputs_for_activation(legacy_output, devnet)
     with pytest.raises(ContextualValidationError):
         _validate_transaction_outputs_for_activation(pq_output, devnet)
+
+
+def test_mainnet_template_rejects_chcq_scheme_rejected_by_consensus(tmp_path):
+    service = NodeService.open_sqlite(tmp_path / "mainnet-scheme.sqlite3", network="mainnet")
+    app = HttpApiApp(service)
+    public_key = bytes([42]) * 1312  # Synthetic public bytes; no private key or signing.
+    reserved_address = public_key_to_pq_address(public_key, scheme_id=SIG_SCHEME_ML_DSA_65_RESERVED)
+    valid_address = public_key_to_pq_address(public_key, scheme_id=SIG_SCHEME_ML_DSA_44)
+    context = ValidationContext(height=1, median_time_past=0, params=MAINNET_PARAMS,
+                                utxo_view=InMemoryUtxoView(), network="mainnet")
+    forbidden_output = Transaction(version=1, inputs=(), outputs=(TxOutput(1, reserved_address),))
+    with pytest.raises(ContextualValidationError, match="must use ML-DSA-44 CHCQ"):
+        _validate_transaction_outputs_for_activation(forbidden_output, context)
+    with pytest.raises(ValueError, match="ML-DSA-44 CHCQ"):
+        service.build_candidate_block(reserved_address)
+
+    rejected = _request(app, "/mining/get-block-template", {
+        "payout_address": reserved_address, "miner_id": "test-worker",
+    })
+    assert rejected["status"] == "400 Bad Request"
+    assert rejected["body"]["error"]["code"] == "invalid_request"
+    assert "ML-DSA-44 CHCQ" in rejected["body"]["error"]["message"]
+    assert service._mining_templates == {}
+    accepted = _request(app, "/mining/get-block-template", {
+        "payout_address": valid_address, "miner_id": "test-worker",
+    })
+    assert accepted["status"] == "200 OK"
+    assert accepted["body"]["network"] == "mainnet"
+    service.connection.close()
+
+    devnet = NodeService.open_sqlite(
+        tmp_path / "devnet-scheme.sqlite3", network="devnet",
+        params=replace(DEVNET_PARAMS, pq_support_activation_height=0),
+    )
+    devnet_context = ValidationContext(height=0, median_time_past=0, params=devnet.params,
+                                       utxo_view=InMemoryUtxoView(), network="devnet")
+    _validate_transaction_outputs_for_activation(forbidden_output, devnet_context)
+    devnet_result = _request(HttpApiApp(devnet), "/mining/get-block-template", {
+        "payout_address": reserved_address, "miner_id": "test-worker",
+    })
+    assert devnet_result["status"] == "200 OK"
+    devnet.connection.close()

@@ -84,7 +84,7 @@ from ..storage.node_registry import SQLiteNodeRegistryRepository
 from ..storage.peers import SQLitePeerRepository
 from ..utils.time import unix_time
 from ..crypto.addresses import parse_address
-from ..crypto.pq import get_signature_scheme, is_known_signature_scheme
+from ..crypto.pq import SIG_SCHEME_ML_DSA_44, get_signature_scheme, is_known_signature_scheme
 from ..pq.policy import is_pq_transaction
 from .mempool import AcceptedTransaction, MempoolManager, MempoolPolicy
 from .messages import GetBlocksMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector
@@ -670,6 +670,10 @@ class NodeService:
 
         tip = self.headers.get_tip()
         height = 0 if tip is None else tip.height + 1
+        # Match the Mainnet coinbase-output rule before issuing mining work.
+        if self.params.require_pq_standard_transactions and miner_address.startswith("CHCQ"):
+            if parse_address(miner_address).scheme_id != SIG_SCHEME_ML_DSA_44:
+                raise ValueError("Mainnet payout address must use an ML-DSA-44 CHCQ address.")
         if miner_address.startswith("CHCQ") and not pq_support_is_active(
             network=self.network, height=height, params=self.params,
         ):
