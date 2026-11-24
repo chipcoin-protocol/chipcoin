@@ -1,4 +1,4 @@
-# Chipcoin Mining Pool Integration Handbook v1.1
+# Chipcoin Mining Pool Integration Handbook v1.2
 
 **Reference Core:** [Mainnet v0.1.2](https://github.com/chipcoin-protocol/chipcoin/releases/tag/mainnet-v0.1.2), tag target `12e4dbc8974bd76885e30e6dacdf1b7be898e126`. The vectors were generated at ancestor `4c0984e65de31a50db7558d468167d513769bb20` and are verified unchanged against the release Core. The published Docker archive is AMD64; other architectures require a separately verified native build from the tagged source. This handbook is published separately from the immutable v0.1.2 tag. See [release alignment and evidence](RELEASE_ALIGNMENT.md).
 
@@ -9,7 +9,7 @@ Chipcoin is an independent SHA-256d proof-of-work chain. The 80-byte header, can
 1. Read the [operational guide](INTEGRATION_GUIDE.md) and [template contract](BLOCK_TEMPLATES.md).
 2. Implement [canonical block submission](BLOCK_SUBMISSION.md) and [coinbase rules](COINBASE_AND_PAYOUTS.md) before distributing work.
 3. Validate [CHCQ payout addresses](PQ_ADDRESSES.md) and run the [machine-readable vectors](TEST_VECTORS.md).
-4. Treat [Stratum translation](STRATUM_REFERENCE.md) as pool-specific, and keep [troubleshooting](TROUBLESHOOTING.md) nearby.
+4. Treat [Stratum translation](STRATUM_REFERENCE.md) as pool-specific, use the [wire-vector evidence checklist](STRATUM_VECTOR_REQUEST.md) before claiming interoperability, and keep [troubleshooting](TROUBLESHOOTING.md) nearby.
 
 The [original integration specification](../integrations/BLOCK_SUBMISSION_SPEC.md), [compatibility matrix](../integrations/BLOCK_SUBMISSION_COMPATIBILITY.md), and [pre-release test plan](../integrations/POOL_PRERELEASE_TEST_PLAN.md) describe the RC development history. This handbook describes the tagged release; use the matrix in [release alignment](RELEASE_ALIGNMENT.md) when comparing them.
 
@@ -53,4 +53,4 @@ After your pool builds a live candidate, send `{"serialized_block":"<complete he
 
 Bind the mining API to loopback or a private network with operator-controlled access. This release API has no built-in pool identity authentication or per-client rate limiter. Separate pool wallets and chain state by network; protect ML-DSA-44 wallet material, minimize request logging, back up persistent data consistently, and monitor tip/hash, template errors, accepted blocks, and reorgs. Never publish the mining API through an unauthenticated Internet proxy. See [operational details](INTEGRATION_GUIDE.md).
 
-The Core release is public and has been deployed on Mainnet nodes as recorded in [release alignment](RELEASE_ALIGNMENT.md). Operator feedback can be incorporated through later documentation updates; no third-party Stratum dialect is declared an official Chipcoin standard.
+The Core release is public and has been deployed on Mainnet nodes as recorded in [release alignment](RELEASE_ALIGNMENT.md). This revision adds an anonymized, operator-reported production backend configuration; its server source and wire transcript have not been independently inspected. No third-party Stratum dialect is declared an official Chipcoin standard.
