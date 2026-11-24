@@ -10,7 +10,7 @@ This public repository is centered on three components:
 
 New wizard and browser wallet installations select `mainnet` by default. Testnet and Devnet remain available through explicit selection. The same Core source and generic Compose file serve every network; use a separate environment file and runtime directory for each.
 
-Mainnet identity: Core `0.1.2` at commit `aa11445837d0c101e827e5f3619ea3f054ab6c21`, chain ID `chipcoin-mainnet-1`, genesis `00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f`, bits `0x1e0537e7`. The genesis incorporates “Die Welt ist alles, was der Fall ist.”
+Mainnet identity: [Core v0.1.2](https://github.com/chipcoin-protocol/chipcoin/releases/tag/mainnet-v0.1.2) at commit `12e4dbc8974bd76885e30e6dacdf1b7be898e126`, chain ID `chipcoin-mainnet-1`, genesis `00000238ef41c47992581c18fad544b4e24ecf1e79e7ffed629a215def4a337f`, bits `0x1e0537e7`. The genesis incorporates “Die Welt ist alles, was der Fall ist.”
 
 For a new installation use the Docker-first launcher:
 
@@ -779,6 +779,7 @@ The following legacy manual path is for Testnet. For a new Mainnet installation 
 - `docs/publication-checklist.md`
 - `docs/clean-install-checklist.md`
 - `docs/protocol.md`
+- [Mining Pool Integration Handbook](docs/mining-pools/README.md) — Core v0.1.2 templates, block submission, CHCQ payouts and reproducible vectors for pool operators.
 
 ## Known Limitations
 

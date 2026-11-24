@@ -1,0 +1,36 @@
+name: chipcoin-pool-handbook-devnet
+
+services:
+  node:
+    network_mode: bridge
+    build:
+      context: ${CHIPCOIN_CORE_CONTEXT:-../../..}
+      dockerfile: Dockerfile
+    image: chipcoin-pool-handbook:12e4dbc
+    command: ["chipcoin", "--network", "devnet", "--data", "/data/node.sqlite3", "run", "--listen-host", "127.0.0.1", "--listen-port", "0", "--http-host", "0.0.0.0", "--http-port", "8081", "--peer-discovery-enabled", "false"]
+    environment:
+      NODE_BOOTSTRAP_URL: ""
+      BOOTSTRAP_URL: ""
+      BOOTSTRAP_ANNOUNCE_ENABLED: "false"
+    ports:
+      - "127.0.0.1:18081:8081"
+    volumes:
+      - pool_lab_data:/data
+    restart: "no"
+
+  smoke:
+    network_mode: service:node
+    build:
+      context: ${CHIPCOIN_CORE_CONTEXT:-../../..}
+      dockerfile: Dockerfile
+    image: chipcoin-pool-handbook:12e4dbc
+    profiles: ["smoke"]
+    command: ["python", "/pool-smoke.py", "http://127.0.0.1:8081"]
+    depends_on: [node]
+    volumes:
+      - ./smoke_devnet.py:/pool-smoke.py:ro
+      - ../test-vectors/v1.json:/pool-vectors.json:ro
+    restart: "no"
+
+volumes:
+  pool_lab_data:
