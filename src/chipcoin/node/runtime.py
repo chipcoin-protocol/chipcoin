@@ -1309,6 +1309,18 @@ class NodeRuntime:
     async def _handle_inbound_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Accept and start an inbound peer session."""
 
+        try:
+            await self._accept_inbound_connection(reader, writer)
+        except asyncio.CancelledError:
+            await self._close_rejected_writer(writer)
+            raise
+        except Exception as exc:  # noqa: BLE001 - isolate one inbound connection
+            self.logger.warning("inbound connection setup failed error=%s", exc, exc_info=True)
+            await self._close_rejected_writer(writer)
+
+    async def _accept_inbound_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """Perform connection admission after the per-connection safety boundary."""
+
         endpoint = self._writer_peer_endpoint(writer)
         if self._active_inbound_session_count() >= self.max_inbound_sessions:
             self.logger.debug("inbound connection rejected peer=%s:%s reason=inbound_session_limit", endpoint.host, endpoint.port)
@@ -2072,15 +2084,40 @@ class NodeRuntime:
     async def _sync_scheduler_loop(self) -> None:
         """Drive headers-first sync, block scheduling, and stall reassignment."""
 
+        failure_count = 0
+        last_warning_at = -60.0
         while self._running:
             try:
                 await self._expire_stalled_block_requests()
                 await self._drive_header_sync()
                 await self._dispatch_block_downloads()
                 self._activate_ready_best_chain()
+                self._update_sync_status()
+                failure_count = 0
             except Exception as exc:  # noqa: BLE001
-                self.logger.warning("sync scheduler loop failed: %s", exc, exc_info=True)
-            self._update_sync_status()
+                failure_count += 1
+                now = asyncio.get_running_loop().time()
+                if now - last_warning_at >= 60:
+                    self.logger.warning(
+                        "sync scheduler iteration failed count=%s error=%s", failure_count, exc, exc_info=True,
+                    )
+                    last_warning_at = now
+                    failure_count = 0
+                # Do not leave the previous 'synced' snapshot visible after a
+                # failed critical iteration. Keep the existing phase vocabulary.
+                try:
+                    previous = self.service.sync_status()
+                    phase = (
+                        "syncing_post_anchor_delta" if self.service.snapshot_anchor() is not None
+                        else "syncing_from_genesis"
+                    )
+                except Exception as status_exc:  # noqa: BLE001 - keep the critical task alive
+                    self.logger.warning("sync status snapshot unavailable after scheduler error: %s", status_exc)
+                    previous = {}
+                    phase = "syncing_from_genesis"
+                previous["mode"] = "headers"
+                previous["phase"] = phase
+                self.service.set_runtime_sync_status(previous)
             await asyncio.sleep(self.sync_scheduler_interval)
 
     async def _drive_header_sync(self) -> None:
@@ -3057,14 +3094,9 @@ class NodeRuntime:
         """Return whether one peer or host-equivalent alias is still banned."""
 
         now = self.service.time_provider()
-        exact = self._known_peer_info(host, port)
-        for candidate in [exact, *self.service.list_peers()]:
-            if candidate is None or candidate.host != host:
-                continue
-            ban_until = candidate.ban_until
-            if ban_until is not None and ban_until > now:
-                return True, ban_until
-        return False, None
+        self.service.list_peers()  # Hydrate persisted bans, including malformed legacy endpoints.
+        ban_until = self.service.peerbook.active_host_ban(network=self.service.network, host=host, now=now)
+        return ban_until is not None, ban_until
 
     def _is_peer_currently_banned(self, host: str, port: int) -> bool:
         """Return whether one peer endpoint is under an active temporary ban."""

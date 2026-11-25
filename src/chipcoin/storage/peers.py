@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlite3 import Connection
 
-from ..node.peers import PeerInfo
+from ..node.peers import PeerInfo, is_usable_peer_endpoint
 from .db import sqlite_transaction
 
 
@@ -107,6 +107,8 @@ class SQLitePeerRepository(PeerRepository):
     def add(self, peer: PeerInfo) -> None:
         """Persist a peer endpoint idempotently."""
 
+        if not is_usable_peer_endpoint(peer.host, peer.port, peer.network):
+            raise ValueError("Peer host, port or network is invalid.")
         with sqlite_transaction(self.connection, phase="peer_add"):
             self.connection.execute(
                 """
@@ -278,7 +280,10 @@ class SQLitePeerRepository(PeerRepository):
         return [
             PeerInfo(
                 host=row["host"],
-                port=int(row["port"]),
+                # Legacy peer tables may contain NULL/invalid ports. Keep the
+                # original record (including bans/identity) quarantined in the
+                # peerbook instead of aborting the entire enumeration.
+                port=row["port"],
                 network=row["network"],
                 source=row["source"],
                 first_seen=None if row["first_seen"] is None else int(row["first_seen"]),

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import threading
 
 from .p2p.errors import protocol_error_class
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,16 @@ class PeerInfo:
 _PEER_SOURCE_PRIORITY = {"manual": 3, "seed": 2, "discovered": 1}
 
 
+def is_usable_peer_endpoint(host: object, port: object, network: object) -> bool:
+    """Accept only usable endpoint identities, never an unknown network."""
+
+    return (
+        isinstance(network, str) and bool(network)
+        and isinstance(host, str) and bool(host)
+        and type(port) is int and 0 < port <= 65535
+    )
+
+
 def preferred_peer_source(existing: str | None, incoming: str | None) -> str | None:
     """Return the strongest peer source without downgrading explicit operator intent."""
 
@@ -66,9 +81,17 @@ class PeerManager:
 
     def __init__(self) -> None:
         self._peers: dict[tuple[str, int, str], PeerInfo] = {}
+        self._lock = threading.RLock()
+        self._last_reported_invalid_count = 0
 
     def add(self, peer: PeerInfo) -> None:
         """Add a peer to the local peerbook."""
+
+        with self._lock:
+            self._add_locked(peer)
+
+    def _add_locked(self, peer: PeerInfo) -> None:
+        """Merge one record while holding the peerbook lock."""
 
         key = (peer.host, peer.port, peer.network)
         existing = self._peers.get(key)
@@ -122,15 +145,23 @@ class PeerManager:
     def remove(self, peer: PeerInfo) -> None:
         """Remove a peer from the local peerbook when present."""
 
-        self._peers.pop((peer.host, peer.port, peer.network), None)
+        with self._lock:
+            self._peers.pop((peer.host, peer.port, peer.network), None)
 
     def get(self, *, host: str, port: int, network: str) -> PeerInfo | None:
         """Return one peer by endpoint when present."""
 
-        return self._peers.get((host, port, network))
+        with self._lock:
+            return self._peers.get((host, port, network))
 
     def reset_session_state(self, *, network: str) -> None:
         """Clear runtime-only session markers for one network."""
+
+        with self._lock:
+            self._reset_session_state_locked(network=network)
+
+    def _reset_session_state_locked(self, *, network: str) -> None:
+        """Reset session flags while holding the peerbook lock."""
 
         for key, peer in list(self._peers.items()):
             if peer.network != network or peer.handshake_complete is not True:
@@ -168,7 +199,33 @@ class PeerManager:
     def list_all(self, *, network: str | None = None) -> list[PeerInfo]:
         """Return known peers, optionally filtered by network."""
 
-        peers = self._peers.values()
-        if network is not None:
-            peers = [peer for peer in peers if peer.network == network]
+        # Copy before iterating: HTTP requests and the asyncio runtime share this
+        # peerbook. Invalid legacy/in-flight endpoints remain stored for diagnosis,
+        # but must never be used for dialing, advertising or endpoint probing.
+        with self._lock:
+            snapshot = tuple(self._peers.values())
+        peers = []
+        invalid_count = 0
+        for peer in snapshot:
+            if not is_usable_peer_endpoint(peer.host, peer.port, peer.network):
+                invalid_count += 1
+                continue
+            if network is None or peer.network == network:
+                peers.append(peer)
+        if invalid_count != self._last_reported_invalid_count:
+            if invalid_count:
+                logger.warning("peerbook quarantined malformed endpoint records count=%s", invalid_count)
+            self._last_reported_invalid_count = invalid_count
         return sorted(peers, key=lambda peer: (peer.network, peer.host, peer.port))
+
+    def active_host_ban(self, *, network: str, host: str, now: int) -> int | None:
+        """Include quarantined endpoints when enforcing an existing host ban."""
+
+        with self._lock:
+            snapshot = tuple(self._peers.values())
+        bans = (
+            peer.ban_until for peer in snapshot
+            if peer.network == network and peer.host == host
+            and type(peer.ban_until) is int and peer.ban_until > now
+        )
+        return max(bans, default=None)

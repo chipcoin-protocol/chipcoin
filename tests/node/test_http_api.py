@@ -24,6 +24,7 @@ from chipcoin.crypto.pq import SIG_SCHEME_ML_DSA_44
 from chipcoin.interfaces.cli import main as cli_main
 from chipcoin.interfaces.http_api import HttpApiApp, QuietMiningStatusRequestHandler
 from chipcoin.node.service import NodeService
+from chipcoin.node.peers import PeerInfo
 from chipcoin.wallet.signer import TransactionSigner, wallet_key_from_mldsa44_seed
 from ..helpers import put_wallet_utxo, signed_payment, wallet_key
 
@@ -91,6 +92,17 @@ def _call_wsgi_raw(
     raw = b"".join(app(environ, start_response))
     payload = None if not raw else json.loads(raw.decode("utf-8"))
     return captured["status"], captured["headers"], payload
+
+
+def test_peer_endpoints_remain_available_with_malformed_in_memory_record() -> None:
+    with TemporaryDirectory() as tempdir:
+        service = _make_service(Path(tempdir) / "node.sqlite3")
+        service.peerbook.add(PeerInfo(host=None, port=8333, network="mainnet"))  # type: ignore[arg-type]
+        service.peerbook.add(PeerInfo(host="good.example", port=8333, network="mainnet"))
+        app = HttpApiApp(service)
+        for path in ("/v1/status", "/v1/peers", "/v1/peers/summary"):
+            status, _, _payload = _call_wsgi(app, method="GET", path=path)
+            assert status.startswith("200"), path
 
 
 def _block_from_template(template: dict[str, object]) -> Block:

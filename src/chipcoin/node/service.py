@@ -89,7 +89,7 @@ from ..pq.policy import is_pq_transaction
 from .mempool import AcceptedTransaction, MempoolManager, MempoolPolicy
 from .messages import GetBlocksMessage, GetHeadersMessage, HeadersMessage, InvMessage, InventoryVector
 from .mining import BlockTemplate, MiningCoordinator, build_coinbase_transaction, transaction_weight_units
-from .peers import PeerInfo, PeerManager, preferred_peer_source
+from .peers import PeerInfo, PeerManager, is_usable_peer_endpoint, preferred_peer_source
 from .snapshots import (
     LoadedSnapshot,
     SnapshotAnchor,
@@ -1448,6 +1448,8 @@ class NodeService:
     def add_peer(self, host: str, port: int, *, source: str = "discovered") -> PeerInfo:
         """Add a peer to the in-memory local peerbook."""
 
+        if not is_usable_peer_endpoint(host, port, self.network):
+            raise ValueError("Peer host or port is invalid.")
         existing = next(
             (peer for peer in self.peerbook.list_all(network=self.network) if peer.host == host and peer.port == port),
             None,
@@ -1872,6 +1874,8 @@ class NodeService:
     ) -> PeerInfo:
         """Persist the latest peer session metadata for diagnostics."""
 
+        if not is_usable_peer_endpoint(host, port, self.network):
+            raise ValueError("Peer host or port is invalid.")
         existing = next(
             (peer for peer in self.peerbook.list_all(network=self.network) if peer.host == host and peer.port == port),
             None,
