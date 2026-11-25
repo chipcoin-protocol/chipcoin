@@ -34,10 +34,10 @@ installed-file hashes would be needed to prove exact binary provenance.
 | Area | Confirmed mechanism | Correction | Residual uncertainty |
 | --- | --- | --- | --- |
 | Peerbook | `PeerManager.list_all()` sorted unvalidated `PeerInfo` fields. The network filter excludes `network=None` on a Mainnet call; the observed sort failure therefore requires another malformed sortable field, most plausibly host or port. | Validate new endpoint identities before storage; quarantine malformed legacy records in memory without deleting them; preserve their host bans; lock in-memory reads/writes and log only changes in malformed-record count. | The logs do not identify the exact malformed row or its insertion path. |
-| Headers | A stored `raw_header=None` reached `deserialize_block_header()` from `find_best_tip()`. The current create-table statement has `NOT NULL`, but an older existing table is not rebuilt by `CREATE TABLE IF NOT EXISTS`. | Treat missing/malformed payload as an unavailable header; exclude it from best-tip and header advertisement; keep sync in a non-synced phase; allow normal validated P2P header ingest to replace it. No database deletion or synthetic header is used. | A legacy schema, prior migration, or external writer could explain the NULL; the logs alone cannot distinguish these. |
-| Scheduler | `_update_sync_status()` ran outside the scheduler's exception boundary, ending the task permanently after that NULL. | Keep status update within the per-iteration boundary, publish a non-synced phase after a failure, retry on the existing interval, and aggregate traceback logging to once per minute while failing. | Persistent storage corruption still needs operator diagnosis; retries alone cannot repair arbitrary database damage. |
+| Headers | A stored `raw_header=None` reached `deserialize_block_header()` from `find_best_tip()`. The current create-table statement has `NOT NULL`, but an older existing table is not rebuilt by `CREATE TABLE IF NOT EXISTS`. | Treat NULL as incomplete and other invalid payloads as corrupt; exclude both from best-tip and header advertisement; keep sync in a non-synced phase. Scan ordered candidates until a valid header is found, without the earlier 32-row cap. A broken active-chain locator requests headers from genesis so normal validated P2P ingest can replace the bad row. No database deletion or synthetic header is used. | A legacy schema, prior migration, or external writer could explain the NULL; the logs alone cannot distinguish these. |
+| Scheduler | `_update_sync_status()` ran outside the scheduler's exception boundary, ending the task permanently after that NULL. | Keep status update within the per-iteration boundary, publish a non-synced phase after a failure, catch failures inside the fallback publication path, retry on the existing interval, and aggregate traceback logging to once per minute while failing. | Persistent storage corruption still needs operator diagnosis; retries alone cannot repair arbitrary database damage. |
 | P2P sessions | A callback failure could leave the handshake session open. Malformed UTF-8 in `version` raised `UnicodeDecodeError`, outside the protocol error class. | Close only the affected session on callback/reader failures; convert invalid UTF-8 to `CodecError`. | No distinct `version` parsing failure was demonstrated in the supplied logs. |
-| Block downloads | Timeout, release, and peer reassignment already exist in the scheduler and sync manager. | No rewrite. Scheduler continuity restores those mechanisms after a recoverable error. | A mixed-version network test with the unmodified release is still pending. |
+| Block downloads | Timeout, release, and peer reassignment already exist in the scheduler and sync manager. | No rewrite. Scheduler continuity restores those mechanisms after a recoverable error. | Independent testing on the operator's two nodes remains pending. |
 
 The `get-block-template` API is explicitly coded to build templates without a
 sync prerequisite. This RC does not alter that public contract. Pools should
@@ -61,14 +61,20 @@ pytest -q tests/node tests/storage tests/consensus tests/miner tests/rewards tes
 
 The test command is local and uses disposable databases. It does not connect to
 or write to public Mainnet. The extended Python 3.12 suite completed with
-**747 PASS** before the last logging-rate-limit test was added; that focused
-test then passed separately on Python 3.12 and 3.14. Under Python 3.14.6,
+**748 PASS** on the original candidate and **752 PASS** after the final
+release-gate corrections. Under Python 3.14.6,
 the focused non-socket tests completed with **53 PASS, 28 SKIP** because local
 TCP bind was restricted in the sandbox. Those 28 integration tests were
 rerun outside that restriction and completed with **28 PASS**. Thus Python
 3.14 has focused coverage, not a full-suite certification. The private
 three-node recovery test passed in that integration set. A mixed-version
-three-node deployment with the unmodified release remains **NOT_RUN**.
+three-node loopback test also passed with the official v0.1.2 source as one
+node and this RC as two nodes. It checked handshakes, ten-block catch-up,
+matching hash/work, and P2P repair of a legacy NULL header. This does not
+substitute for testing on the operator's hosts.
+See `tests/integration/resilience/README.md` for the reproducible local command.
+The final header-storage, scheduler-fallback and malformed-`version` focused
+tests completed with **10 PASS** under Python 3.14.6.
 
 Before the correction, synthetic tests reproduced the peer-sort `TypeError`,
 the NULL-header deserialization failure, a raw UTF-8 decode error in `version`,
