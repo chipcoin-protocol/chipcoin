@@ -111,7 +111,8 @@ class SQLiteHeaderRepository(HeaderRepository):
     def __init__(self, connection: Connection) -> None:
         self.connection = connection
         self.incomplete_best_header_seen = False
-        self._last_incomplete_header_hash: str | None = None
+        self.best_header_anomalies = {"incomplete": 0, "corrupt": 0}
+        self._last_header_anomaly_signature: tuple[str | None, int, int] | None = None
 
     def _decode_header(self, raw: object, block_hash: str) -> BlockHeader | None:
         """Treat absent legacy payloads as missing; reject mismatched payloads."""
@@ -254,12 +255,11 @@ class SQLiteHeaderRepository(HeaderRepository):
             FROM headers
             WHERE cumulative_work IS NOT NULL
             ORDER BY LENGTH(cumulative_work) DESC, cumulative_work DESC, COALESCE(height, -1) DESC, block_hash DESC
-            LIMIT 32
             """
-        ).fetchall()
+        )
         self.incomplete_best_header_seen = False
-        incomplete_count = 0
-        first_incomplete_hash = None
+        anomalies = {"incomplete": 0, "corrupt": 0}
+        first_anomaly_hash = None
         best = None
         for row in rows:
             block_hash = row["block_hash"]
@@ -268,16 +268,19 @@ class SQLiteHeaderRepository(HeaderRepository):
                 best = record
                 break
             self.incomplete_best_header_seen = True
-            incomplete_count += 1
-            if first_incomplete_hash is None:
-                first_incomplete_hash = block_hash
-        if first_incomplete_hash != self._last_incomplete_header_hash:
-            if first_incomplete_hash is not None:
+            category = "incomplete" if row["raw_header"] is None else "corrupt"
+            anomalies[category] += 1
+            if first_anomaly_hash is None:
+                first_anomaly_hash = block_hash
+        self.best_header_anomalies = anomalies
+        signature = (first_anomaly_hash, anomalies["incomplete"], anomalies["corrupt"])
+        if signature != self._last_header_anomaly_signature:
+            if first_anomaly_hash is not None:
                 logger.warning(
-                    "incomplete or malformed stored headers ignored count=%s first_hash=%s",
-                    incomplete_count, first_incomplete_hash,
+                    "unavailable stored headers ignored incomplete=%s corrupt=%s first_hash=%s",
+                    anomalies["incomplete"], anomalies["corrupt"], first_anomaly_hash,
                 )
-            self._last_incomplete_header_hash = first_incomplete_hash
+            self._last_header_anomaly_signature = signature
         return best
 
     def list_candidate_tips(self) -> tuple[HeaderRecord, ...]:
@@ -308,9 +311,13 @@ class SQLiteHeaderRepository(HeaderRepository):
         hashes: list[str] = []
         current_hash = tip.block_hash
         while current_hash and len(hashes) < max_count:
-            hashes.append(current_hash)
             record = self.get_record(current_hash)
-            if record is None or record.previous_block_hash == "00" * 32:
+            if record is None:
+                # A locator beyond a missing/corrupt active header would make
+                # the peer resume after the gap. Request from genesis instead.
+                return ()
+            hashes.append(current_hash)
+            if record.previous_block_hash == "00" * 32:
                 break
             current_hash = record.previous_block_hash
         return tuple(hashes)

@@ -121,6 +121,16 @@ def test_three_runtimes_recover_malformed_peer_and_incomplete_header_without_res
             target.peerbook.add(PeerInfo(host=None, port=8333, network="mainnet"))  # type: ignore[arg-type]
             assert SyncManager(node=target).sync_status()["phase"] == "syncing_from_genesis"
 
+            header_requests = 0
+            original_handle_getheaders = source.handle_getheaders
+
+            def count_header_request(message, limit=2000):
+                nonlocal header_requests
+                header_requests += 1
+                return original_handle_getheaders(message, limit=limit)
+
+            source.handle_getheaders = count_header_request
+
             source_runtime = NodeRuntime(service=source, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
             await source_runtime.start()
             target_runtime = NodeRuntime(
@@ -144,6 +154,7 @@ def test_three_runtimes_recover_malformed_peer_and_incomplete_header_without_res
                     timeout=20.0,
                 )
                 assert target.headers.get_record(blocks[0].block_hash()) is not None
+                assert header_requests > 0  # Repair arrived through the normal P2P getheaders path.
                 assert target.status(include_supply=False)["sync_phase"] == "synced"
                 assert target.status(include_supply=False)["cumulative_work"] == observer.status(include_supply=False)["cumulative_work"]
             finally:

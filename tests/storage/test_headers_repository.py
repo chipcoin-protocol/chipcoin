@@ -77,10 +77,12 @@ def test_find_best_tip_skips_legacy_null_header_without_losing_valid_tip() -> No
             )
             assert repository.find_best_tip().block_hash == genesis.block_hash()
             assert repository.incomplete_best_header_seen
+            assert repository.best_header_anomalies == {"incomplete": 1, "corrupt": 0}
             assert repository.get_record(candidate.block_hash()) is None
             repository.put(candidate.header, height=1, cumulative_work=2)
             assert repository.find_best_tip().block_hash == candidate.block_hash()
             assert not repository.incomplete_best_header_seen
+            assert repository.best_header_anomalies == {"incomplete": 0, "corrupt": 0}
         finally:
             connection.close()
 
@@ -94,10 +96,50 @@ def test_malformed_header_is_not_advertised_or_selected() -> None:
             candidate = _block(genesis.block_hash(), timestamp=1_700_000_001, nonce=2)
             repository.put(genesis.header, height=0, cumulative_work=1, is_main_chain=True)
             repository.put(candidate.header, height=1, cumulative_work=2, is_main_chain=True)
+            repository.set_tip(candidate.block_hash(), 1)
             connection.execute("UPDATE headers SET raw_header=? WHERE block_hash=?", (b"", candidate.block_hash()))
             assert repository.get_record(candidate.block_hash()) is None
             assert repository.find_best_tip().block_hash == genesis.block_hash()
             assert repository.incomplete_best_header_seen
+            assert repository.best_header_anomalies == {"incomplete": 0, "corrupt": 1}
             assert repository.get_headers_after((genesis.block_hash(),), "00" * 32) == ()
+            assert repository.list_locator_hashes() == ()
+        finally:
+            connection.close()
+
+
+def test_locator_does_not_skip_corrupt_active_ancestor() -> None:
+    with TemporaryDirectory() as tempdir:
+        connection = initialize_database(Path(tempdir) / "node.sqlite3")
+        try:
+            repository = SQLiteHeaderRepository(connection)
+            genesis = _block("00" * 32, timestamp=1_700_000_000, nonce=1)
+            middle = _block(genesis.block_hash(), timestamp=1_700_000_001, nonce=2)
+            tip = _block(middle.block_hash(), timestamp=1_700_000_002, nonce=3)
+            for height, block in enumerate((genesis, middle, tip)):
+                repository.put(block.header, height=height, cumulative_work=height + 1, is_main_chain=True)
+            repository.set_tip(tip.block_hash(), 2)
+            connection.execute("UPDATE headers SET raw_header=? WHERE block_hash=?", (b"corrupt", middle.block_hash()))
+            assert repository.list_locator_hashes() == ()
+        finally:
+            connection.close()
+
+
+def test_best_header_search_is_not_limited_to_32_malformed_rows() -> None:
+    with TemporaryDirectory() as tempdir:
+        connection = initialize_database(Path(tempdir) / "node.sqlite3")
+        try:
+            repository = SQLiteHeaderRepository(connection)
+            genesis = _block("00" * 32, timestamp=1_700_000_000, nonce=1)
+            repository.put(genesis.header, height=0, cumulative_work=1)
+            for nonce in range(40):
+                candidate = _block(genesis.block_hash(), timestamp=1_700_000_001 + nonce, nonce=nonce)
+                repository.put(candidate.header, height=1, cumulative_work=100 + nonce)
+                connection.execute(
+                    "UPDATE headers SET raw_header = ? WHERE block_hash = ?", (b"bad", candidate.block_hash()),
+                )
+            best = repository.find_best_tip()
+            assert best is not None and best.block_hash == genesis.block_hash()
+            assert repository.best_header_anomalies == {"incomplete": 0, "corrupt": 40}
         finally:
             connection.close()
