@@ -1,9 +1,12 @@
 # Scope of the Chipcoin Core MIT license
 
-The [MIT License](LICENSE) grants rights only in original Chipcoin material for
+The [MIT License](../../LICENSE) grants rights only in original Chipcoin material for
 which Claudio Francesconi has authority to grant those rights. Its copyright
-line does not claim ownership of third-party components. The standard MIT text
-is unchanged; the scope note in `LICENSE` points here.
+line does not claim ownership of third-party components. The `LICENSE` file
+contains only the standard MIT text so GitHub can recognize it. The
+[README licensing section](../../README.md#licensing) and this document specify the
+scope and exclusions; the absence of a scope note inside `LICENSE` does not
+extend the grant to excluded material.
 
 ## Included
 
@@ -22,7 +25,7 @@ is unchanged; the scope note in `LICENSE` points here.
   wallet will receive a separate licensing assessment.
 - Browser-wallet-specific documentation under `docs/*browser*`.
 - All of `vendor/mldsa-native/`. Its C implementation retains the upstream
-  [license choices](vendor/mldsa-native/LICENSE) and copyright notices; some
+  [license choices](../../vendor/mldsa-native/LICENSE) and copyright notices; some
   vendored documentation identifies `CC-BY-4.0`. Linking it into the Core does
   not transfer its copyright to Chipcoin.
 - Logos, icons, artwork, brand marks and the Chipcoin visual identity, wherever

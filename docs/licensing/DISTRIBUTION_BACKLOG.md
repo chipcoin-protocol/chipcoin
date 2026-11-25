@@ -1,6 +1,6 @@
 # Distribution licensing backlog
 
-This is separate from the [MIT license for original Core source](../../LICENSE_SCOPE.md).
+This is separate from the [MIT license for original Core source](LICENSE_SCOPE.md).
 It records follow-up work identified in the v0.1.2 licensing audit; it does
 not change the historical release or assert that existing artifacts are cleared.
 

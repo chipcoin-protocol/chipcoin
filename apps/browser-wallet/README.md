@@ -1,5 +1,11 @@
 # Chipcoin Browser Wallet
 
+> **Licensing scope:** The entire `apps/browser-wallet/` directory is excluded
+> from the Chipcoin Core MIT grant. No license for this browser wallet is
+> granted by the repository's root `LICENSE`; its source, tests, fixtures,
+> icons and packaged extensions await a separate licensing decision. See
+> [Core license scope](../../docs/licensing/LICENSE_SCOPE.md).
+
 Target network:
 - `mainnet` (default on new installation)
 - `devnet`

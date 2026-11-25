@@ -83,12 +83,12 @@ Operator-only or internal material may still exist in the tree, but it is not pa
 
 Original Chipcoin Core code, original scripts and tests, and original technical
 documentation are available under the [MIT License](LICENSE), copyright (c)
-2026 Claudio Francesconi. Read the [license scope and exclusions](LICENSE_SCOPE.md)
+2026 Claudio Francesconi. Read the [license scope and exclusions](docs/licensing/LICENSE_SCOPE.md)
 before reusing repository contents. In particular, the browser wallet, visual
 identity, vendored ML-DSA code, external or uncertain-origin vector data,
 complete Docker images and the separate website are **not** covered by this
 Core MIT grant. Third-party components retain their own licenses and notices;
-see [third-party licenses](THIRD_PARTY_LICENSES.md).
+see [third-party licenses](docs/licensing/THIRD_PARTY_LICENSES.md).
 
 ## Economic Baseline
 
