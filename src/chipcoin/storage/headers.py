@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from sqlite3 import Connection
 
 from ..consensus.models import BlockHeader
 from ..consensus.serialization import deserialize_block_header, serialize_block_header
 from .db import sqlite_transaction
+
+
+logger = logging.getLogger(__name__)
 
 
 class HeaderRepository:
@@ -106,6 +110,23 @@ class SQLiteHeaderRepository(HeaderRepository):
 
     def __init__(self, connection: Connection) -> None:
         self.connection = connection
+        self.incomplete_best_header_seen = False
+        self._last_incomplete_header_hash: str | None = None
+
+    def _decode_header(self, raw: object, block_hash: str) -> BlockHeader | None:
+        """Treat absent legacy payloads as missing; reject mismatched payloads."""
+
+        if raw is None:
+            return None
+        if not isinstance(raw, bytes) or len(raw) != 80:
+            return None
+        try:
+            header, offset = deserialize_block_header(raw)
+        except (TypeError, ValueError):
+            return None
+        if offset != len(raw) or header.block_hash() != block_hash:
+            return None
+        return header
 
     def put(
         self,
@@ -159,10 +180,7 @@ class SQLiteHeaderRepository(HeaderRepository):
         ).fetchone()
         if row is None:
             return None
-        header, offset = deserialize_block_header(row["raw_header"])
-        if offset != len(row["raw_header"]):
-            raise ValueError("Stored header payload contains trailing bytes.")
-        return header
+        return self._decode_header(row["raw_header"], block_hash)
 
     def get_tip(self) -> ChainTip | None:
         """Return the currently stored chain tip, if any."""
@@ -210,33 +228,57 @@ class SQLiteHeaderRepository(HeaderRepository):
         ).fetchone()
         if row is None:
             return None
-        header, offset = deserialize_block_header(row["raw_header"])
-        if offset != len(row["raw_header"]):
-            raise ValueError("Stored header payload contains trailing bytes.")
+        header = self._decode_header(row["raw_header"], block_hash)
+        if header is None:
+            return None
+        try:
+            height = None if row["height"] is None else int(row["height"])
+            cumulative_work = None if row["cumulative_work"] is None else int(row["cumulative_work"])
+        except (TypeError, ValueError):
+            return None
         return HeaderRecord(
             block_hash=row["block_hash"],
             header=header,
             previous_block_hash=row["previous_block_hash"],
-            height=None if row["height"] is None else int(row["height"]),
-            cumulative_work=None if row["cumulative_work"] is None else int(row["cumulative_work"]),
+            height=height,
+            cumulative_work=cumulative_work,
             is_main_chain=bool(row["is_main_chain"]),
         )
 
     def find_best_tip(self) -> HeaderRecord | None:
         """Return the best-known header by cumulative work and height."""
 
-        row = self.connection.execute(
+        rows = self.connection.execute(
             """
-            SELECT block_hash
+            SELECT block_hash, raw_header
             FROM headers
             WHERE cumulative_work IS NOT NULL
             ORDER BY LENGTH(cumulative_work) DESC, cumulative_work DESC, COALESCE(height, -1) DESC, block_hash DESC
-            LIMIT 1
+            LIMIT 32
             """
-        ).fetchone()
-        if row is None:
-            return None
-        return self.get_record(row["block_hash"])
+        ).fetchall()
+        self.incomplete_best_header_seen = False
+        incomplete_count = 0
+        first_incomplete_hash = None
+        best = None
+        for row in rows:
+            block_hash = row["block_hash"]
+            record = self.get_record(block_hash)
+            if record is not None:
+                best = record
+                break
+            self.incomplete_best_header_seen = True
+            incomplete_count += 1
+            if first_incomplete_hash is None:
+                first_incomplete_hash = block_hash
+        if first_incomplete_hash != self._last_incomplete_header_hash:
+            if first_incomplete_hash is not None:
+                logger.warning(
+                    "incomplete or malformed stored headers ignored count=%s first_hash=%s",
+                    incomplete_count, first_incomplete_hash,
+                )
+            self._last_incomplete_header_hash = first_incomplete_hash
+        return best
 
     def list_candidate_tips(self) -> tuple[HeaderRecord, ...]:
         """Return all known leaf headers ordered by cumulative work and height."""
@@ -297,9 +339,10 @@ class SQLiteHeaderRepository(HeaderRepository):
 
         result: list[BlockHeader] = []
         for row in rows:
-            header, offset = deserialize_block_header(row["raw_header"])
-            if offset != len(row["raw_header"]):
-                raise ValueError("Stored header payload contains trailing bytes.")
+            header = self._decode_header(row["raw_header"], row["block_hash"])
+            if header is None:
+                # Do not advertise descendants across a missing active header.
+                break
             result.append(header)
             if row["block_hash"] == stop_hash:
                 break

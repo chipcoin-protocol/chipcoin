@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import socket
 from dataclasses import replace
 from pathlib import Path
@@ -19,11 +20,14 @@ from chipcoin.miner.config import MinerWorkerConfig
 from chipcoin.miner.worker import MinerWorker
 from chipcoin.node.messages import EmptyPayload, MessageEnvelope
 from chipcoin.node.p2p.codec import encode_message
+from chipcoin.node.peers import PeerInfo
 from chipcoin.node.runtime import NodeRuntime, OutboundPeer
 from chipcoin.interfaces.seed_client import SeedPeer
 import chipcoin.node.runtime as runtime_module
 from chipcoin.node.snapshots import read_snapshot_payload, sign_snapshot_payload, write_snapshot_file
 from chipcoin.node.service import NodeService
+from chipcoin.node.sync import SyncManager
+from chipcoin.storage.db import SCHEMA_STATEMENTS
 from tests.helpers import signed_payment, wallet_key
 
 
@@ -87,6 +91,63 @@ def test_two_runtimes_complete_handshake_and_sync_blockchain() -> None:
                 await _wait_until(lambda: source_runtime.connected_peer_count() == 1 and target_runtime.connected_peer_count() == 1)
                 await _wait_until(lambda: target_service.chain_tip() is not None and target_service.chain_tip().block_hash == mined_block.block_hash())
             finally:
+                await target_runtime.stop()
+                await source_runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_three_runtimes_recover_malformed_peer_and_incomplete_header_without_restart() -> None:
+    """A private Mainnet-profile network recovers ten missing blocks."""
+
+    async def scenario() -> None:
+        with TemporaryDirectory() as tempdir:
+            source = _make_service(Path(tempdir) / "source.sqlite3", start_time=1_700_000_000)
+            target_path = Path(tempdir) / "target.sqlite3"
+            with sqlite3.connect(target_path) as legacy:
+                legacy.execute(SCHEMA_STATEMENTS[0].replace("raw_header BLOB NOT NULL", "raw_header BLOB"))
+            target = _make_service(target_path, start_time=1_700_001_000)
+            observer = _make_service(Path(tempdir) / "observer.sqlite3", start_time=1_700_002_000)
+            blocks = []
+            for _ in range(10):
+                block = _mine_block(source.build_candidate_block("CHCminer-a").block)
+                source.apply_block(block)
+                blocks.append(block)
+            target.headers.put(blocks[0].header, height=1, cumulative_work=1000)
+            target.headers.connection.execute(
+                "UPDATE headers SET raw_header = NULL WHERE block_hash = ?",
+                (blocks[0].block_hash(),),
+            )
+            target.peerbook.add(PeerInfo(host=None, port=8333, network="mainnet"))  # type: ignore[arg-type]
+            assert SyncManager(node=target).sync_status()["phase"] == "syncing_from_genesis"
+
+            source_runtime = NodeRuntime(service=source, listen_host="127.0.0.1", listen_port=0, ping_interval=0.2)
+            await source_runtime.start()
+            target_runtime = NodeRuntime(
+                service=target, listen_host="127.0.0.1", listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", source_runtime.bound_port)],
+                connect_interval=0.1, ping_interval=0.2, sync_scheduler_interval=0.1,
+            )
+            observer_runtime = NodeRuntime(
+                service=observer, listen_host="127.0.0.1", listen_port=0,
+                outbound_peers=[OutboundPeer("127.0.0.1", source_runtime.bound_port)],
+                connect_interval=0.1, ping_interval=0.2, sync_scheduler_interval=0.1,
+            )
+            await target_runtime.start()
+            await observer_runtime.start()
+            try:
+                await _wait_until(
+                    lambda: target.chain_tip() is not None
+                    and observer.chain_tip() is not None
+                    and target.chain_tip().block_hash == blocks[-1].block_hash()
+                    and observer.chain_tip().block_hash == blocks[-1].block_hash(),
+                    timeout=20.0,
+                )
+                assert target.headers.get_record(blocks[0].block_hash()) is not None
+                assert target.status(include_supply=False)["sync_phase"] == "synced"
+                assert target.status(include_supply=False)["cumulative_work"] == observer.status(include_supply=False)["cumulative_work"]
+            finally:
+                await observer_runtime.stop()
                 await target_runtime.stop()
                 await source_runtime.stop()
 

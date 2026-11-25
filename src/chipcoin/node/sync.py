@@ -147,6 +147,11 @@ class SyncManager:
             mode = "blocks"
         else:
             mode = "synced"
+        if getattr(self.node.headers, "incomplete_best_header_seen", False):
+            # A stronger stored record without a valid header cannot establish
+            # a validated best chain. Keep mining readiness closed while P2P
+            # requests the missing header again.
+            mode = "headers"
         if snapshot_anchor is not None:
             if mode in {"headers", "blocks"}:
                 phase = "syncing_post_anchor_delta"
