@@ -77,4 +77,3 @@ def test_persistent_status_error_is_rate_limited_and_stays_degraded(tmp_path: Pa
     asyncio.run(scenario())
     assert caplog.text.count("sync scheduler iteration failed") == 1
     assert caplog.text.count("sync status snapshot unavailable") == 1
-
