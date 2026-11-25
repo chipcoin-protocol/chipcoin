@@ -2106,20 +2106,27 @@ class NodeRuntime:
                     failure_count = 0
                 # Do not leave the previous 'synced' snapshot visible after a
                 # failed critical iteration. Keep the existing phase vocabulary.
+                degraded = {"mode": "headers", "phase": "syncing_from_genesis"}
                 try:
                     previous = self.service.sync_status()
-                    phase = (
-                        "syncing_post_anchor_delta" if self.service.snapshot_anchor() is not None
-                        else "syncing_from_genesis"
-                    )
+                    if not isinstance(previous, dict):
+                        raise TypeError("sync status snapshot is not a mapping")
+                    degraded.update(previous)
+                    if self.service.snapshot_anchor() is not None:
+                        degraded["phase"] = "syncing_post_anchor_delta"
                 except Exception as status_exc:  # noqa: BLE001 - keep the critical task alive
                     if warn_now:
                         self.logger.warning("sync status snapshot unavailable after scheduler error: %s", status_exc)
-                    previous = {}
-                    phase = "syncing_from_genesis"
-                previous["mode"] = "headers"
-                previous["phase"] = phase
-                self.service.set_runtime_sync_status(previous)
+                degraded["mode"] = "headers"
+                degraded["phase"] = (
+                    "syncing_post_anchor_delta" if degraded["phase"] == "syncing_post_anchor_delta"
+                    else "syncing_from_genesis"
+                )
+                try:
+                    self.service.set_runtime_sync_status(degraded)
+                except Exception as marker_exc:  # noqa: BLE001 - preserve scheduler continuity
+                    if warn_now:
+                        self.logger.error("degraded sync status could not be published: %s", marker_exc)
             await asyncio.sleep(self.sync_scheduler_interval)
 
     async def _drive_header_sync(self) -> None:
