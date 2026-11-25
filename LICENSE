@@ -20,7 +20,4 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Scope note (not part of the MIT License text): this license applies only to the
-original Chipcoin material identified in LICENSE_SCOPE.md. Third-party code,
-the browser wallet, visual identity, certain fixtures, and distributed images
-retain separate terms or are excluded. See LICENSE_SCOPE.md.
+Scope and exclusions: see LICENSE_SCOPE.md.
