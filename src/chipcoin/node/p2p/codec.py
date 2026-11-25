@@ -356,7 +356,10 @@ def _decode_string(buffer: bytes, offset: int) -> tuple[str, int]:
     """Decode a UTF-8 string using a varint length prefix."""
 
     raw, offset = _decode_bytes(buffer, offset)
-    return raw.decode("utf-8"), offset
+    try:
+        return raw.decode("utf-8"), offset
+    except UnicodeDecodeError as exc:
+        raise CodecError("Invalid UTF-8 in P2P string field.") from exc
 
 
 def _encode_hash(hash_hex: str) -> bytes:

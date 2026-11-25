@@ -259,6 +259,8 @@ class PeerProtocol:
             return
         except (P2PError, TransportError) as exc:
             await self.close(reason=str(exc), error=exc)
+        except Exception as exc:  # noqa: BLE001 - never strand a session on a local callback failure
+            await self.close(reason="Peer session processing failed.", error=exc)
 
     async def _handle_version(self, payload: VersionMessage) -> None:
         """Handle peer version negotiation and verack exchange."""
@@ -317,4 +319,17 @@ class PeerProtocol:
         if complete:
             self._handshake_event.set()
             if self.on_handshake_complete is not None and self._handshake_callback_task is None:
-                self._handshake_callback_task = asyncio.create_task(self.on_handshake_complete(self))
+                self._handshake_callback_task = asyncio.create_task(self._run_handshake_callback())
+
+    async def _run_handshake_callback(self) -> None:
+        """Close the session if its runtime registration callback fails."""
+
+        callback = self.on_handshake_complete
+        if callback is None:
+            return
+        try:
+            await callback(self)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - callback may access peerbook/storage
+            await self.close(reason="Local handshake callback failed.", error=exc)

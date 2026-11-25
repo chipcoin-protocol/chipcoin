@@ -194,6 +194,41 @@ def test_ping_pong_roundtrip_over_local_session() -> None:
     asyncio.run(scenario())
 
 
+def test_handshake_callback_failure_closes_only_affected_session() -> None:
+    async def scenario() -> None:
+        outbound_transport, inbound_transport = _make_transport_pair()
+
+        async def broken_callback(_session: PeerProtocol) -> None:
+            raise TypeError("synthetic peerbook failure")
+
+        outbound = PeerProtocol(
+            transport=outbound_transport,
+            identity=LocalPeerIdentity(
+                node_id="node-a", network="mainnet", start_height=0,
+                user_agent="test", network_magic=MAINNET_CONFIG.magic,
+            ),
+            inbound=False, handshake_timeout=2.0,
+        )
+        inbound = PeerProtocol(
+            transport=inbound_transport,
+            identity=LocalPeerIdentity(
+                node_id="node-b", network="mainnet", start_height=0,
+                user_agent="test", network_magic=MAINNET_CONFIG.magic,
+            ),
+            inbound=True, handshake_timeout=2.0,
+            on_handshake_complete=broken_callback,
+        )
+        try:
+            await asyncio.gather(outbound.start(), inbound.start())
+            await asyncio.wait_for(inbound.wait_closed(), timeout=0.5)
+            assert inbound.state.closed
+        finally:
+            await outbound.close()
+            await inbound.close()
+
+    asyncio.run(scenario())
+
+
 def test_handshake_rejects_network_mismatch() -> None:
     async def scenario() -> None:
         outbound_transport, inbound_transport = _make_transport_pair()

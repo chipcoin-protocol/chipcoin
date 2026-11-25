@@ -78,6 +78,21 @@ def test_version_message_roundtrip() -> None:
     assert decoded == message
 
 
+def test_version_rejects_invalid_utf8_as_protocol_error() -> None:
+    message = MessageEnvelope(
+        command="version",
+        payload=VersionMessage(
+            protocol_version=70015, network="mainnet", chain_id="chipcoin-mainnet-1",
+            genesis_hash="00" * 32, node_id="peer", start_height=0, user_agent="test", relay=True,
+        ),
+    )
+    frame = bytearray(encode_message(message, magic=MAINNET_CONFIG.magic))
+    frame[29] = 0xFF  # First byte of the length-prefixed network string.
+    frame[20:24] = double_sha256(frame[24:])[:4]
+    with pytest.raises(CodecError):
+        decode_message(bytes(frame), expected_magic=MAINNET_CONFIG.magic)
+
+
 def test_empty_message_roundtrip_for_verack_and_getaddr() -> None:
     verack = MessageEnvelope(command="verack", payload=EmptyPayload())
     getaddr = MessageEnvelope(command="getaddr", payload=EmptyPayload())
