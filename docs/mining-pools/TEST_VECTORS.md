@@ -21,7 +21,17 @@ Fixture SHA-256: `121f67afb716678790408906dbe12979449a26081e2907c9d475177dbd2e5a
 
 The verifier deserializes the synthetic full block, checks PoW, validates it statelessly, and **accepts it contextually through `NodeService.accept_full_block` on a fresh temporary Devnet database**. It also checks idempotent duplicate submission, a Merkle mutation, a corrupted CHCQ checksum, and Mainnet genesis PoW. The sample Devnet block is **not** proof that a live node with a different tip or timestamp will accept those bytes. The isolated [smoke client](examples/smoke_devnet.py) exercises actual HTTP assembly/submission; for fork and retry tests use [`tests/integration/pool/test_block_submission.py`](../../tests/integration/pool/test_block_submission.py). The JSON's `legacy_submit` and `full_submit` objects are request envelopes, **not** proof that those exact bytes are valid for an arbitrary live tip.
 
-The existing locktime mutation verifies Core transaction bytes and TXID, but does **not** supply a `mining.notify`/`mining.submit` transcript. Julien reports a separate synthetic private-Devnet file, `chc_stratum_vector.json`, but it has not been acquired in this checkout. The [Stratum vector evidence checklist](STRATUM_VECTOR_REQUEST.md) records what must be checked before inclusion. No new expected hashes or block hex were inserted into `v1.json`; the operator's reported 68/68 byte-identical reconstructions, 41 accepted solutions and 27 second solutions stale at the same height are **not** locally verified vector results.
+## Crypto Connection Stratum vector (synthetic private Devnet)
+
+Julien supplied the [original JSON bytes](test-vectors/chc_stratum_vector.json) from a private two-node Devnet using Core v0.1.2 (`12e4dbc8974bd76885e30e6dacdf1b7be898e126`), Miningcore Chipcoin module v6.1 and CryptoConnectionMiner 0.10.1. The file is **32,528 bytes**, MD5 `1784e3cc51bb48c256e8cac6badd60f4`, SHA-256 `924fc787d55f820552973a05586a0123fedd9cf87914ca068623b70409d727a6`. It is not a public Mainnet block. Its two non-coinbase transactions use legacy Devnet encoding; they are **not** examples of Mainnet ML-DSA-44-signed transactions.
+
+From this handbook checkout, using a clean checkout of the tagged Core:
+
+```sh
+PYTHONPATH=/absolute/path/to/chipcoin-v0.1.2/src python3 docs/mining-pools/test-vectors/verify_stratum.py
+```
+
+The [verifier](test-vectors/verify_stratum.py) checks the original file checksum and JSON, `mining.notify`/`mining.submit` consistency, `coinb1 || extranonce1 || extranonce2 || coinb2`, coinbase locktime/TXID, ordered transaction bytes and TXIDs, Merkle branches/root, the exact 80-byte header, SHA-256d hash and PoW target, and the 717-byte canonical block. Canonical parsers must consume every byte; reserialization must match. It does **not** change expected bytes in the JSON or claim that the sample would be accepted by an unrelated live tip. The included 68/41/27 summary is checked for internal consistency only; node acceptance and stale outcomes remain Julien's historical report without the original Devnet logs. See [evidence notes](STRATUM_VECTOR_REQUEST.md).
 
 Header encoding is `version:uint32 LE | previous_hash:32 raw bytes in displayed hex order | merkle_root:32 raw bytes in displayed hex order | timestamp:uint32 LE | bits:uint32 LE | nonce:uint32 LE`. Hash the 80 bytes twice with SHA-256; treat the raw digest as a **big-endian** integer. Compact `bits` expands with [`bits_to_target`](../../src/chipcoin/consensus/pow.py); compare digest integer `<= target`. No display-byte reversal is performed by this Core.
 

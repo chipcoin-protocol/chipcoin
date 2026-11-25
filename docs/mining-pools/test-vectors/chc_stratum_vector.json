@@ -1,0 +1,739 @@
+{
+  "title": "Chipcoin Stratum test vector - Crypto Connection",
+  "nature": "synthetic isolated Devnet test (private two-node devnet, no mainnet data, no real miner)",
+  "generated_utc": "2026-11-24T22:59:05Z",
+  "network": "devnet",
+  "core": {
+    "tag": "mainnet-v0.1.2",
+    "commit": "12e4dbc8974bd76885e30e6dacdf1b7be898e126"
+  },
+  "pool_software": "Miningcore (Crypto Connection fork), Chipcoin module test build v6.1",
+  "miner_software": "CryptoConnectionMiner 0.10.1 (CPU)",
+  "payout_address_note": "public test address of the bench; no other address appears",
+  "conventions": {
+    "notify_params": "[job_id, prevhash (header bytes, each 4-byte word reversed), coinb1, coinb2, merkle_branches, version, nbits, ntime, clean_jobs]",
+    "version_nbits_ntime_nonce": "8 hex chars of a big-endian u32 on the wire; stored little-endian in the header",
+    "extranonce": "extranonce1 (2 bytes, per connection) || extranonce2 (2 bytes) = coinbase locktime, u32 little-endian",
+    "coinbase": "coinb1 || extranonce1 || extranonce2 || coinb2 ; coinb1 = u32le version | varint 0 inputs | varint n outputs | n*(u64le amount | varint len | recipient UTF-8) ; coinb2 = varint count | sorted (key, value) UTF-8 pairs",
+    "merkle": "Bitcoin-style, sha256d, odd levels duplicate the last hash; hashes in natural byte order (no reversal)",
+    "header": "u32le version | prev hash (32) | merkle root (32) | u32le ntime | u32le bits | u32le nonce",
+    "pow": "sha256d(header) read as a big-endian integer <= target(bits)",
+    "share_target": "2^224 / stratum difficulty",
+    "block": "header | varint(1 + n) | coinbase | n raw transactions in template order"
+  },
+  "vector": {
+    "connection": {
+      "subscribe_request": "{\"id\":1,\"method\":\"mining.subscribe\",\"params\":[\"CryptoConnectionMiner/0.10.1\"]}",
+      "subscribe_response": "{\"result\":[[[\"mining.set_difficulty\",\"0HNQAFIS7KR5L\"],[\"mining.notify\",\"0HNQAFIS7KR5L\"]],\"a001\",2],\"id\":1}",
+      "extranonce1": "a001",
+      "extranonce2_size": 2,
+      "authorize_request": "{\"id\":2,\"method\":\"mining.authorize\",\"params\":[\"CHCCMpj3Rsy5eUKkLFcpZQxjLz9cc4Wkx8RtM.cpu1\",\"x\"]}",
+      "set_difficulty": "{\"jsonrpc\":\"2.0\",\"method\":\"mining.set_difficulty\",\"params\":[4E-06],\"id\":null}",
+      "stratum_difficulty": 4e-06,
+      "share_target_hex": "0003d09000000000000000000000000000000000000000000000000000000000"
+    },
+    "template": {
+      "template_id": "4f8802f09b90caf75c0916892f574d13",
+      "height": 18,
+      "previous_block_hash": "0002620c3ea4cb434ee59fba91dba7f913f35976a78f2ea7ac099659b7ea0459",
+      "version": 1,
+      "bits": 521142271,
+      "curtime": 1795560382,
+      "coinbase_tx": {
+        "metadata": {
+          "coinbase": "true",
+          "height": "18"
+        },
+        "outputs": [
+          {
+            "amount_chipbits": 5000200000,
+            "recipient": "CHCCMpj3Rsy5eUKkLFcpZQxjLz9cc4Wkx8RtM"
+          }
+        ],
+        "version": 1
+      },
+      "transactions": [
+        {
+          "txid": "d05991196a9a4a4f6d31fca86519ac17c5c6090c1f6d3ad0eee6babece1f74af",
+          "raw_hex": "010000000149935b707884915d98599407105a2e05ae80703b85b9bc75cd9306093001a5550000000046304402205da7ebde7fd269b466a92bf33e2eb85dca80f2e40c2fa4c51bbde83f34af4b4d022043da68e7f9591e2b5c262be77cc00880d70fdf722b935749a5fe6873998e122e21034646f6c31f251551ee61cde5598d17b70d6dc44b8ca261356973fa67ad53d759ffffffff02809698000000000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744de0d46b290100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744d0000000001046b696e64077061796d656e74"
+        },
+        {
+          "txid": "347a6b084c2ee3663dc7d5ecb8d7ae738eda912b5a85b815c798718c2cde9639",
+          "raw_hex": "010000000129119ca4cf26b6613731fccb8924f6ff27722596fcaff1a7ef1e5a1d72b0f93f00000000473045022100bb575a5405691ab18775d0336896a0d2955f24687eb2f4f48752293858ea193002202c483952314237e092bdade9c0db9ffa34e08ff8b78e94368c4aeb5ddb996e1e21034646f6c31f251551ee61cde5598d17b70d6dc44b8ca261356973fa67ad53d759ffffffff02809698000000000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744de0d46b290100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744d0000000001046b696e64077061796d656e74"
+        }
+      ]
+    },
+    "mining.notify": "{\"jsonrpc\":\"2.0\",\"method\":\"mining.notify\",\"params\":[\"0000000b\",\"0c62020043cba43eba9fe54ef9a7db917659f313a72e8fa7599609ac5904eab7\",\"01000000000140ff082a0100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744d\",\"0308636f696e62617365047472756506686569676874023138086d696e65725f69641663727970746f2d636f6e6e656374696f6e2d74657374\",[\"d05991196a9a4a4f6d31fca86519ac17c5c6090c1f6d3ad0eee6babece1f74af\",\"1289e38aa8119abfd277fc5a38c206d79621dc8a778ef1eec3fd625433fe0d9a\"],\"00000001\",\"1f0fffff\",\"6b0613be\",true],\"id\":null}",
+    "mining.submit": "{\"id\":157,\"method\":\"mining.submit\",\"params\":[\"CHCCMpj3Rsy5eUKkLFcpZQxjLz9cc4Wkx8RtM.cpu1\",\"0000000b\",\"0006\",\"6b0613be\",\"000058be\"]}",
+    "submit_reply": "{\"result\":true,\"id\":157}",
+    "derived": {
+      "prevhash_header_order": "0002620c3ea4cb434ee59fba91dba7f913f35976a78f2ea7ac099659b7ea0459",
+      "extranonce1_plus_extranonce2": "a0010006",
+      "coinbase_locktime_u32": 100663712,
+      "coinbase_hex": "01000000000140ff082a0100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744da00100060308636f696e62617365047472756506686569676874023138086d696e65725f69641663727970746f2d636f6e6e656374696f6e2d74657374",
+      "coinbase_txid": "76f9fff4922c626d9edaf3fc3693c2d1d97578a9588ffc880eafb05f8d5cef45",
+      "coinbase_decoded": {
+        "version": 1,
+        "inputs": 0,
+        "outputs": [
+          {
+            "amount_chipbits": 5000200000,
+            "recipient": "CHCCMpj3Rsy5eUKkLFcpZQxjLz9cc4Wkx8RtM"
+          }
+        ],
+        "locktime": 100663712,
+        "metadata": {
+          "coinbase": "true",
+          "height": "18",
+          "miner_id": "crypto-connection-test"
+        }
+      },
+      "merkle_branches": [
+        "d05991196a9a4a4f6d31fca86519ac17c5c6090c1f6d3ad0eee6babece1f74af",
+        "1289e38aa8119abfd277fc5a38c206d79621dc8a778ef1eec3fd625433fe0d9a"
+      ],
+      "merkle_root": "a244e9605cc404793af2fee3ce6c16c71bb2c9db8c3e7cbc1b0a2b9a7fadc6d0",
+      "header_fields": {
+        "version_u32le": "01000000",
+        "prev_block_hash": "0002620c3ea4cb434ee59fba91dba7f913f35976a78f2ea7ac099659b7ea0459",
+        "merkle_root": "a244e9605cc404793af2fee3ce6c16c71bb2c9db8c3e7cbc1b0a2b9a7fadc6d0",
+        "ntime_u32le": "be13066b",
+        "bits_u32le": "ffff0f1f",
+        "nonce_u32le": "be580000"
+      },
+      "header_hex": "010000000002620c3ea4cb434ee59fba91dba7f913f35976a78f2ea7ac099659b7ea0459a244e9605cc404793af2fee3ce6c16c71bb2c9db8c3e7cbc1b0a2b9a7fadc6d0be13066bffff0f1fbe580000",
+      "block_hash": "00017439c0504bad679db1706fc14080f9e560f6e0daa195b0c94afbf93b5b28",
+      "block_target_hex": "000fffff00000000000000000000000000000000000000000000000000000000",
+      "block_hex": "010000000002620c3ea4cb434ee59fba91dba7f913f35976a78f2ea7ac099659b7ea0459a244e9605cc404793af2fee3ce6c16c71bb2c9db8c3e7cbc1b0a2b9a7fadc6d0be13066bffff0f1fbe5800000301000000000140ff082a0100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744da00100060308636f696e62617365047472756506686569676874023138086d696e65725f69641663727970746f2d636f6e6e656374696f6e2d74657374010000000149935b707884915d98599407105a2e05ae80703b85b9bc75cd9306093001a5550000000046304402205da7ebde7fd269b466a92bf33e2eb85dca80f2e40c2fa4c51bbde83f34af4b4d022043da68e7f9591e2b5c262be77cc00880d70fdf722b935749a5fe6873998e122e21034646f6c31f251551ee61cde5598d17b70d6dc44b8ca261356973fa67ad53d759ffffffff02809698000000000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744de0d46b290100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744d0000000001046b696e64077061796d656e74010000000129119ca4cf26b6613731fccb8924f6ff27722596fcaff1a7ef1e5a1d72b0f93f00000000473045022100bb575a5405691ab18775d0336896a0d2955f24687eb2f4f48752293858ea193002202c483952314237e092bdade9c0db9ffa34e08ff8b78e94368c4aeb5ddb996e1e21034646f6c31f251551ee61cde5598d17b70d6dc44b8ca261356973fa67ad53d759ffffffff02809698000000000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744de0d46b290100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744d0000000001046b696e64077061796d656e74",
+      "block_size_bytes": 717
+    },
+    "pool_to_node": {
+      "submit_block_request": {
+        "template_id": "4f8802f09b90caf75c0916892f574d13",
+        "serialized_block": "010000000002620c3ea4cb434ee59fba91dba7f913f35976a78f2ea7ac099659b7ea0459a244e9605cc404793af2fee3ce6c16c71bb2c9db8c3e7cbc1b0a2b9a7fadc6d0be13066bffff0f1fbe5800000301000000000140ff082a0100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744da00100060308636f696e62617365047472756506686569676874023138086d696e65725f69641663727970746f2d636f6e6e656374696f6e2d74657374010000000149935b707884915d98599407105a2e05ae80703b85b9bc75cd9306093001a5550000000046304402205da7ebde7fd269b466a92bf33e2eb85dca80f2e40c2fa4c51bbde83f34af4b4d022043da68e7f9591e2b5c262be77cc00880d70fdf722b935749a5fe6873998e122e21034646f6c31f251551ee61cde5598d17b70d6dc44b8ca261356973fa67ad53d759ffffffff02809698000000000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744de0d46b290100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744d0000000001046b696e64077061796d656e74010000000129119ca4cf26b6613731fccb8924f6ff27722596fcaff1a7ef1e5a1d72b0f93f00000000473045022100bb575a5405691ab18775d0336896a0d2955f24687eb2f4f48752293858ea193002202c483952314237e092bdade9c0db9ffa34e08ff8b78e94368c4aeb5ddb996e1e21034646f6c31f251551ee61cde5598d17b70d6dc44b8ca261356973fa67ad53d759ffffffff02809698000000000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744de0d46b290100000025434843434d706a335273793565554b6b4c4663705a51786a4c7a39636334576b783852744d0000000001046b696e64077061796d656e74",
+        "miner_id": "crypto-connection-test"
+      },
+      "submit_block_response": {
+        "accepted": true,
+        "became_tip": true,
+        "block_hash": "00017439c0504bad679db1706fc14080f9e560f6e0daa195b0c94afbf93b5b28",
+        "reason": "accepted"
+      }
+    },
+    "active_chain": {
+      "http://127.0.0.1:38187": true,
+      "http://127.0.0.1:38188": true
+    },
+    "notes": [],
+    "checks_failed": []
+  },
+  "summary": {
+    "accepted_shares_rebuilt": 68,
+    "share_check_failures": [],
+    "blocks_rebuilt": 68,
+    "blocks_all_checks_passed": 68,
+    "blocks_accepted_by_node": 41,
+    "blocks_stale_not_accepted": 27,
+    "blocks_resubmitted_under_fresh_identical_template": 0,
+    "blocks": [
+      {
+        "height": 12,
+        "block_hash": "00004e18ad322d39e16f3cda63dd264682d78fe6ec5ac699029178eee71f3e52",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 13,
+        "block_hash": "000304a739968e8a9b2b585624af9a4c10ebdd3f1a8510c5ca90b89d96c38839",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 13,
+        "block_hash": "0003bab2537bc8e1f4f2c40d1f7a896305674049bbdabfc4091e0a95419c7f93",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 14,
+        "block_hash": "0000a5f2314b87e617d4c0d30f994ce106ad963e714b74623d49d3fd2bd33128",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 14,
+        "block_hash": "0001b0b6e95a62f37c488eb0297c48005ca4846a21763a59d9276352a8ceaa19",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 15,
+        "block_hash": "000054074afe94fe73129687c07f7681cb4b91f2c6fee3f6ac12752948034d6a",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 15,
+        "block_hash": "0002462c7229f0922f168532289df6b04eff33a1e94137575e739dc16bd80634",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 16,
+        "block_hash": "00029f6883d087c2b0618fdc46cd6b56531a3b34c0db113b8849426b74302d7f",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 17,
+        "block_hash": "0002620c3ea4cb434ee59fba91dba7f913f35976a78f2ea7ac099659b7ea0459",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 17,
+        "block_hash": "00012b39cc8ecf078305f3780dbf78a22d05791ab5eee4139c6da4f061b06abb",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 18,
+        "block_hash": "00017439c0504bad679db1706fc14080f9e560f6e0daa195b0c94afbf93b5b28",
+        "non_coinbase_txs": 2,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 18,
+        "block_hash": "00006d50c02fbe088561d4926c8501d8331545c988cb021de9c33adf0d418dcf",
+        "non_coinbase_txs": 2,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 19,
+        "block_hash": "0002fb6decdf6c403e5af3c8b0e8b6422531477f1b0d9ba8d8028c991a6d519d",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 19,
+        "block_hash": "0003cd7df655dd8317da14dbbb6757f86b2102cc6b36676b9feb4aa5bbea6758",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 20,
+        "block_hash": "000003420bb7b5dafad590458cd8de956afe352bece8bf87f0067a1548c9e095",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 20,
+        "block_hash": "0000d3975f47d17a457356dda36bdcf68e0d50cc355c979036aaaa7ac1a529bc",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 21,
+        "block_hash": "0000848c9989a219252e4a43dace28f899a7d39177413f53e6803e4cb53f9fd7",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 21,
+        "block_hash": "000220fcaac60dfffd311e7e74a924622823c5a389fc18ba2adc42ef89e8d15c",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 22,
+        "block_hash": "000090fdece7a4204f6b462287894630ee0e1717703849c53b802fbacb24d395",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 22,
+        "block_hash": "0002c82d6825b3155e5d71d8d2e9732801e0512c13c37a59e7672a8847a9d72d",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 23,
+        "block_hash": "00011390ed3934c130835f0430be1649128dd9190648717248a181cb0aca316c",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 23,
+        "block_hash": "0002c3720c5e6303ca2d635bcb41d3a1b21d22cbdac6d7e28184e39218b06ae9",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 24,
+        "block_hash": "00027d1899cc24f58cc1e8a83d1ade1b8a2f09ed36025f137bb1dc3c9a95f210",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 24,
+        "block_hash": "00035acaad0d157b6dd86afa130e25130984f3b5f2a26b5531f0591efa5e8284",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 25,
+        "block_hash": "0000ec3a4c5e104edec4aa4c8a0e156a0551692c0606f354e25cb46326429d76",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 25,
+        "block_hash": "0003076b60b059cdcd09c58d87f9d094e3ad57016f121910e61898d2333d807e",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 26,
+        "block_hash": "0003989f26a4ba628dad1e9ba86e821a4a36238e902008612c427e6d60975f21",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 26,
+        "block_hash": "0000d9ebcdc44273805bafd0f0351c2a2eced29bccf46c33142ca3a9f34c2a89",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 27,
+        "block_hash": "000397815d9e0080841227e9756f65a5ec55f086e70fd1f73e4e97e88d046f5e",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 27,
+        "block_hash": "00002d3370218371cc22a41e445312ae966d5314a255b854e671401e80b96fd1",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 28,
+        "block_hash": "0000b99c213268d1a62a953a6ec795e0b272bfd875c97bb0c1874cba96b4672f",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 28,
+        "block_hash": "000356f04e723246f1c7f61564fc6cec1ab8c6d94499c363bc7654076a801b32",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 29,
+        "block_hash": "000396114d878be5a2c5578f645a37d0c3354cf686fedce3c94776b0f07463ab",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 29,
+        "block_hash": "000060c86bb878f10adb2eaf8be0a24e858433c7020dd861121939aa93a7ee85",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 30,
+        "block_hash": "00032ec3185b60d13362e4a913f69c5258db27d1681da32f79c86d2349215e5f",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 30,
+        "block_hash": "0001174f60e647e46d785285edee0012067a6350b1abd7e48583bf8925b69353",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 31,
+        "block_hash": "0000a85c0f9b73269edfa7ee6b19849c9c7f271953badb02648c7e6cffd01899",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 31,
+        "block_hash": "0001388aaa17c12d8f6cee7d88eaa5b832096e32e29399819f44e3f1192f0408",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 32,
+        "block_hash": "0002a0fe5c78d3de2307477bd21b8cff98979161d7427aa37f73d7bf59895eea",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 32,
+        "block_hash": "0001fb06b234461c2dc8cd0ef4f9eac19e70ad15ea32afd85a3c4ef18471c549",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 33,
+        "block_hash": "0000219ec5491a64b3edf513c84d85a79cdcb0473ca6cd68b23382225b71b3d3",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 34,
+        "block_hash": "0000986a03e4b1e6763599a9b5ef67951d2ad7f64874f45c5e719ad4db45b58b",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 35,
+        "block_hash": "000057150306a0e05e779146e16bff771458db762394bfb4f4d1b98d7d62e6ac",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 35,
+        "block_hash": "0000b712b6196f380a357f034ba27efec8c61c91fd78629c8d29a1e69c3b0710",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 36,
+        "block_hash": "0000a1976095c9eab8666ecd21292efb334537d62953f184ff2417a0217c93e4",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 36,
+        "block_hash": "0000e3642165fab61cf165deb17072c19dd2ec0a3f593338184b0a979b484198",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 37,
+        "block_hash": "000020a3284540830efd9c27448789208038ad97deb48483402089353fc35208",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 37,
+        "block_hash": "00005eca3dfd7a86c87be7e27c3651ba352dd3dc34eb04c1137f0aa6974431e3",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 38,
+        "block_hash": "0000318c1b8cdfcb99a40b83a15279fe485e95a59ee4a737adfc5f5ba13aa90a",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 38,
+        "block_hash": "0000d51d95be8d14ea16b5485848c29a3f36fae3a062b7aa6a3e99db1690f5cf",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 39,
+        "block_hash": "000061d41636813b246e6591a8b02782a02d6139c9fe86f44cbbdbc077c73332",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 39,
+        "block_hash": "0000447ffe7350c5cc5ef74fd5e4af22619dddd80486226feadfa633b70109ef",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 40,
+        "block_hash": "0000518a3708d1342fbd36b7972dfcec3ca3a45c023277f3170ce7668d8d60d7",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 41,
+        "block_hash": "0000165a91a736dd6a15223da6c7106f7fc7ca5e15659ea31b48a1fc507bc2b1",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 41,
+        "block_hash": "0000e045befb7667b8b73832172358d8592efeac91de77ac004d73f134f909b7",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 42,
+        "block_hash": "0000c4912d8e9f997650d5ffb506cad3a651d600c09fe95783d71209a2ff563c",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 43,
+        "block_hash": "00008bf381d80cd1aaadfc290157db829630623f7f0e83002ec6302d8369da67",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 44,
+        "block_hash": "00003062d6c6fc9327fdf7cf811889fa23beef286c1d47fffcd1958192b9e1bf",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 45,
+        "block_hash": "0000720cd323e709730c7fc5d14ecab6dc02429fd5763e18729b6e01224195b7",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 46,
+        "block_hash": "0000c7bbde663915bcab5409b231e148bc4cd781dca28adc624ecfbcddc6ef2d",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 47,
+        "block_hash": "0000a3de24b63c66589883e1eed7e0edbbd052c33fd1fa8473da9b6688f45f9f",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 48,
+        "block_hash": "0000beda0e4e63c6a9ae5eb8d6fdcabe5db57139eae2feaceee76cff9e1bf1c3",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 49,
+        "block_hash": "000007abae71ac82c22e1e59c5bd280e09ad6536408df1866fe4e820819bed49",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 50,
+        "block_hash": "00003efddf5bf6cf9a147d1e1e2971b127be40f64832c9bb3bb447e46a616f8e",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 50,
+        "block_hash": "00004f48bf7e5b7e085fb43332f029b7089901d1fc45ba2294f74dc22d1b23d4",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 51,
+        "block_hash": "00000a4b5be2f9fb2fe7b6ae80746590b92f3ab8fea84f4ed0e2a472bae463dd",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      },
+      {
+        "height": 51,
+        "block_hash": "000004ba2af56da8d6cfa2e2f4b2a94c253f7bb992d43b32e4450d135464e1a5",
+        "non_coinbase_txs": 0,
+        "accepted": false,
+        "notes": [
+          "node did not accept this block: {\"accepted\": false, \"became_tip\": false, \"block_hash\": null, \"reason\": \"unknown_or_expired_template\"} (second solution at the same height = stale, expected)"
+        ],
+        "failures": []
+      },
+      {
+        "height": 52,
+        "block_hash": "00001ea24eea5e4411644bdd8cd763b8e492989cc6e13a43c6b29e1bf6ba889c",
+        "non_coinbase_txs": 0,
+        "accepted": true,
+        "notes": [],
+        "failures": []
+      }
+    ]
+  }
+}
