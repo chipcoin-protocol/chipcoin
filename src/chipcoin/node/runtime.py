@@ -2097,7 +2097,8 @@ class NodeRuntime:
             except Exception as exc:  # noqa: BLE001
                 failure_count += 1
                 now = asyncio.get_running_loop().time()
-                if now - last_warning_at >= 60:
+                warn_now = now - last_warning_at >= 60
+                if warn_now:
                     self.logger.warning(
                         "sync scheduler iteration failed count=%s error=%s", failure_count, exc, exc_info=True,
                     )
@@ -2112,7 +2113,8 @@ class NodeRuntime:
                         else "syncing_from_genesis"
                     )
                 except Exception as status_exc:  # noqa: BLE001 - keep the critical task alive
-                    self.logger.warning("sync status snapshot unavailable after scheduler error: %s", status_exc)
+                    if warn_now:
+                        self.logger.warning("sync status snapshot unavailable after scheduler error: %s", status_exc)
                     previous = {}
                     phase = "syncing_from_genesis"
                 previous["mode"] = "headers"
