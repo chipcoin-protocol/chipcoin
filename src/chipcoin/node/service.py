@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 import secrets
 import struct
+import threading
 import time
 
 from ..config import MAINNET_TEST_ONLY_CONFIG, get_network_config, require_startable_network
@@ -141,6 +142,14 @@ class MiningTemplateRecord:
     coinbase_value_chipbits: int
     miner_reward_chipbits: int
     node_reward_total_chipbits: int
+
+
+@dataclass(frozen=True)
+class StaleTemplateRecord:
+    """Minimal evidence that a legacy job was invalidated by a tip change."""
+
+    miner_id: str
+    expires_at: int
 
 
 def _peer_sort_key(peer: dict[str, object]) -> tuple[int, int, str, int]:
@@ -329,6 +338,7 @@ class NodeService:
 
     ENDPOINT_VERIFICATION_TTL_SECONDS = 300
     MAX_MINING_TEMPLATES = 256
+    MAX_STALE_TEMPLATE_TOMBSTONES = 256
 
     def __init__(
         self,
@@ -376,6 +386,8 @@ class NodeService:
         self._runtime_sync_status: dict[str, object] | None = None
         self._mining_template_ttl_seconds = 15
         self._mining_templates: dict[str, MiningTemplateRecord] = {}
+        self._stale_template_tombstones: dict[str, StaleTemplateRecord] = {}
+        self._mining_template_lock = threading.RLock()
         self._template_cache_tip_hash: str | None = None
         self._supply_snapshot_cache_key: tuple[int | None, str | None] | None = None
         self._supply_snapshot_cache: dict[str, int | str | None] | None = None
@@ -769,9 +781,10 @@ class NodeService:
             node_reward_total_chipbits=sum(int(output.value) for output in coinbase.outputs[1:]),
         )
         self._template_cache_tip_hash = candidate.block.header.previous_block_hash
-        if len(self._mining_templates) >= self.MAX_MINING_TEMPLATES:
-            self._mining_templates.pop(next(iter(self._mining_templates)))
-        self._mining_templates[template_id] = record
+        with self._mining_template_lock:
+            if len(self._mining_templates) >= self.MAX_MINING_TEMPLATES:
+                self._mining_templates.pop(next(iter(self._mining_templates)))
+            self._mining_templates[template_id] = record
         return {
             "template_id": template_id,
             "template_mode": template_mode,
@@ -854,7 +867,7 @@ class NodeService:
             return {"accepted": False, "reason": f"validation_error:{exc}", "block_hash": None, "became_tip": False}
         finally:
             if template_id is not None:
-                self._mining_templates.pop(template_id, None)
+                self.discard_mining_template(template_id)
         new_tip = self.chain_tip()
         return {
             "accepted": True,
@@ -873,8 +886,14 @@ class NodeService:
         """Decode and template-validate one submitted mined block."""
 
         self._expire_stale_templates()
-        record = self._mining_templates.get(template_id)
+        with self._mining_template_lock:
+            record = self._mining_templates.get(template_id)
+            tombstone = self._stale_template_tombstones.get(template_id)
         if record is None:
+            if tombstone is not None:
+                if tombstone.miner_id != miner_id:
+                    return {"accepted": False, "reason": "miner_id_mismatch", "block_hash": None, "became_tip": False}
+                return {"accepted": False, "reason": "stale_template", "block_hash": None, "became_tip": False}
             return {"accepted": False, "reason": "unknown_or_expired_template", "block_hash": None, "became_tip": False}
         if record.miner_id != miner_id:
             return {"accepted": False, "reason": "miner_id_mismatch", "block_hash": None, "became_tip": False}
@@ -1002,13 +1021,27 @@ class NodeService:
     def discard_mining_template(self, template_id: str) -> None:
         """Remove one cached mining template."""
 
-        self._mining_templates.pop(template_id, None)
+        with self._mining_template_lock:
+            self._mining_templates.pop(template_id, None)
+            self._stale_template_tombstones.pop(template_id, None)
 
     def invalidate_mining_templates(self) -> None:
         """Remove cached mining jobs after a chain-state change."""
 
-        self._mining_templates.clear()
-        self._template_cache_tip_hash = None
+        tip = self.chain_tip()
+        current_tip_hash = "00" * 32 if tip is None else tip.block_hash
+        now = self.time_provider()
+        with self._mining_template_lock:
+            self._expire_stale_templates_locked(now)
+            for template_id, record in self._mining_templates.items():
+                if record.previous_block_hash != current_tip_hash and record.expires_at > now:
+                    self._stale_template_tombstones[template_id] = StaleTemplateRecord(
+                        miner_id=record.miner_id, expires_at=record.expires_at,
+                    )
+            while len(self._stale_template_tombstones) > self.MAX_STALE_TEMPLATE_TOMBSTONES:
+                self._stale_template_tombstones.pop(next(iter(self._stale_template_tombstones)))
+            self._mining_templates.clear()
+            self._template_cache_tip_hash = None
 
     def invalidate_supply_snapshot(self) -> None:
         """Drop cached supply diagnostics after active-chain state changes."""
@@ -1044,9 +1077,13 @@ class NodeService:
         return self._expected_bits_for_height(next_height)
 
     def _expire_stale_templates(self) -> None:
-        """Drop cached templates that no longer match the active tip or TTL."""
+        """Drop cached templates and tombstones at their original expiry."""
 
         now = self.time_provider()
+        with self._mining_template_lock:
+            self._expire_stale_templates_locked(now)
+
+    def _expire_stale_templates_locked(self, now: int) -> None:
         expired_ids = [
             template_id
             for template_id, record in self._mining_templates.items()
@@ -1054,6 +1091,9 @@ class NodeService:
         ]
         for template_id in expired_ids:
             self._mining_templates.pop(template_id, None)
+        for template_id, record in tuple(self._stale_template_tombstones.items()):
+            if record.expires_at <= now:
+                self._stale_template_tombstones.pop(template_id, None)
 
     def apply_block(self, block: Block) -> int:
         """Validate and persist a block into local chain state."""

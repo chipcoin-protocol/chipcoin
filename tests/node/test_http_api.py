@@ -914,7 +914,7 @@ def test_http_api_submit_block_accepts_solved_template_and_rejects_stale() -> No
 
         assert stale_status == "200 OK"
         assert stale_body["accepted"] is False
-        assert stale_body["reason"] == "unknown_or_expired_template"
+        assert stale_body["reason"] == "stale_template"
 
 
 def test_http_api_blocks_and_block_lookup_by_height_and_hash() -> None:

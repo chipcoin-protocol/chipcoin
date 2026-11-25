@@ -197,6 +197,108 @@ def test_legacy_template_survives_mempool_change_but_expires(tmp_path):
     assert expired["body"]["reason"] == "unknown_or_expired_template"
 
 
+def test_legacy_template_invalidated_by_tip_change_reports_stale(tmp_path):
+    service = _service(tmp_path, [1_700_000_000])
+    app = HttpApiApp(service)
+    template = _template(app)
+    old_block = _solved_block(template, extra_nonce="old")
+    competing = _solved_block(template, extra_nonce="new")
+    assert _submit(app, competing)["body"]["reason"] == "accepted"
+
+    stale = _submit(app, old_block, template["template_id"])["body"]
+    assert stale["reason"] == "stale_template"
+    assert stale["accepted"] is False
+    # The template classification does not decide whether a full block can be stored.
+    full = _submit(app, old_block)["body"]
+    assert full["reason"] == "stored_side_branch"
+    assert full["stored"] is True
+
+
+def test_stale_tombstone_preserves_miner_check_and_original_expiry(tmp_path):
+    now = [1_700_000_000]
+    service = _service(tmp_path, now)
+    app = HttpApiApp(service)
+    template = _template(app)
+    old_block = _solved_block(template, extra_nonce="old")
+    assert _submit(app, _solved_block(template, extra_nonce="new"))["body"]["reason"] == "accepted"
+    raw = serialize_block(old_block).hex()
+    assert service.prepare_mined_block_submission(
+        template_id=template["template_id"], serialized_block_hex=raw, miner_id="other-worker",
+    )["reason"] == "miner_id_mismatch"
+    now[0] = template["template_expiry"] - 1
+    assert _submit(app, old_block, template["template_id"])["body"]["reason"] == "stale_template"
+    now[0] = template["template_expiry"]
+    assert _submit(app, old_block, template["template_id"])["body"]["reason"] == "unknown_or_expired_template"
+    assert service._stale_template_tombstones == {}
+
+
+def test_accepted_legacy_job_is_consumed_without_stale_tombstone(tmp_path):
+    service = _service(tmp_path, [1_700_000_000])
+    app = HttpApiApp(service)
+    template = _template(app)
+    block = _solved_block(template)
+    assert _submit(app, block, template["template_id"])["body"]["reason"] == "accepted"
+    assert _submit(app, block, template["template_id"])["body"]["reason"] == "unknown_or_expired_template"
+    assert _submit(app, block)["body"]["reason"] == "already_accepted"
+
+
+def test_runtime_legacy_submission_consumes_tombstone(tmp_path):
+    service = _service(tmp_path, [1_700_000_000])
+    app = HttpApiApp(service)
+    template = _template(app)
+    block = _solved_block(template)
+    runtime = NodeRuntime(service=service, listen_host="127.0.0.1", listen_port=0)
+    kwargs = {"template_id": template["template_id"], "serialized_block_hex": serialize_block(block).hex(),
+              "miner_id": "test-worker"}
+    assert asyncio.run(runtime._submit_mined_block_from_http(**kwargs))["reason"] == "accepted"
+    assert asyncio.run(runtime._submit_mined_block_from_http(**kwargs))["reason"] == "unknown_or_expired_template"
+
+
+def test_non_tip_invalidation_eviction_and_restart_are_not_stale(tmp_path):
+    now = [1_700_000_000]
+    service = _service(tmp_path, now)
+    app = HttpApiApp(service)
+    pruned = _template(app)
+    pruned_block = _solved_block(pruned)
+    service.invalidate_mining_templates()  # Same tip: administrative/mempool invalidation.
+    assert _submit(app, pruned_block, pruned["template_id"])["body"]["reason"] == "unknown_or_expired_template"
+
+    service.MAX_MINING_TEMPLATES = 1
+    evicted = _template(app)
+    evicted_block = _solved_block(evicted)
+    _template(app)
+    assert _submit(app, evicted_block, evicted["template_id"])["body"]["reason"] == "unknown_or_expired_template"
+
+    active = _template(app)
+    assert _submit(app, _solved_block(active, extra_nonce="new"))["body"]["reason"] == "accepted"
+    assert _submit(app, _solved_block(active, extra_nonce="old"), active["template_id"])["body"]["reason"] == "stale_template"
+    service.connection.close()
+    restarted = _service(tmp_path, now)
+    assert _submit(HttpApiApp(restarted), _solved_block(active, extra_nonce="old"), active["template_id"])["body"]["reason"] == "unknown_or_expired_template"
+
+
+def test_stale_tombstones_are_bounded_across_tip_changes_and_reorg(tmp_path):
+    service = _service(tmp_path, [1_700_000_000])
+    service.MAX_STALE_TEMPLATE_TOMBSTONES = 2
+    app = HttpApiApp(service)
+    templates = [_template(app) for _ in range(3)]
+    blocks = [_solved_block(row, extra_nonce=str(index)) for index, row in enumerate(templates)]
+    assert _submit(app, _solved_block(templates[0], extra_nonce="winner"))["body"]["reason"] == "accepted"
+    assert len(service._stale_template_tombstones) == 2
+    assert _submit(app, blocks[0], templates[0]["template_id"])["body"]["reason"] == "unknown_or_expired_template"
+    assert _submit(app, blocks[2], templates[2]["template_id"])["body"]["reason"] == "stale_template"
+
+    # A side branch can become active; the original legacy job is never revived.
+    assert _submit(app, blocks[2])["body"]["reason"] == "stored_side_branch"
+    new_tip_template = _template(app)
+    candidate = _solved_block(new_tip_template, extra_nonce="child")
+    child = _remine(replace(candidate, header=replace(candidate.header, previous_block_hash=blocks[2].block_hash())))
+    assert _submit(app, child)["body"]["on_active_chain"] is True
+    assert _submit(app, blocks[2], templates[2]["template_id"])["body"]["reason"] == "stale_template"
+    assert _submit(app, candidate, new_tip_template["template_id"])["body"]["reason"] == "stale_template"
+    assert len(service._stale_template_tombstones) <= 2
+
+
 def test_full_block_rejects_bad_pow_without_advancing_tip(tmp_path):
     service = _service(tmp_path, [1_700_000_000])
     app = HttpApiApp(service)

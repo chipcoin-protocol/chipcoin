@@ -48,3 +48,7 @@ The API adds `on_active_chain` to block lookups by hash and height. A new block 
 3. Reconcile by comparing the candidate hash with `GET /v1/block?height=<candidate height>` and its `on_active_chain` field; continue watching for reorgs.
 
 The tip comparison can race with a new block and **does not guarantee acceptance**. Full-mode validation and fork choice still decide the result. This is one pool's operational policy, not a requirement for every integration or a change to Core v0.1.2. Julien reports that testing across 12 node restarts recovered 3 blocks, withheld 5 stale solutions, and produced no side branch in those tests. These results were supplied by Crypto Connection, not independently reproduced here. Never silently rebuild different bytes under an old solved nonce. See the [Stratum reference](STRATUM_REFERENCE.md).
+
+## Unreleased candidate: legacy stale-template response
+
+On `codex/stale-template-identification`, a legacy ID removed by a tip change returns `stale_template` only while its original TTL remains and its lightweight record is retained. The miner ID check still takes precedence. An ID that expired, was evicted, disappeared on restart, was consumed by an accepted legacy submission, or lost its bounded diagnostic record returns `unknown_or_expired_template`. Request fields, HTTP status, full-block mode, duplicate handling, and fork choice are unchanged. Clients handling only `unknown_or_expired_template` should also handle `stale_template` before adopting this candidate. Tagged v0.1.2 retains the behavior described above.

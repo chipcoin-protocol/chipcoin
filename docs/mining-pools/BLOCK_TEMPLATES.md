@@ -24,3 +24,7 @@ Issued legacy jobs live **15 seconds** in memory, at most **256 records** in thi
 `target` is the **network** target, not a pool share target. [`bits_to_target`](../../src/chipcoin/consensus/pow.py) expands `bits`; [`hash_to_int`](../../src/chipcoin/consensus/hashes.py) reads the raw header digest big-endian. Header fields are serialized in [`serialize_block_header`](../../src/chipcoin/consensus/serialization.py). Candidate timestamp, tip, bits and reward outputs can change between jobs; never splice bytes from two templates.
 
 The API does not provide a native Stratum job ID/extranonce protocol, share submission endpoint, or pool difficulty negotiation. Those belong to a pool backend. The `header_and_coinbase_data` selector is **not** a promise of a separate binary wire format.
+
+## Unreleased candidate: tip invalidation diagnosis
+
+The `codex/stale-template-identification` branch retains lightweight, in-memory evidence for up to 256 legacy IDs removed by a **tip change**. Until each ID's original 15-second expiry, a matching legacy request returns `stale_template` (after the miner ID check). Natural expiry, cache eviction, restart, and same-tip administrative invalidation still return `unknown_or_expired_template`. If more than 256 invalidated IDs accumulate, the oldest evidence is discarded and those IDs also return `unknown_or_expired_template`. Reorgs do not revive invalidated jobs. This behavior is **not part of tagged v0.1.2**; full-block submission and consensus rules are unchanged.
