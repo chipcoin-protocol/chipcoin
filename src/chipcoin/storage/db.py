@@ -5,15 +5,100 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import logging
+import operator
 import os
 from pathlib import Path
 import sqlite3
+import sys
 import threading
 import time
 
 
 logger = logging.getLogger(__name__)
 _WRITE_METRICS: dict[int, "SQLiteWriteMetrics"] = {}
+
+
+class LockedSQLiteCursor(sqlite3.Cursor):
+    """Materialize query rows before another thread uses the shared connection."""
+
+    def __init__(self, connection: LockedSQLiteConnection) -> None:
+        super().__init__(connection)
+        self._chipcoin_lock = connection._chipcoin_lock
+        self._rows: list[object] | None = None
+        self._position = 0
+
+    def execute(self, *args, **kwargs):
+        with self._chipcoin_lock:
+            self._rows = None
+            self._position = 0
+            super().execute(*args, **kwargs)
+            if self.description is not None:
+                self._rows = super().fetchall()
+            return self
+
+    def executemany(self, *args, **kwargs):
+        with self._chipcoin_lock:
+            self._rows = None
+            self._position = 0
+            return super().executemany(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        with self._chipcoin_lock:
+            self._rows = None
+            self._position = 0
+            return super().executescript(*args, **kwargs)
+
+    def fetchone(self):
+        if self._rows is None:
+            with self._chipcoin_lock:
+                return super().fetchone()
+        if self._position >= len(self._rows):
+            return None
+        row = self._rows[self._position]
+        self._position += 1
+        return row
+
+    def fetchmany(self, size=None):
+        if self._rows is None:
+            with self._chipcoin_lock:
+                return super().fetchmany(size) if size is not None else super().fetchmany()
+        count = self.arraysize if size is None else operator.index(size)
+        if count < 0:
+            if sys.version_info >= (3, 14):
+                raise ValueError("Cannot convert negative int")
+            count = len(self._rows) - self._position
+        end = min(len(self._rows), self._position + count)
+        rows = self._rows[self._position:end]
+        self._position = end
+        return rows
+
+    def fetchall(self):
+        if self._rows is None:
+            with self._chipcoin_lock:
+                return super().fetchall()
+        rows = self._rows[self._position:]
+        self._position = len(self._rows)
+        return rows
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._rows is not None:
+            if self._position >= len(self._rows):
+                raise StopIteration
+            row = self._rows[self._position]
+            self._position += 1
+            return row
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
+    def close(self) -> None:
+        with self._chipcoin_lock:
+            self._rows = None
+            super().close()
 
 
 class LockedSQLiteConnection(sqlite3.Connection):
@@ -23,17 +108,21 @@ class LockedSQLiteConnection(sqlite3.Connection):
         super().__init__(*args, **kwargs)
         self._chipcoin_lock = threading.RLock()
 
+    def cursor(self, factory=None):
+        with self._chipcoin_lock:
+            return super().cursor(factory=factory or LockedSQLiteCursor)
+
     def execute(self, *args, **kwargs):
         with self._chipcoin_lock:
-            return super().execute(*args, **kwargs)
+            return self.cursor().execute(*args, **kwargs)
 
     def executemany(self, *args, **kwargs):
         with self._chipcoin_lock:
-            return super().executemany(*args, **kwargs)
+            return self.cursor().executemany(*args, **kwargs)
 
     def executescript(self, *args, **kwargs):
         with self._chipcoin_lock:
-            return super().executescript(*args, **kwargs)
+            return self.cursor().executescript(*args, **kwargs)
 
     def commit(self) -> None:
         with self._chipcoin_lock:
@@ -42,6 +131,10 @@ class LockedSQLiteConnection(sqlite3.Connection):
     def rollback(self) -> None:
         with self._chipcoin_lock:
             return super().rollback()
+
+    def close(self) -> None:
+        with self._chipcoin_lock:
+            return super().close()
 
 
 SCHEMA_STATEMENTS = (
