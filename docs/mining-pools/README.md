@@ -2,6 +2,8 @@
 
 **Reference Core:** [Mainnet v0.1.2](https://github.com/chipcoin-protocol/chipcoin/releases/tag/mainnet-v0.1.2), tag target `12e4dbc8974bd76885e30e6dacdf1b7be898e126`. The vectors were generated at ancestor `4c0984e65de31a50db7558d468167d513769bb20` and are verified unchanged against the release Core. The published Docker archive is AMD64; other architectures require a separately verified native build from the tagged source. This handbook is published separately from the immutable v0.1.2 tag. See [release alignment and evidence](RELEASE_ALIGNMENT.md).
 
+**Current Core release:** [Mainnet v0.1.3](https://github.com/chipcoin-protocol/chipcoin/releases/tag/mainnet-v0.1.3) adds bounded `stale_template` identification for tip-invalidated legacy jobs. The vectors and broader handbook remain verified against the v0.1.2 baseline; do not infer a new vector verification from this release note. No v0.1.3 Docker image is publicly distributed.
+
 Chipcoin is an independent SHA-256d proof-of-work chain. The 80-byte header, canonical transactions and block format, big-endian digest comparison, CHCQ addresses, ML-DSA-44 signatures, and deterministic reward-node settlement are defined by this Core. A pool distributes work and accounts for shares; the Core issues templates and validates submitted blocks. Chipcoin does not include an official Stratum server or a pool accounting engine.
 
 ## Start here
