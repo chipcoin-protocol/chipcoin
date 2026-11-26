@@ -2,8 +2,12 @@
 
 The [Core MIT grant](LICENSE_SCOPE.md) does not relicense these components.
 This inventory records the dependencies identified for Core v0.1.2
-(`12e4dbc8974bd76885e30e6dacdf1b7be898e126`). Exact licenses and notices
-for a particular binary distribution must be checked against its contents.
+(`12e4dbc8974bd76885e30e6dacdf1b7be898e126`). The v0.1.3 release
+candidate keeps the same declared runtime dependencies and pinned base image;
+its build-specific inventory must still be checked against the final image.
+Exact licenses and notices for a particular binary distribution must be
+checked against its contents. The v0.1.3 image carries
+`/usr/share/doc/chipcoin/IMAGE-LICENSES.md` and the original vendor license.
 
 | Component | Version / source | License and attribution | Use |
 | --- | --- | --- | --- |

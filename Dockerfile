@@ -29,6 +29,13 @@ ARG SOURCE_DATE_EPOCH
 
 WORKDIR /app
 
+# The Core MIT grant excludes vendored crypto and system/Python dependencies.
+# Keep the source notices with the distributed image; Debian package notices
+# remain at /usr/share/doc/<package>/copyright.
+COPY LICENSE docs/licensing/LICENSE_SCOPE.md docs/licensing/THIRD_PARTY_LICENSES.md /usr/share/doc/chipcoin/
+COPY vendor/mldsa-native/LICENSE /usr/share/doc/chipcoin/mldsa-native-LICENSE
+COPY docker/IMAGE-LICENSES.md /usr/share/doc/chipcoin/IMAGE-LICENSES.md
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
